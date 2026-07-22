@@ -2,6 +2,29 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.156] - 2026-07-22 - Counter order() maps near-miss arg names onto the schema
+
+### Fixed
+- **`order(action, args)` normalizes guessed arg names before dispatch.**
+  Agents ordering through the Counter work without resident schemas (that is
+  the Counter's design), so they guess arg names — `order("get_file_outline",
+  {"path": ...})` — and the downstream tool raised an internal `ValueError:
+  Provide exactly one of 'file_path' or 'file_paths'` instead of mapping or
+  hinting. Measured cost: one wasted error-turn per session, every session,
+  in a benchmark-harness run of the counter surface (2026-07-22). New
+  `_normalize_order_args` in `server.py` maps a provided key that is NOT a
+  declared property of the action's schema via, in order: a tight alias table
+  (`path`→`file_path`, `symbol`→`symbol_id`, `ids`→`symbol_ids`, ...),
+  pluralization, singularization, and a unique `_<key>` suffix match — then
+  coerces scalar↔single-item-list to the declared type. Guard: when the
+  intended arg is already explicitly provided, the stray alias key passes
+  through untouched (never hands a tool both `file_path` and `file_paths`).
+  Unmappable keys pass through unchanged, so permissive tools stay
+  permissive. Schemas come from the unfiltered catalog
+  (`_raw_catalog_tools`), not `list_tools()` — under `tool_surface=counter`
+  the latter only carries the front door. No schema, tool-count, or
+  INDEX_VERSION change. New `tests/test_v1_108_156.py` (11).
+
 ## [1.108.155] - 2026-07-21 - LANGUAGE_SUPPORT.md currency sweep (docs only)
 
 ### Changed

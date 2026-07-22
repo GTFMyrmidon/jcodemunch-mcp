@@ -4486,6 +4486,91 @@ async def _handle_counter_tool(name: str, arguments: dict) -> list[TextContent]:
     return [TextContent(type="text", text=json.dumps({"error": f"Unknown front-door tool '{name}'"}))]
 
 
+# Common arg-name aliases agents reach for when ordering an action without the
+# full schema in front of them (the Counter's whole point is that schemas are
+# not resident). Applied only when the alias key is NOT a declared property and
+# the target IS. Keep this table tight — confident mappings only.
+_ORDER_ARG_ALIASES: dict[str, tuple[str, ...]] = {
+    "path": ("file_path", "folder_path", "file_paths"),
+    "file": ("file_path", "file_paths"),
+    "files": ("file_paths",),
+    "folder": ("folder_path", "path"),
+    "pattern": ("file_pattern",),
+    "text": ("query",),
+    "search": ("query",),
+    "symbol": ("symbol_id",),
+    "symbols": ("symbol_ids",),
+    "id": ("symbol_id",),
+    "ids": ("symbol_ids",),
+}
+
+
+def _order_action_properties(action: str) -> dict:
+    """The action's declared inputSchema properties, from the UNFILTERED catalog
+    (under tool_surface=counter, list_tools only carries the front door)."""
+    for t in _raw_catalog_tools():
+        if t.name == action:
+            schema = t.inputSchema or {}
+            props = schema.get("properties")
+            return props if isinstance(props, dict) else {}
+    return {}
+
+
+def _normalize_order_args(action: str, args: dict) -> dict:
+    """Map near-miss arg names onto the action's declared schema.
+
+    Agents calling order() work without resident schemas, so they guess arg
+    names ('path' for 'file_path') and the downstream tool blows up with an
+    internal error — one wasted turn per session (measured in the codebench
+    arm run, 2026-07-22). Rules, applied only when the given key is absent
+    from the schema and the target is not already provided:
+      1. alias table  2. pluralize  3. singularize  4. unique '_<key>' suffix.
+    Then coerce scalar<->single-item-list to match the target's declared type.
+    Unmappable keys pass through untouched (permissive tools stay permissive).
+    """
+    props = _order_action_properties(action)
+    if not props:
+        return args
+    out = dict(args)
+    for key in list(out):
+        if key in props:
+            continue
+        target = None
+        satisfied = False
+        for cand in _ORDER_ARG_ALIASES.get(key, ()):
+            if cand not in props:
+                continue
+            if cand in out:
+                # The intended arg is already explicitly provided — mapping the
+                # alias to a LATER candidate would hand the tool both forms
+                # (e.g. file_path + file_paths). Leave the stray key untouched.
+                satisfied = True
+                break
+            target = cand
+            break
+        if satisfied:
+            continue
+        if target is None and key + "s" in props and key + "s" not in out:
+            target = key + "s"
+        if target is None and key.endswith("s") and key[:-1] in props and key[:-1] not in out:
+            target = key[:-1]
+        if target is None:
+            suffix_hits = [p for p in props if p.endswith("_" + key) and p not in out]
+            if len(suffix_hits) == 1:
+                target = suffix_hits[0]
+        if target is not None:
+            out[target] = out.pop(key)
+    for k, v in list(out.items()):
+        prop = props.get(k)
+        if not isinstance(prop, dict):
+            continue
+        if prop.get("type") == "array" and isinstance(v, str):
+            out[k] = [v]
+        elif prop.get("type") == "string" and isinstance(v, list) and len(v) == 1 and isinstance(v[0], str):
+            out[k] = v[0]
+    return out
+
+
 async def _handle_order(arguments: dict) -> list[TextContent] | CallToolResult:
     """order(action, args): validate against the catalog + charter gate, then
     re-enter the normal pipeline for the resolved action."""
@@ -4497,7 +4582,7 @@ async def _handle_order(arguments: dict) -> list[TextContent] | CallToolResult:
     err = _counter.order_gate(action, _catalog_names(), allow)
     if err is not None:
         return [TextContent(type="text", text=json.dumps({"error": err, "tool": "order"}, indent=2))]
-    return await call_tool(action, dict(args))
+    return await call_tool(action, _normalize_order_args(action, dict(args)))
 
 
 def _handle_menu(arguments: dict) -> list[TextContent]:
