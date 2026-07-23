@@ -17,6 +17,44 @@ from ._indexing_pipeline import parse_and_prepare_incremental
 logger = logging.getLogger(__name__)
 
 
+def _sibling_checkout_error(file_path: Path, store: IndexStore) -> Optional[str]:
+    """Different-working-tree detection (v1.108.160, bench-observed dead-end):
+    the file's checkout shares git identity with an ALREADY-INDEXED sibling
+    checkout, so "run index_folder on the parent" is the wrong remedy — agents
+    followed it and re-indexed thousands of files in-run. Returns an actionable
+    error naming both checkouts, or None when this isn't that situation."""
+    try:
+        from ..storage.git_root import _find_git_root  # noqa: PLC0415
+        from .resolve_repo import _compute_repo_id  # noqa: PLC0415
+
+        root = _find_git_root(file_path.parent)
+        if root is None:
+            return None
+        repo_id = _compute_repo_id(root, store)
+        if not repo_id or "/" not in repo_id:
+            return None
+        owner, name = repo_id.split("/", 1)
+        status = store.inspect_index(owner, name)
+        if not status.index_present:
+            return None
+        indexed_root = status.source_root or ""
+        if not indexed_root:
+            return None
+        if Path(indexed_root).expanduser().resolve() == Path(root).resolve():
+            return None  # same checkout — the ordinary not-contained case
+        return (
+            f"Different working tree detected: {file_path} is in a separate "
+            f"checkout ({root}) of already-indexed {repo_id} (indexed from "
+            f"{indexed_root}). For read-only lookups, query repo '{repo_id}' — "
+            f"it reflects the indexed checkout. To index THIS checkout as its "
+            f"own repo, run index_folder(path='{root}', identity_mode='local'); "
+            "do NOT re-index the whole tree under the existing identity."
+        )
+    except Exception:
+        logger.debug("Sibling-checkout probe failed", exc_info=True)
+        return None
+
+
 def index_file(
     path: str,
     use_ai_summaries: bool = True,
@@ -70,6 +108,13 @@ def index_file(
             continue
 
     if best_match is None:
+        sibling_error = _sibling_checkout_error(file_path, store)
+        if sibling_error:
+            return {
+                "success": False,
+                "error": sibling_error,
+                "skipped": "different_working_tree",
+            }
         return {
             "success": False,
             "error": (

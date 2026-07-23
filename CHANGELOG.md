@@ -2,6 +2,28 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.160] - 2026-07-23 - Multi-checkout "different working tree" responses
+
+### Changed
+- **A second working tree of an already-indexed repo now gets a named,
+  actionable response instead of a dead end.** Measured failure (2026-07-22
+  benchmark runs): a separate checkout of the same origin resolved — via git
+  identity — to the sibling checkout's index, `resolve_repo` reported
+  `indexed: true` with the OTHER checkout's `source_root`, and `index_file`'s
+  generic "run index_folder on the parent" remedy led the agent to re-index
+  ~3,000 files in-run. Now:
+  - `resolve_repo` flags a git-identity match whose `source_root` does not
+    contain the queried path: `working_tree_mismatch: true`, a `warning`
+    naming both checkouts and the remedies, and `_meta.working_tree`
+    ({queried_path, indexed_root}).
+  - `index_file` on a file in a sibling checkout returns "Different working
+    tree detected" with the cheap remedy first (query the existing repo id
+    for read-only lookups) and the correct indexing remedy
+    (`index_folder(path=<this checkout>, identity_mode='local')`) — explicitly
+    warning against re-indexing under the existing identity.
+  Same-checkout and ordinary not-indexed paths are byte-identical. No
+  schema, tool-count, or INDEX_VERSION change.
+
 ## [1.108.159] - 2026-07-23 - Response-size steering + path-shaped repo acceptance
 
 ### Added
