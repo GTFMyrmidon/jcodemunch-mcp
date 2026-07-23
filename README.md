@@ -393,6 +393,12 @@ The server exposes one MCP resource, `munch://runtime/identity` — a read-only 
 
 ---
 
+## Canonical handoff (`finalize_handoff` + `munch://handoff/<id>`)
+
+A multi-step repository audit can end with one authoritative, server-attested result instead of a client-specific Stop hook. The assistant authors the analysis; `finalize_handoff` takes those sections plus `evidence_refs`, validates every reference against what this session **actually retrieved** (symbol ids or file paths served by `search_symbols` / `get_ranked_context` — unknown refs fail closed with `isError`), deterministically assembles one canonical Markdown handoff (`jcodemunch.handoff/v1`), and returns a compact receipt: `{handoff_id, resource_uri, sha256, length, canonical: true}`. The immutable body is served by the `munch://handoff/<id>` resource — repeated reads are byte-identical. Session-scoped, in-memory, never writes to your repository; appendices appear exactly once; no character limit. `canonical: true` is advisory metadata for clients that support rendering an authoritative MCP resource directly. The server assembles and attests — it never authors conclusions.
+
+---
+
 ## Start fast
 
 > **Ubuntu 24.04+ / Debian 12+:** System Python is externally managed (PEP 668).

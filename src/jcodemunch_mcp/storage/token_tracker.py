@@ -325,6 +325,15 @@ class _State:
                 if sid in self._yield_served:
                     self._yield_served[sid] = True
 
+    def served_symbol_ids(self) -> frozenset:
+        """Snapshot of every symbol id served this session (yield record).
+
+        The session retrieval record the handoff contract (#374) attests
+        evidence_refs against. Thread-safe.
+        """
+        with self._lock:
+            return frozenset(self._yield_served.keys())
+
     def note_edited_files(self, file_paths) -> None:
         """Mark served symbols in edited files as followed through (edit-through)."""
         norm = {str(p).replace("\\", "/").lstrip("./") for p in file_paths if p}
@@ -1124,6 +1133,11 @@ def note_served(symbol_ids) -> None:
 def note_fetched(symbol_ids) -> None:
     """Mark served symbol ids as followed through (fetch-through)."""
     _state.note_fetched(symbol_ids)
+
+
+def served_symbol_ids() -> frozenset:
+    """Every symbol id served this session — the handoff attestation record (#374)."""
+    return _state.served_symbol_ids()
 
 
 def note_edited_files(file_paths) -> None:

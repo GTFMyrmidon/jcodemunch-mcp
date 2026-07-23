@@ -21,7 +21,7 @@ async def test_server_lists_all_tools():
     try:
         tools = await list_tools()
 
-        assert len(tools) == 89  # +1: get_architecture_metrics (Gini/Lakos/DSM)
+        assert len(tools) == 90  # +1: finalize_handoff (canonical handoff, #374)
 
         names = {t.name for t in tools}
         expected = {
@@ -50,7 +50,7 @@ async def test_server_lists_all_tools():
             "winnow_symbols", "get_watch_status", "analyze_perf", "tune_weights",
             "check_embedding_drift", "suggest_corrections",
             "set_tool_tier", "announce_model", "jcodemunch_guide",
-            "digest", "diff_health_radar", "get_file_risk",
+            "digest", "finalize_handoff", "diff_health_radar", "get_file_risk",
             "import_runtime_signal", "get_runtime_coverage", "find_hot_paths", "find_unused_paths",
             "get_redaction_log",
         }
@@ -678,10 +678,10 @@ async def test_disabled_tools_filtered_from_schema(monkeypatch):
         assert "index_repo" not in tool_names
         assert "search_columns" not in tool_names
         assert "get_file_tree" in tool_names  # Not disabled
-        # 89 default tools + test_summarizer (config cleared) - 2 disabled = 88
+        # 90 default tools + test_summarizer (config cleared) - 2 disabled = 89
         # set_tool_tier + announce_model are undisableable; jcodemunch_guide
         # is in _ALWAYS_PRESENT_TOOLS for tier survival but honors disabled_tools.
-        assert len(tools) == 88
+        assert len(tools) == 89
     finally:
         config_module._GLOBAL_CONFIG.clear()
         config_module._GLOBAL_CONFIG.update(orig_config)
@@ -689,7 +689,7 @@ async def test_disabled_tools_filtered_from_schema(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_disabled_tools_empty_all_tools_present(monkeypatch):
-    """When disabled_tools is empty, all tools are present (89 default + test_summarizer)."""
+    """When disabled_tools is empty, all tools are present (90 default + test_summarizer)."""
     from jcodemunch_mcp import config as config_module
 
     orig_config = config_module._GLOBAL_CONFIG.copy()
@@ -699,7 +699,7 @@ async def test_disabled_tools_empty_all_tools_present(monkeypatch):
         config_module._GLOBAL_CONFIG["disabled_tools"] = []
 
         tools = await list_tools()
-        assert len(tools) == 90  # 89 + test_summarizer (config cleared, so disabled gate off)
+        assert len(tools) == 91  # 90 + test_summarizer (config cleared, so disabled gate off)
     finally:
         config_module._GLOBAL_CONFIG.clear()
         config_module._GLOBAL_CONFIG.update(orig_config)

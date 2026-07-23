@@ -47,6 +47,7 @@ STATE_CHANGING_ACTIONS: frozenset[str] = frozenset({
     "invalidate_cache", "register_edit", "tune_weights",
     "set_tool_tier", "announce_model", "embed_repo",
     "import_runtime_signal", "summarize_repo",
+    "finalize_handoff",  # persists a session handoff record (#374)
 })
 
 # Forward-looking tripwire. ``order`` refuses to dispatch any action whose name
@@ -163,6 +164,12 @@ EXAMPLES: dict[str, dict] = {
     "get_repo_map": {"repo": "owner/name", "token_budget": 4000},
     "get_file_tree": {"repo": "owner/name", "path_prefix": "src/"},
     "digest": {"repo": "owner/name"},
+    "finalize_handoff": {
+        "repo": "owner/name",
+        "task": "Audit the authentication surface",
+        "sections": [{"heading": "Findings", "content": "…markdown authored by the assistant…"}],
+        "evidence_refs": ["src/auth.py::login#function"],
+    },
     # relationships / impact
     "find_importers": {"repo": "owner/name", "file_path": "src/app.py"},
     "find_references": {"repo": "owner/name", "identifier": "parse_config"},

@@ -2,6 +2,39 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.162] - 2026-07-23 - Canonical handoff contract: finalize_handoff + munch://handoff/<id> (#374)
+
+### Added
+- **New tool `finalize_handoff`** (`jcodemunch.handoff/v1`, requested by
+  @mightydanp in #374). Ends a multi-step repository audit with one
+  authoritative, server-owned Markdown handoff — no client-specific Stop hook
+  required. The assistant authors the analysis; the server owns everything
+  downstream: deterministic assembly of caller-supplied `sections` (+ optional
+  named `appendices`, each included exactly once, duplicates rejected),
+  session-scoped persistence, identity, SHA-256 hashing, and immutable
+  serving. Same inputs produce a byte-identical body, the same `handoff_id`,
+  and the same hash. No character limit; never writes to the repository.
+- **Evidence attestation — the part a Stop hook can't do.** `evidence_refs`
+  are validated against the session's actual retrieval record (the yield
+  tracker's served-symbol ids from `search_symbols` / `get_ranked_context`;
+  a ref may be a served symbol id or its file path). A finalized handoff
+  therefore attests that every reference it cites corresponds to something
+  this server really served this session. Unknown or contradicted refs fail
+  closed with `CallToolResult(isError=True)` and an `unknown_refs` list.
+- **New resource `munch://handoff/<id>`** serves the exact canonical body
+  (`text/markdown`); repeated reads are byte-identical, unknown ids error.
+  Finalized handoffs are advertised via `list_resources()` alongside the
+  #371 runtime-identity resource.
+- The success receipt (`{schema, handoff_id, resource_uri, sha256, length,
+  canonical: true, evidence_count, appendices}`) carries `canonical: true`
+  as advisory metadata only — supporting clients can render the resource
+  directly; nothing is forced on hosts without that capability.
+- Counter coverage: `finalize_handoff` joins `STATE_CHANGING_ACTIONS` (order
+  requires `allow_state_change=true`; annotated `readOnlyHint: false`) and
+  gets a curated `EXAMPLES` entry for `menu` / `route` discovery.
+- Standard tier — `core_compact` schema budget unchanged. Tool count 90 → 91
+  (full surface). Tests `tests/test_v1_108_162.py` (22).
+
 ## [1.108.161] - 2026-07-23 - BM25 tokenizer: Unicode word splitting + CJK character bigrams
 
 ### Fixed
