@@ -63,6 +63,10 @@ def _looks_like_path(repo: str) -> bool:
         return True
     if "\\" in repo or repo.startswith("/"):
         return True
+    # Windows drive prefix (C:/x) — checked explicitly so behavior is
+    # platform-independent (PurePosixPath("C:/x").is_absolute() is False).
+    if len(repo) >= 3 and repo[0].isalpha() and repo[1] == ":" and repo[2] in "/\\":
+        return True
     try:
         return Path(repo).is_absolute()
     except (OSError, ValueError):
