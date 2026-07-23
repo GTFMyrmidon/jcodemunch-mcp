@@ -1,0 +1,20 @@
+{
+  "version": "1.108.163",
+  "captured_at": "2026-07-23T18:57:47+00:00",
+  "session": {
+    "session_calls": 16,
+    "session_tokens_saved": 380286,
+    "session_duration_s": 1.8
+  },
+  "tools": {
+    "search_symbols": {
+      "tokens_saved": 132876
+    },
+    "get_symbol_source": {
+      "tokens_saved": 244668
+    },
+    "get_file_outline": {
+      "tokens_saved": 2742
+    }
+  }
+}

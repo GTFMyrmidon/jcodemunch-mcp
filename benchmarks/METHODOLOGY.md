@@ -17,9 +17,9 @@ jcodemunch's standard skip patterns (node_modules, __pycache__, etc.).
 
 | Repository | Files Indexed | Symbols Extracted | Baseline Tokens |
 |------------|:------------:|:-----------------:|:--------------:|
-| expressjs/express | 165 | 181 | 137,978 |
-| fastapi/fastapi | 951 | 5,325 | 699,425 |
-| gin-gonic/gin | 98 | 1,489 | 187,018 |
+| expressjs/express | 172 | 182 | 143,355 |
+| fastapi/fastapi | 1,000 | 6,722 | 823,784 |
+| gin-gonic/gin | 109 | 1,502 | 192,800 |
 
 ## Query Corpus
 
@@ -145,11 +145,11 @@ details.
 ## Common Misreadings
 
 **"The claim is up to 99%."**
-The primary claim is **99.6% average** across all 15 task-runs (5,122,105 baseline tokens →
-19,406 jCodeMunch tokens). Individual queries reach 99.9% on large repos with tight symbol
-matches (e.g., `error exception` on fastapi/fastapi: 99.9%, 801x). The 99.6% aggregate
-is the honest headline across the current index state (express 165 files, fastapi 951 files,
-gin 98 files; run 2026-03-28).
+The primary claim is **99.6% average** across all 15 task-runs (5,799,695 baseline tokens →
+25,220 jCodeMunch tokens). Individual queries reach 99.9% on large repos with tight symbol
+matches (e.g., `error exception` on fastapi/fastapi). The 99.6% aggregate
+is the honest headline across the current index state (express 172 files, fastapi 1,000 files,
+gin 109 files; run 2026-07-23, v1.108.163, repos re-indexed same day).
 
 **"I tested a different repo and got 80%."**
 Results vary by repo structure. Flat script collections (e.g., a repository of hundreds

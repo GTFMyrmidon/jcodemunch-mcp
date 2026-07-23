@@ -4,7 +4,7 @@
 
 > **Real results, live from production**
 > **335B+ tokens saved** · **48,000+ developers** · **$1.69M+ in AI spend avoided** · **40,000+ kg CO₂ prevented**
-> Live telemetry at **[jcodemunch.com](https://jcodemunch.com/)** — benchmark: **95% average token reduction** (15 tasks / 3 repos, 99.8% peak).
+> Live telemetry at **[jcodemunch.com](https://jcodemunch.com/)** — benchmark: **99.6% average token reduction** (15 tasks / 3 repos, 99.9% peak; run 2026-07-23).
 
 Works with **Autohand Code**, **Claude Code**, **Cursor**, **VS Code**, **Codex CLI**, **Continue**, **Windsurf**, and any MCP-compatible client.
 
@@ -203,12 +203,12 @@ Measured with `tiktoken cl100k_base` across three public repos. Workflow: `searc
 
 | Repository | Files | Symbols | Baseline tokens | jCodeMunch tokens | Reduction |
 |------------|------:|--------:|----------------:|------------------:|----------:|
-| expressjs/express | 34 | 117 | 73,838 | ~1,300 avg | **98.4%** |
-| fastapi/fastapi | 156 | 1,359 | 214,312 | ~15,600 avg | **92.7%** |
-| gin-gonic/gin | 40 | 805 | 84,892 | ~1,730 avg | **98.0%** |
-| **Grand total (15 task-runs)** | | | **1,865,210** | **92,515** | **95.0%** |
+| expressjs/express | 172 | 182 | 143,355 | ~1,040 avg | **99.3%** |
+| fastapi/fastapi | 1,000 | 6,722 | 823,784 | ~2,490 avg | **99.7%** |
+| gin-gonic/gin | 109 | 1,502 | 192,800 | ~1,510 avg | **99.2%** |
+| **Grand total (15 task-runs)** | | | **5,799,695** | **25,220** | **99.6%** |
 
-Per-query results range from 79.7% (dense FastAPI router query) to 99.8% (sparse context-bind query on Express). The 95% figure is the aggregate. Run `python benchmarks/harness/run_benchmark.py` to reproduce.
+Per-query results range from 99.1% to 99.9%. The 99.6% figure is the aggregate (run 2026-07-23, v1.108.163, full un-capped indexes). Run `python benchmarks/harness/run_benchmark.py` to reproduce.
 
 ### A/B test on production codebase
 
@@ -379,7 +379,7 @@ Everything jCodeMunch does beyond answering a tool call is listed here. All of i
 - **Local index storage.** Indexes live at `~/.code-index/` (override with `CODE_INDEX_PATH`). Delete the directory and every trace of indexing is gone.
 - **Live session journal.** While the server runs, it periodically writes a small `_session_live.json` in `~/.code-index/` recording the files and searches the agent touched this session (paths and query strings only, no file contents). It exists so the out-of-process PreCompact hook can restore session orientation after context compaction. Throttled, atomically written, overwritten in place; disable with `JCODEMUNCH_LIVE_JOURNAL=0`.
 - **User-invoked network calls.** A few commands you run explicitly reach the network. None run in the background or fire on a plain import; each happens only when you invoke the command:
-  - **License validation.** `license`, `org-rollup`, and `install-pack --license` send your license key to `validate.php` on `j.gravelle.us` to confirm it. This gates only the team `org-rollup` feature; the individual tools never call it.
+  - **License validation.** `license`, `org-rollup`, and `install-pack --license` send your license key to `validate.php` on `j.gravelle.us` to confirm it. The key travels in the request body / a header, never the URL, so it can't land in intermediary access logs. This gates only the team `org-rollup` feature; the individual tools never call it.
   - **Starter-pack download.** `install-pack` fetches the pack catalog and any pre-built index pack you request from `j.gravelle.us` (a premium pack also sends your license key).
   - **Embedding-model download.** `download-model` — and the first semantic encode when the `[local-embed]` extra is installed — downloads the ONNX model (`all-MiniLM-L6-v2`, ~23 MB, one time) from `huggingface.co`; after that, semantic search needs no network.
 
@@ -1060,7 +1060,7 @@ suite stays usable in plan mode.
 **How much can I save on Claude / Opus tokens?**
 In retrieval-heavy workflows, code-reading tokens typically drop **95%+** because
 the agent fetches exact symbols instead of brute-reading whole files — benchmarked
-at a 95% average reduction across 15 tasks / 3 repositories, with peaks of 99.8%
+at a 99.6% average reduction across 15 tasks / 3 repositories, with peaks of 99.9%
 on large repos. Compact [MUNCH](SPEC_MUNCH.md) encoding then trims another ~45%
 off the wire. Full methodology and harness: [TOKEN_SAVINGS.md](TOKEN_SAVINGS.md)
 and [benchmarks/](benchmarks/).

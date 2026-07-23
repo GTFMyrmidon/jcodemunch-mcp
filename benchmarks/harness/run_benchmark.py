@@ -127,7 +127,9 @@ def measure_baseline(store: IndexStore, owner: str, name: str) -> dict:
             content = abs_path.read_text(encoding="utf-8", errors="replace")
         except Exception:
             try:
-                content = store.get_file_content_text(owner, name, rel_path) or ""
+                # Store-backed fallback (the real reader; the old
+                # get_file_content_text name never existed → dead fallback).
+                content = store.get_file_content(owner, name, rel_path, index) or ""
             except Exception:
                 content = ""
         total_tokens += count_tokens(content)

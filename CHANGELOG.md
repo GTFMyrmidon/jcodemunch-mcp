@@ -2,6 +2,43 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.163] - 2026-07-23 - License-key transport hardening: key never rides the URL (audit WS-8)
+
+### Security
+- **License validation POSTs the key in the request body** (`org/license.py`).
+  The key previously traveled as a GET query parameter to the validation
+  endpoint, where it could land in server/proxy/CDN access logs. The check now
+  sends a form-encoded POST; a one-shot legacy GET fallback fires only on the
+  exact missing-parameter signature an older backend produces, so a deploy-order
+  gap can't lock out a paying customer (a genuine key rejection never retries).
+- **Starter-pack downloads carry the key in the `X-JCM-License` header**
+  (`cli/install_pack.py`) instead of `&license=` in the URL, with the same
+  narrowly-keyed one-shot legacy fallback.
+
+### Fixed
+- `install-pack` no longer reports every license/pack error as "Could not reach
+  the starter packs server": the API returns those as 4xx + JSON, and the old
+  `raise_for_status()` converted them into a bogus network error before the
+  real message could be shown. Transport failures still report as unreachable.
+
+### Benchmarks (audit WS-7 — benchmark integrity)
+- Regenerated `benchmarks/results.md` at v1.108.163 against same-day re-indexes
+  of the three canonical repos (express 172 / fastapi 1,000 / gin 109 files):
+  **99.6% aggregate reduction** (5,799,695 baseline tokens → 25,220), per-query
+  range 99.1–99.9%. The hand-written A/B test sections are preserved verbatim.
+- Reconciled the README headline to the single current figure: the stale
+  "95% average" table (from an old 34-file capped express index) is replaced by
+  the regenerated full-index numbers, so README, `benchmarks/results.md`,
+  `benchmarks/METHODOLOGY.md`, and `benchmarks/provenance/measured.json` now
+  all quote the same 99.6% aggregate. "95%+" floor phrasing elsewhere is
+  unchanged (conservative floor, still true).
+- Fixed the benchmark harness's dead baseline fallback: `measure_baseline`
+  called nonexistent `store.get_file_content_text(...)`; it now uses the real
+  `store.get_file_content(...)` reader.
+- Captured `benchmarks/token_baselines/v1.108.163.json` so
+  `analyze_perf(compare_release="1.108.163")` resolves a real comparison
+  instead of a baseline-missing error.
+
 ## [1.108.162] - 2026-07-23 - Canonical handoff contract: finalize_handoff + munch://handoff/<id> (#374)
 
 ### Added

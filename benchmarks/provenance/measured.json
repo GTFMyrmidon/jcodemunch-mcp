@@ -3,10 +3,10 @@
   "token_reduction": {
     "average_pct": 99.6,
     "task_runs": 15,
-    "baseline_tokens": 5122105,
-    "jcodemunch_tokens": 19406,
+    "baseline_tokens": 5799695,
+    "jcodemunch_tokens": 25220,
     "tokenizer": "cl100k_base",
-    "run_date": "2026-03-28",
+    "run_date": "2026-07-23",
     "methodology": "benchmarks/METHODOLOGY.md",
     "results": "benchmarks/results.md"
   },

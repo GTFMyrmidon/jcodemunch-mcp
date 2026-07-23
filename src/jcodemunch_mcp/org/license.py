@@ -6,9 +6,10 @@ free and never touches this module. Seat reporting (``org-report`` / the
 ``/org/report`` ingest) is also ungated, so trial data accrues before purchase.
 
 Verification reuses the shared j*Munch licensing backend (``validate.php``) that
-the desktop apps already use — the org host holds no secrets, it GETs the public
-validate endpoint and trusts the JSON answer (``product=jcodemunch`` namespaces
-our keys; Stripe webhooks populate the backend).
+the desktop apps already use — the org host holds no secrets, it POSTs the public
+validate endpoint (key in the request body, never the URL, so it stays out of
+server/proxy access logs) and trusts the JSON answer (``product=jcodemunch``
+namespaces our keys; Stripe webhooks populate the backend).
 
 Two resilience rules ported from the desktop client:
 
@@ -106,25 +107,63 @@ def _check_server(key: str) -> Optional[dict]:
     when the server can't be reached (network error / unparseable body). None
     means "leave cached state alone" — the sticky-offline rule.
 
+    The key travels in the POST body, NEVER the URL query string, so it can't
+    land in server/proxy access logs (audit finding V12). A backend that
+    predates POST support answers the bodyless-looking request with its
+    "Missing license parameter." 400 — that exact signature (and only it)
+    triggers a one-shot legacy GET so a paying customer is never punished by
+    a deploy-order gap. Remove the fallback once the deployed validate.php is
+    confirmed POST-aware.
+
     The endpoint carries ``valid`` in the JSON body for both its 200 and 400
     responses, so the body is trusted over the status code."""
     try:
         import httpx
     except Exception:  # httpx is a core dep, but never let its absence crash the gate
         return None
+
+    def _parse(resp) -> Optional[dict]:
+        try:
+            data = resp.json()
+        except Exception:
+            return None
+        if isinstance(data, dict) and isinstance(data.get("valid"), bool):
+            return {"valid": data["valid"], "tier": data.get("tier"), "error": data.get("error")}
+        return None
+
     try:
-        resp = httpx.get(
+        resp = httpx.post(
             VALIDATE_URL,
-            params={"product": PRODUCT, "license": key},  # params auto-url-encodes the key
+            data={"product": PRODUCT, "license": key},  # form body — key stays out of the URL
             timeout=REQUEST_TIMEOUT,
             follow_redirects=True,
         )
-        data = resp.json()
     except Exception:
         return None
-    if isinstance(data, dict) and isinstance(data.get("valid"), bool):
-        return {"valid": data["valid"], "tier": data.get("tier"), "error": data.get("error")}
-    return None
+    answer = _parse(resp)
+
+    if _needs_legacy_get_fallback(answer):
+        try:
+            resp = httpx.get(
+                VALIDATE_URL,
+                params={"product": PRODUCT, "license": key},
+                timeout=REQUEST_TIMEOUT,
+                follow_redirects=True,
+            )
+        except Exception:
+            return None
+        return _parse(resp)
+    return answer
+
+
+def _needs_legacy_get_fallback(answer: Optional[dict]) -> bool:
+    """True only for the exact answer a pre-POST validate.php gives a POST:
+    a definitive-looking ``valid: false`` whose error is the missing-parameter
+    complaint (the old code read only ``$_GET``). A real key rejection says
+    "not found"/"revoked"/"expired" and must NOT retry over GET."""
+    if not answer or answer.get("valid") is not False:
+        return False
+    return "missing license parameter" in (answer.get("error") or "").lower()
 
 
 def _is_validated(key: str, storage_path: Optional[str] = None) -> dict:

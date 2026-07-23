@@ -1,35 +1,36 @@
 # jcodemunch-mcp -- Token Efficiency Benchmark
 
 **Tokenizer:** `cl100k_base` (tiktoken)  
-**Workflow:** `search_symbols` (top 5) + `get_symbol_source` x 3
+**Workflow:** `search_symbols` (top 5) + `get_symbol` x 3  
 **Baseline:** all source files concatenated (minimum for "open every file" agent)  
+**Run:** 2026-07-23, jcodemunch-mcp v1.108.163 (repos re-indexed same day)  
 
 ## expressjs/express
 
 | Metric | Value |
 |--------|-------|
-| Files indexed | **165** |
-| Symbols extracted | **181** |
-| Baseline tokens (all files) | **137,978** |
+| Files indexed | **172** |
+| Symbols extracted | **182** |
+| Baseline tokens (all files) | **143,355** |
 
 | Query | Baseline&nbsp;tokens | jMunch&nbsp;tokens | Reduction | Ratio |
 |-------|---------------------:|-------------------:|----------:|------:|
-| `router route handler` | 137,978 | 886 | **99.4%** | 155.7x |
-| `middleware` | 137,978 | 1,008 | **99.3%** | 136.9x |
-| `error exception` | 137,978 | 859 | **99.4%** | 160.6x |
-| `request response` | 137,978 | 872 | **99.4%** | 158.2x |
-| `context bind` | 137,978 | 993 | **99.3%** | 139.0x |
-| **Average** | — | — | **99.4%** | **150.1x** |
+| `router route handler` | 143,355 | 1,342 | **99.1%** | 106.8x |
+| `middleware` | 143,355 | 1,284 | **99.1%** | 111.6x |
+| `error exception` | 143,355 | 1,167 | **99.2%** | 122.8x |
+| `request response` | 143,355 | 1,193 | **99.2%** | 120.2x |
+| `context bind` | 143,355 | 209 | **99.9%** | 685.9x |
+| **Average** | — | — | **99.3%** | **229.5x** |
 
 <details><summary>Query detail (search + fetch tokens, latency)</summary>
 
 | Query | Search&nbsp;tokens | Fetch&nbsp;tokens | Hits&nbsp;fetched | Search&nbsp;ms |
 |-------|-----------------:|------------------:|------------------:|---------------:|
-| `router route handler` | 381 | 505 | 3 | 6.2 |
-| `middleware` | 370 | 638 | 3 | 0.2 |
-| `error exception` | 362 | 497 | 3 | 7.1 |
-| `request response` | 372 | 500 | 3 | 0.5 |
-| `context bind` | 372 | 621 | 3 | 0.3 |
+| `router route handler` | 543 | 799 | 3 | 33.8 |
+| `middleware` | 495 | 789 | 3 | 1.2 |
+| `error exception` | 493 | 674 | 3 | 17.3 |
+| `request response` | 527 | 666 | 3 | 2.3 |
+| `context bind` | 209 | 0 | 0 | 5.6 |
 
 </details>
 
@@ -37,28 +38,28 @@
 
 | Metric | Value |
 |--------|-------|
-| Files indexed | **951** |
-| Symbols extracted | **5,325** |
-| Baseline tokens (all files) | **699,425** |
+| Files indexed | **1,000** |
+| Symbols extracted | **6,722** |
+| Baseline tokens (all files) | **823,784** |
 
 | Query | Baseline&nbsp;tokens | jMunch&nbsp;tokens | Reduction | Ratio |
 |-------|---------------------:|-------------------:|----------:|------:|
-| `router route handler` | 699,425 | 1,199 | **99.8%** | 583.3x |
-| `middleware` | 699,425 | 1,643 | **99.8%** | 425.7x |
-| `error exception` | 699,425 | 873 | **99.9%** | 801.2x |
-| `request response` | 699,425 | 4,439 | **99.4%** | 157.6x |
-| `context bind` | 699,425 | 1,016 | **99.9%** | 688.4x |
-| **Average** | — | — | **99.8%** | **531.2x** |
+| `router route handler` | 823,784 | 1,608 | **99.8%** | 512.3x |
+| `middleware` | 823,784 | 1,837 | **99.8%** | 448.4x |
+| `error exception` | 823,784 | 1,231 | **99.9%** | 669.2x |
+| `request response` | 823,784 | 4,689 | **99.4%** | 175.7x |
+| `context bind` | 823,784 | 3,103 | **99.6%** | 265.5x |
+| **Average** | — | — | **99.7%** | **414.2x** |
 
 <details><summary>Query detail (search + fetch tokens, latency)</summary>
 
 | Query | Search&nbsp;tokens | Fetch&nbsp;tokens | Hits&nbsp;fetched | Search&nbsp;ms |
 |-------|-----------------:|------------------:|------------------:|---------------:|
-| `router route handler` | 464 | 735 | 3 | 131.4 |
-| `middleware` | 460 | 1,183 | 3 | 0.3 |
-| `error exception` | 383 | 490 | 3 | 0.7 |
-| `request response` | 430 | 4,009 | 3 | 12.0 |
-| `context bind` | 402 | 614 | 3 | 0.4 |
+| `router route handler` | 605 | 1,003 | 3 | 776.0 |
+| `middleware` | 556 | 1,281 | 3 | 1.5 |
+| `error exception` | 514 | 717 | 3 | 1.8 |
+| `request response` | 548 | 4,141 | 3 | 16.8 |
+| `context bind` | 556 | 2,547 | 3 | 1.9 |
 
 </details>
 
@@ -66,32 +67,30 @@
 
 | Metric | Value |
 |--------|-------|
-| Files indexed | **98** |
-| Symbols extracted | **1,489** |
-| Baseline tokens (all files) | **187,018** |
+| Files indexed | **109** |
+| Symbols extracted | **1,502** |
+| Baseline tokens (all files) | **192,800** |
 
 | Query | Baseline&nbsp;tokens | jMunch&nbsp;tokens | Reduction | Ratio |
 |-------|---------------------:|-------------------:|----------:|------:|
-| `router route handler` | 187,018 | 1,151 | **99.4%** | 162.5x |
-| `middleware` | 187,018 | 1,130 | **99.4%** | 165.5x |
-| `error exception` | 187,018 | 818 | **99.6%** | 228.6x |
-| `request response` | 187,018 | 1,083 | **99.4%** | 172.7x |
-| `context bind` | 187,018 | 1,436 | **99.2%** | 130.2x |
-| **Average** | — | — | **99.4%** | **171.9x** |
+| `router route handler` | 192,800 | 1,568 | **99.2%** | 123.0x |
+| `middleware` | 192,800 | 1,726 | **99.1%** | 111.7x |
+| `error exception` | 192,800 | 1,099 | **99.4%** | 175.4x |
+| `request response` | 192,800 | 1,530 | **99.2%** | 126.0x |
+| `context bind` | 192,800 | 1,634 | **99.2%** | 118.0x |
+| **Average** | — | — | **99.2%** | **130.8x** |
 
 <details><summary>Query detail (search + fetch tokens, latency)</summary>
 
 | Query | Search&nbsp;tokens | Fetch&nbsp;tokens | Hits&nbsp;fetched | Search&nbsp;ms |
 |-------|-----------------:|------------------:|------------------:|---------------:|
-| `router route handler` | 440 | 711 | 3 | 43.5 |
-| `middleware` | 371 | 759 | 3 | 5.7 |
-| `error exception` | 345 | 473 | 3 | 0.8 |
-| `request response` | 387 | 696 | 3 | 0.8 |
-| `context bind` | 391 | 1,045 | 3 | 7.9 |
+| `router route handler` | 522 | 1,046 | 3 | 155.2 |
+| `middleware` | 441 | 1,285 | 3 | 15.4 |
+| `error exception` | 464 | 635 | 3 | 1.8 |
+| `request response` | 671 | 859 | 3 | 1.7 |
+| `context bind` | 490 | 1,144 | 3 | 18.1 |
 
 </details>
-
----
 
 ## Real-world A/B test: naming audit task (2026-03-18)
 
@@ -132,9 +131,9 @@ Raw data: https://gist.github.com/Mharbulous/bb097396fa92ef1d34d03a72b56b2c61
 
 | | Tokens |
 |--|-------:|
-| Baseline total (15 task-runs) | 5,122,105 |
-| jMunch total | 19,406 |
+| Baseline total (15 task-runs) | 5,799,695 |
+| jMunch total | 25,220 |
 | **Reduction** | **99.6%** |
-| **Ratio** | **263.9x** |
+| **Ratio** | **230.0x** |
 
-> Measured with tiktoken `cl100k_base`. Baseline = all indexed source files. jMunch = search_symbols (top 5) + get_symbol_source x 3 per query.
+> Measured with tiktoken `cl100k_base`. Baseline = all indexed source files. jMunch = search_symbols (top 5) + get_symbol x 3 per query.
