@@ -2,6 +2,30 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.159] - 2026-07-23 - Response-size steering + path-shaped repo acceptance
+
+### Added
+- **Path-shaped `repo` arguments now resolve.** The shared repo resolver
+  (`tools/_utils.resolve_repo`, used by `get_ranked_context` and most other
+  tools) accepts a filesystem path — `repo="."`, `./sub`, or an absolute
+  path — and maps it to the indexed repo for that checkout, via the same
+  identity probe `resolve_repo`/`index_folder` use, with a source-root match
+  fallback. This was an observed agent retry shape (measured 2026-07-22
+  benchmark runs) that previously dead-ended in "Repository not found: .".
+  An unindexed path fails with an actionable remedy (`resolve_repo` /
+  `index_folder`). Bare names and `owner/name` ids are untouched.
+
+### Changed
+- **All three v1.108.158 steering surfaces gain response-size guidance.**
+  The measured follow-up to turn-economy steering: turn counts fell but
+  heavy-repo session cost stayed flat because payload weight per turn rose
+  (large ranked-context capsules). The Counter `order` description, the
+  `resolve_repo` `_meta.opening_move`, and the once-per-session escalation
+  hint now recommend `compress=True` (keystone-protected structural
+  compression, shipped v1.108.129) and a modest `token_budget`, and the
+  escalation hint notes that `repo` accepts `'.'` or a path. Advisory text
+  only — no dispatch, schema, tool-count, or INDEX_VERSION change.
+
 ## [1.108.158] - 2026-07-22 - Turn-economy steering toward the one-call context openers
 
 ### Added

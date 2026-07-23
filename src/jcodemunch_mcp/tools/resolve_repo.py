@@ -159,10 +159,15 @@ def _build_indexed_response(
     if status.loadable:
         # Turn-economy steering (v1.108.158): resolve_repo is the universal
         # session opener — name the one-call exploration path up front.
+        # v1.108.159: response-size guidance — turn cuts alone don't move heavy
+        # repos when each capsule is fat; compress=True packs more symbols into
+        # the same budget.
         result["_meta"]["opening_move"] = (
             "Exploration question ('how does X work')? get_ranked_context(repo, "
             "query, token_budget) answers in one call — prefer it over chained "
-            "search_symbols/get_file_outline/get_symbol_source hops."
+            "search_symbols/get_file_outline/get_symbol_source hops. Keep "
+            "token_budget modest (4000 default) and pass compress=True to fit "
+            "more symbols in the same budget."
         )
     metadata = {
         "source_root": entry.get("source_root") or status.source_root,

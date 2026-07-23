@@ -2,6 +2,7 @@
 
 import logging
 import threading
+from pathlib import Path
 from typing import Optional
 
 from ..storage import IndexStore
@@ -54,11 +55,61 @@ def _get_bare_name_map(store: IndexStore) -> dict[str, list[str]]:
     return mapping
 
 
+def _looks_like_path(repo: str) -> bool:
+    """Path-shaped repo arg — agents retry with repo='.' or a filesystem path
+    when an owner/name id isn't at hand (observed in the 2026-07-22 bench run).
+    Deliberately conservative: bare names and owner/name ids never match."""
+    if repo in (".", "..") or repo.startswith(("./", ".\\", "../", "..\\", "~")):
+        return True
+    if "\\" in repo or repo.startswith("/"):
+        return True
+    try:
+        return Path(repo).is_absolute()
+    except (OSError, ValueError):
+        return False
+
+
+def _resolve_path_repo(repo: str, storage_path: Optional[str]) -> tuple[str, str]:
+    """Map a filesystem path (repo='.', an absolute path) to its indexed repo id."""
+    from .resolve_repo import _compute_repo_id  # noqa: PLC0415
+
+    store = IndexStore(base_path=storage_path)
+    resolved = Path(repo).expanduser().resolve()
+    try:
+        repo_id = _compute_repo_id(resolved, store)
+    except Exception:
+        logger.debug("Path→repo identity probe failed for %s", repo, exc_info=True)
+        repo_id = ""
+    if repo_id and "/" in repo_id:
+        owner, name = repo_id.split("/", 1)
+        if store.inspect_index(owner, name).index_present:
+            return owner, name
+    # Fallback: match the resolved path against indexed source roots
+    for entry in store.list_repos():
+        root = entry.get("source_root")
+        if root and "/" in entry.get("repo", ""):
+            try:
+                if Path(root).resolve() == resolved:
+                    return entry["repo"].split("/", 1)
+            except OSError:
+                continue
+    raise ValueError(
+        f"Path '{repo}' is not an indexed repository. "
+        "Call resolve_repo(path) to check its status, or index_folder(path) to index it."
+    )
+
+
 def resolve_repo(repo: str, storage_path: Optional[str] = None) -> tuple[str, str]:
     """Resolve an indexed repository id or unique bare display/name.
 
+    Also accepts a filesystem path ('.', './sub', an absolute path) and maps it
+    to the indexed repo for that checkout (v1.108.159).
+
     Raises ValueError if the repo is not found or the bare name is ambiguous.
     """
+    if _looks_like_path(repo):
+        return _resolve_path_repo(repo, storage_path)
+
     if "/" in repo:
         return repo.split("/", 1)
 

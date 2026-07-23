@@ -264,7 +264,8 @@ def _counter_front_door_tools() -> list:
                 "allow_state_change=true, and execution/file-write verbs are refused. "
                 "For exploration questions ('how does X work'), "
                 "order('get_ranked_context', {repo, query, token_budget}) answers in "
-                "ONE call — prefer it over chained search/outline/source hops. "
+                "ONE call — prefer it over chained search/outline/source hops; add "
+                "compress=true to fit more symbols in the same budget. "
                 "Call 'menu' to discover actions, or 'route' to pick one from a task."
             ),
             inputSchema={
@@ -6163,7 +6164,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent] | CallToolR
                 result.setdefault("_meta", {})["hint"] = (
                     "Several search/read hops and no bundle call yet this session. "
                     "For exploration questions, get_ranked_context(repo, query, "
-                    "token_budget) returns ranked, budget-packed context in ONE call."
+                    "token_budget) returns ranked, budget-packed context in ONE call. "
+                    "Pass compress=True to fit more symbols in the same budget; "
+                    "repo also accepts '.' or a filesystem path."
                 )
                 _requested_format = "json"
         except Exception:
