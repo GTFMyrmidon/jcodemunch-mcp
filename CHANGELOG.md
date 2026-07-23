@@ -2,6 +2,34 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.164] - 2026-07-23 - A path-shaped `repo` arg returns a routed error, not a raw storage crash (#376)
+
+### Fixed
+
+- **`resolve_repo` no longer hands the store an owner/name pair it must reject.**
+  An agent without a repo id at hand guesses a path. `tools/_utils.resolve_repo`
+  split any `repo` containing `/` on the FIRST separator and returned the halves
+  unvalidated, so `repo="src/auth/service.ts"` became
+  `owner="src"`, `name="auth/service.ts"`. Callers catch `ValueError` from the
+  resolver, but that pair then reached `store.load_index(owner, name)` and raised
+  `ValueError: Path separator in name` from `_safe_repo_component`, outside every
+  handler. An `owner/name` id can never legitimately carry a second separator
+  (the store rejects one at write time), so every such argument was guaranteed to
+  crash rather than route.
+
+  A post-split name that still contains a separator is now treated as a path.
+  It first tries the existing path-resolution route, which picks up bare relative
+  multi-segment paths (`apps/web/src`) that `_looks_like_path` is deliberately too
+  conservative to match, and otherwise raises an actionable error the callers
+  already surface in band. New `_path_shaped_repo_error` names `resolve_repo` and
+  `index_folder`, and — when the argument looks like a file — names `file_pattern=`,
+  which is what an agent passing `repo=<file>` usually meant. The unindexed-path
+  error in `_resolve_path_repo` routes through the same helper so both paths give
+  one message. Single-separator ids and every real `owner/name` are untouched.
+
+  Reported from a daily Ubuntu install; split out of #375. New
+  `tests/test_v1_108_164.py` (8). NO schema/tool-count/`INDEX_VERSION` change.
+
 ## [1.108.163] - 2026-07-23 - License-key transport hardening: key never rides the URL (audit WS-8)
 
 ### Security
