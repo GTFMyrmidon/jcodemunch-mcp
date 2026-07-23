@@ -2,6 +2,20 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.157] - 2026-07-22 - order() moves a multi-item list on a singular prop to its plural
+
+### Fixed
+- **`order()` normalization now also handles a multi-item list handed to a
+  singular prop.** The post-fix benchmark rerun surfaced the sibling failure
+  the v1.108.156 rules missed: `order("get_symbol_source", {"symbol_id": [a,
+  b, c]})` — `symbol_id` IS a declared property, so the near-miss key mapping
+  skipped it, and the downstream tool raised `TypeError: unhashable type:
+  'list'` (observed in every gin rep). A multi-item list on a singular
+  string-typed prop whose `<key>s` plural sibling is a declared array (and not
+  already provided) now moves to the plural. Single-item lists keep the
+  existing unwrap; an explicitly-provided plural is never clobbered. +2 tests
+  in `tests/test_v1_108_156.py`.
+
 ## [1.108.156] - 2026-07-22 - Counter order() maps near-miss arg names onto the schema
 
 ### Fixed

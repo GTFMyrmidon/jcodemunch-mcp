@@ -75,6 +75,30 @@ class TestNormalizeOrderArgs:
         args = {"anything": 1}
         assert server._normalize_order_args("no_such_action_xyz", args) is args
 
+    def test_multi_item_list_on_singular_moves_to_plural(self):
+        # v1.108.157: order("get_symbol_source", {"symbol_id": [a, b]}) raised
+        # TypeError unhashable-list downstream (observed every gin rep in the
+        # post-fix bench run). A multi-item list on a singular string prop with
+        # an array plural sibling belongs on the plural.
+        out = server._normalize_order_args(
+            "get_symbol_source",
+            {"repo": "r", "symbol_id": ["a.py::f#function", "b.py::g#function"]},
+        )
+        assert out == {
+            "repo": "r",
+            "symbol_ids": ["a.py::f#function", "b.py::g#function"],
+        }
+
+    def test_multi_item_list_not_moved_when_plural_provided(self):
+        args = {
+            "repo": "r",
+            "symbol_id": ["a.py::f#function", "b.py::g#function"],
+            "symbol_ids": ["c.py::h#function"],
+        }
+        out = server._normalize_order_args("get_symbol_source", args)
+        assert out["symbol_ids"] == ["c.py::h#function"]
+        assert out["symbol_id"] == ["a.py::f#function", "b.py::g#function"]
+
 
 class TestHandleOrderNormalizes:
     @pytest.mark.asyncio

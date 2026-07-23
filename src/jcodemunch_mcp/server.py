@@ -4564,7 +4564,19 @@ def _normalize_order_args(action: str, args: dict) -> dict:
         prop = props.get(k)
         if not isinstance(prop, dict):
             continue
-        if prop.get("type") == "array" and isinstance(v, str):
+        if (
+            prop.get("type") == "string"
+            and isinstance(v, list)
+            and len(v) > 1
+            and isinstance(props.get(k + "s"), dict)
+            and props[k + "s"].get("type") == "array"
+            and k + "s" not in out
+        ):
+            # A multi-item list handed to a singular prop whose plural sibling
+            # exists — order("get_symbol_source", {"symbol_id": [a, b, c]}) —
+            # belongs on the plural (was: TypeError unhashable-list downstream).
+            out[k + "s"] = out.pop(k)
+        elif prop.get("type") == "array" and isinstance(v, str):
             out[k] = [v]
         elif prop.get("type") == "string" and isinstance(v, list) and len(v) == 1 and isinstance(v[0], str):
             out[k] = v[0]
