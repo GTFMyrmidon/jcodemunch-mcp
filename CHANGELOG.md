@@ -2,6 +2,22 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.161] - 2026-07-23 - BM25 tokenizer: Unicode word splitting + CJK character bigrams
+
+### Fixed
+- **The BM25 tokenizer no longer discards non-ASCII text.** `_TOKEN_RE` was
+  `[a-zA-Z0-9]{2,}`, so every non-ASCII character acted as a separator: CJK
+  symbol names, summaries, and docstrings produced zero BM25 tokens (the
+  lexical channel contributed nothing for those corpora) and accented Latin
+  identifiers were mangled (`café` → `caf`). The tokenizer now splits on
+  Unicode word boundaries and expands CJK runs (Hangul, Hiragana/Katakana,
+  Han) into overlapping character bigrams — applied identically at index and
+  query time, so bigram overlap is the match signal. Mixed-script tokens
+  split cleanly; camelCase/snake_case splitting, stemming, abbreviation
+  expansion, and pure-ASCII tokenization are unchanged. Suite parity with
+  jdocmunch-mcp v1.114.1 (#91 there) and jdatamunch-mcp v1.23.1. No reindex
+  needed — BM25 tokenizes stored index fields at scoring time.
+
 ## [1.108.160] - 2026-07-23 - Multi-checkout "different working tree" responses
 
 ### Changed

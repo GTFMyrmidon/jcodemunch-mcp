@@ -35,7 +35,29 @@ _PR_COMBINED_WEIGHT = 100.0
 
 # Pre-compiled regexes for _tokenize (called ~9000× on cold BM25 build)
 _CAMEL_RE = re.compile(r"([a-z])([A-Z])")
-_TOKEN_RE = re.compile(r"[a-zA-Z0-9]{2,}")
+# Unicode word runs (was [a-zA-Z0-9]{2,}, which silently dropped ALL
+# non-ASCII — CJK names/docstrings produced zero BM25 tokens; jdoc #91 class).
+_TOKEN_RE = re.compile(r"[^\W_]+")
+# CJK scripts carry no whitespace word boundaries; runs in these ranges are
+# expanded to overlapping character bigrams (same expansion at index and
+# query time, so bigram overlap is the match signal).
+_CJK_RE = re.compile(
+    "[ᄀ-ᇿ"  # Hangul Jamo
+    "぀-ヿ"  # Hiragana + Katakana
+    "㄰-㆏"  # Hangul Compatibility Jamo
+    "ㇰ-ㇿ"  # Katakana Phonetic Extensions
+    "㐀-䶿"  # CJK Unified Ideographs Extension A
+    "一-鿿"  # CJK Unified Ideographs
+    "가-힯"  # Hangul Syllables
+    "豈-﫿]+"  # CJK Compatibility Ideographs
+)
+
+
+def _cjk_bigrams(run: str) -> list[str]:
+    """Overlapping character bigrams for a CJK run; a lone char passes through."""
+    if len(run) == 1:
+        return [run]
+    return [run[i : i + 2] for i in range(len(run) - 1)]
 
 # Search result cache (Feature 5 — session-aware routing)
 import threading
@@ -181,11 +203,21 @@ def _tokenize(text: str) -> list[str]:
     if not text:
         return []
     text = _CAMEL_RE.sub(r"\1_\2", text)
+    # Pad CJK runs with spaces so mixed-script tokens split cleanly.
+    text = _CJK_RE.sub(lambda m: " " + m.group(0) + " ", text)
     raw_tokens = [t.lower() for t in _TOKEN_RE.findall(text)]
 
     result = []
     seen: set[str] = set()
     for tok in raw_tokens:
+        if _CJK_RE.fullmatch(tok):
+            # Bigram expansion; stemming/abbreviations are English-only.
+            for bg in _cjk_bigrams(tok):
+                result.append(bg)
+                seen.add(bg)
+            continue
+        if len(tok) < 2:
+            continue
         result.append(tok)
         seen.add(tok)
         # Stemmed form
