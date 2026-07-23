@@ -156,6 +156,14 @@ def _build_indexed_response(
         **status.as_fields(),
         "_meta": {"timing_ms": round(elapsed, 1), "match_path": match_path},
     }
+    if status.loadable:
+        # Turn-economy steering (v1.108.158): resolve_repo is the universal
+        # session opener — name the one-call exploration path up front.
+        result["_meta"]["opening_move"] = (
+            "Exploration question ('how does X work')? get_ranked_context(repo, "
+            "query, token_budget) answers in one call — prefer it over chained "
+            "search_symbols/get_file_outline/get_symbol_source hops."
+        )
     metadata = {
         "source_root": entry.get("source_root") or status.source_root,
         "display_name": entry.get("display_name") or status.display_name,

@@ -262,6 +262,9 @@ def _counter_front_door_tools() -> list:
                 "single-verb front door to the full tool catalog. Read-only by "
                 "default — actions that change index/session state require "
                 "allow_state_change=true, and execution/file-write verbs are refused. "
+                "For exploration questions ('how does X work'), "
+                "order('get_ranked_context', {repo, query, token_budget}) answers in "
+                "ONE call — prefer it over chained search/outline/source hops. "
                 "Call 'menu' to discover actions, or 'route' to pick one from a task."
             ),
             inputSchema={
@@ -4475,6 +4478,49 @@ async def _auto_watch_if_needed(name: str, arguments: dict, storage_path: Option
         logger.debug("Auto-watch failed for %s", folder, exc_info=True)
 
 
+# --- Turn-economy steering (v1.108.158) --------------------------------------
+# Measured driver (2026-07-22 benchmark-harness run): exploration sessions hop
+# search -> outline -> source 2-3x more than a raw baseline, and each MCP round
+# trip re-drags the cached context. The one-call openers (get_ranked_context /
+# assemble_task_context) existed but no session used them. Steering is
+# ADVISORY only: terse, bounded to one nudge per session, never alters dispatch.
+_STEER_HOP_TOOLS = frozenset({
+    "search_symbols", "search_text", "get_file_outline", "get_symbol_source",
+})
+_STEER_BUNDLE_TOOLS = frozenset({
+    "get_ranked_context", "assemble_task_context", "get_context_bundle", "plan_turn",
+})
+_STEER_NUDGE_AT = 3
+_steer_state: dict = {"hops": 0, "bundles": 0, "nudged": False, "repos": []}
+
+
+def _steer_note_call(name: str, arguments: dict, result) -> None:
+    """Record hop/bundle traffic + resolved repo ids (process == session)."""
+    if name in _STEER_HOP_TOOLS:
+        _steer_state["hops"] += 1
+    elif name in _STEER_BUNDLE_TOOLS:
+        _steer_state["bundles"] += 1
+    repo = None
+    if name == "resolve_repo" and isinstance(result, dict):
+        repo = result.get("repo")
+    elif isinstance(arguments, dict):
+        repo = arguments.get("repo")
+    if isinstance(repo, str) and repo and repo not in _steer_state["repos"] and len(_steer_state["repos"]) < 5:
+        _steer_state["repos"].append(repo)
+
+
+def _steer_hint_due(name: str, result) -> bool:
+    """One-time advisory: ≥N hop calls, zero bundle calls, on a search response."""
+    return (
+        name in ("search_symbols", "search_text")
+        and isinstance(result, dict)
+        and "error" not in result
+        and not _steer_state["nudged"]
+        and _steer_state["bundles"] == 0
+        and _steer_state["hops"] >= _STEER_NUDGE_AT
+    )
+
+
 async def _handle_counter_tool(name: str, arguments: dict) -> list[TextContent]:
     """Dispatch the Counter front door (order / menu / route)."""
     if name == "order":
@@ -6105,6 +6151,24 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent] | CallToolR
         except Exception:
             logger.debug("Budget/yield attach failed", exc_info=True)
 
+        # Turn-economy steering (v1.108.158): count hop vs bundle traffic; after
+        # _STEER_NUDGE_AT hop calls with no bundle call, advise the one-call
+        # opener ONCE, on a search response (where the next-query decision is
+        # made). Forces JSON for that single response so the hint can't be
+        # dropped by a lossy compact encoding.
+        try:
+            _steer_note_call(name, arguments, result)
+            if _steer_hint_due(name, result):
+                _steer_state["nudged"] = True
+                result.setdefault("_meta", {})["hint"] = (
+                    "Several search/read hops and no bundle call yet this session. "
+                    "For exploration questions, get_ranked_context(repo, query, "
+                    "token_budget) returns ranked, budget-packed context in ONE call."
+                )
+                _requested_format = "json"
+        except Exception:
+            logger.debug("Steering attach failed", exc_info=True)
+
         # Response-level secret redaction — scrub leaked credentials
         # before they reach the LLM context window. Skipped for tools that
         # return raw cached source (any "secret" found is the user's own
@@ -6171,7 +6235,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent] | CallToolR
                 "summary": f"KeyError: {e}",
             }
             return _error_call_result(json.dumps(payload, separators=(',', ':')))
-        return _error_call_result(json.dumps({"error": f"Missing required argument: {e}. Check the tool schema for correct parameter names."}, separators=(',', ':')))
+        _missing_msg = f"Missing required argument: {e}. Check the tool schema for correct parameter names."
+        if str(e).strip("'\"") == "repo" and _steer_state["repos"]:
+            # Informed retry (v1.108.158): agents ordering without resident
+            # schemas omit repo — name what this session has already resolved.
+            _missing_msg += " This session has resolved: " + ", ".join(_steer_state["repos"]) + ". Pass repo=<one of these>."
+        return _error_call_result(json.dumps({"error": _missing_msg}, separators=(',', ':')))
     except Exception as exc:
         _call_ok = False
         logger.error("call_tool %s failed", name, exc_info=True)

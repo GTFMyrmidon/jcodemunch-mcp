@@ -2,6 +2,33 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.158] - 2026-07-22 - Turn-economy steering toward the one-call context openers
+
+### Added
+- **Advisory steering toward `get_ranked_context` for exploration sessions.**
+  Measured driver (2026-07-22 benchmark-harness runs): exploration sessions
+  hop search → outline → source 2-3x more than a raw-read baseline — each MCP
+  round trip re-drags the cached context — while the one-call openers
+  (`get_ranked_context` / `assemble_task_context`) went unused. Three
+  advisory layers, all terse and bounded, none alter dispatch:
+  1. The Counter's `order` description names the one-call exploration path
+     (`order('get_ranked_context', {repo, query, token_budget})`).
+  2. `resolve_repo` — the universal session opener — attaches
+     `_meta.opening_move` naming the same path (loadable indexes only).
+  3. A once-per-session escalation hint: after 3 hop-tool calls
+     (`search_symbols`/`search_text`/`get_file_outline`/`get_symbol_source`)
+     with zero bundle-tool calls, the next search response carries
+     `_meta.hint` suggesting `get_ranked_context`; that single response is
+     forced to JSON so a lossy compact encoding can't drop the hint.
+- **Informed retry on missing `repo`.** Agents ordering without resident
+  schemas omit the required `repo` arg; the missing-argument error now names
+  the repo ids this session has already resolved, so the retry doesn't need a
+  discovery round trip.
+
+  No schema, tool-count, or INDEX_VERSION change (front-door description text
+  only; the gated tier profiles are untouched). New
+  `tests/test_v1_108_158.py` (12).
+
 ## [1.108.157] - 2026-07-22 - order() moves a multi-item list on a singular prop to its plural
 
 ### Fixed
