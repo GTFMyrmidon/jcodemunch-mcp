@@ -87,6 +87,7 @@ WEVE_STYLE_FILES = {
     "cells/webse/src/webse/config_types.gleam",
     "cells/webse/test/webse_test.gleam",
     "cells/webse/test/support/helper.gleam",
+    "cells/webse/dev/seed_data.gleam",
     "soma/src/soma/config_yaml.gleam",
     "cx/src/cx/cluster_config_yaml.gleam",
     "cells/webse/gleam.toml",
@@ -101,6 +102,7 @@ class TestGleamSourceRoots:
         assert "packages/yamlutils/src" in roots
         assert "cells/webse/src" in roots
         assert "cells/webse/test" in roots
+        assert "cells/webse/dev" in roots
         assert "soma/src" in roots
         assert "cx/src" in roots
 
@@ -109,6 +111,7 @@ class TestGleamSourceRoots:
         roots = _gleam_source_roots(files)
         assert "cells/empty/src" in roots
         assert "cells/empty/test" in roots
+        assert "cells/empty/dev" in roots
 
     def test_root_level_package(self):
         files = frozenset({"src/app.gleam", "test/app_test.gleam", "gleam.toml"})
@@ -132,12 +135,15 @@ class TestGleamSpecifierResolution:
         # Test module importing a test-only helper module
         ("support/helper", "cells/webse/test/webse_test.gleam",
          "cells/webse/test/support/helper.gleam"),
+        # Dev module importing its package's src module
+        ("webse/config_types", "cells/webse/dev/seed_data.gleam",
+         "cells/webse/src/webse/config_types.gleam"),
         # Stdlib / hex dependency: unresolvable, no edge
         ("gleam/io", "cells/webse/src/webse/config_yaml.gleam", None),
         ("gleam/list", "soma/src/soma/config_yaml.gleam", None),
     ], ids=[
         "cross_package", "same_package", "test_to_src", "test_helper",
-        "stdlib_io", "stdlib_list",
+        "dev_to_src", "stdlib_io", "stdlib_list",
     ])
     def test_resolution(self, specifier, importer, expected):
         result = resolve_specifier(specifier, importer, set(WEVE_STYLE_FILES))

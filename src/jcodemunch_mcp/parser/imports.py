@@ -937,14 +937,15 @@ def _gleam_source_roots(source_files) -> tuple[str, ...]:
     """Detect Gleam source roots from the indexed file set.
 
     A Gleam module path like ``webse/config_types`` is relative to a
-    package's ``src/`` or ``test/`` directory, so those directories are the
-    source roots. They are derived structurally: every path prefix of an
-    indexed ``.gleam`` file that ends in a ``src`` or ``test`` segment
-    (``cells/webse/src/webse/config.gleam`` -> ``cells/webse/src``), plus
-    ``<dir>/src`` and ``<dir>/test`` for every indexed ``gleam.toml``. The
-    two signals overlap for normal packages; the gleam.toml one also covers
-    packages whose files did not make it into the index, and the structural
-    one covers indexes that exclude toml files.
+    package's ``src/``, ``test/`` or ``dev/`` directory, so those
+    directories are the source roots. They are derived structurally: every
+    path prefix of an indexed ``.gleam`` file that ends in a ``src``,
+    ``test`` or ``dev`` segment (``cells/webse/src/webse/config.gleam`` ->
+    ``cells/webse/src``), plus ``<dir>/src``, ``<dir>/test`` and
+    ``<dir>/dev`` for every indexed ``gleam.toml``. The two signals overlap
+    for normal packages; the gleam.toml one also covers packages whose
+    files did not make it into the index, and the structural one covers
+    indexes that exclude toml files.
     """
     cache_key = source_files if isinstance(source_files, frozenset) else frozenset(source_files)
     cached = _gleam_roots_cache.get(cache_key)
@@ -956,11 +957,11 @@ def _gleam_source_roots(source_files) -> tuple[str, ...]:
         if f.endswith(".gleam"):
             parts = f.split("/")
             for i, seg in enumerate(parts[:-1]):
-                if seg in ("src", "test"):
+                if seg in ("src", "test", "dev"):
                     roots.add("/".join(parts[: i + 1]))
         elif f == "gleam.toml" or f.endswith("/gleam.toml"):
             pkg_dir = f[: -len("/gleam.toml")] if "/" in f else ""
-            for sub in ("src", "test"):
+            for sub in ("src", "test", "dev"):
                 roots.add(f"{pkg_dir}/{sub}" if pkg_dir else sub)
 
     result = tuple(sorted(roots))
@@ -1356,9 +1357,9 @@ def resolve_specifier(
 
     # Gleam module-style import: 'webse/config_types' →
     # 'cells/webse/src/webse/config_types.gleam'. Gleam module paths are
-    # slash-joined lowercase segments resolved against a package's src/ or
-    # test/ root; the target extension is always .gleam, so candidates are
-    # built directly instead of via _candidates. The importer's own package
+    # slash-joined lowercase segments resolved against a package's src/,
+    # test/ or dev/ root; the target extension is always .gleam, so candidates
+    # are built directly instead of via _candidates. The importer's own package
     # root is tried first: module paths are only unique per package, and
     # same-package imports are the common case. Stdlib and hex-dependency
     # imports (gleam/io, gleam/list) resolve to nothing — no edge is created.
