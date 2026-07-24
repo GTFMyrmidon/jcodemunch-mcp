@@ -2,6 +2,64 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.166] - 2026-07-24 - absence evidence: cite a zero-result scan as proof (handoff/v2 phase 3, #377)
+
+### Added
+
+- **A zero-result search can now be cited as evidence in a handoff.** Under v1
+  and v2 it could not: nothing was served, so there was no id to reference. But
+  "we searched the complete, fresh, non-truncated index and it is not there" is
+  exactly the claim an audit most needs attested, and the one agents most often
+  assert with no proof at all. Phase 3 of
+  [#377](https://github.com/jgravelle/jcodemunch-mcp/issues/377), proposed by
+  @mightydanp.
+
+  No new retrieval machinery was needed. `retrieval/verdict.build_verdict`
+  already reports a state (`ok` / `low_confidence` / `absent` / `degraded`), the
+  scan counts backing it, per-channel status, index coverage, and a scorer pin.
+  This records those verdicts under a deterministic ref and lets a claim cite
+  the scan itself.
+
+  The flow mirrors how symbol evidence already works: the server hands you the
+  token, you cite it back. A search whose verdict is `absent` now carries
+  `_meta.verdict.evidence_ref`; passing that ref to `finalize_handoff` attests
+  the absence.
+
+  **The refusal rules are the feature, and they are strict.** Only `absent`
+  proves absence. `low_confidence` and `degraded` do not, because a weak or
+  partial scan is not evidence of nothing. A stale index does not, because it
+  describes an older tree than the one being audited. A truncated index does
+  not, because the target may sit in the files the walk dropped. These are
+  @mightydanp's rules, adopted as written.
+
+  A refused scan is still recorded, so citing one returns the reason rather
+  than a bare unknown-ref error: `refused_absence` (or
+  `refused_absence_claims`, naming the claim) carries a sentence explaining
+  what disqualified it. When a search is `absent` but not citable, the live
+  response says so in-band via `absence_citable: false` and
+  `absence_blocked_by`, instead of offering a token that would fail later.
+
+  **The rendered proof is the auditable part.** A bare token proves nothing to
+  a human reader, so the body carries the scan: the tool and query, the scope
+  it was not found in, how many symbols and files were actually scanned, the
+  per-channel status, the index coverage with its exclusion counts and
+  generation SHA, and the scorer version. Unknown coverage renders as
+  "not recorded for this index (scope unknown)" and is never presented as a
+  complete scope. The detail renders once, under its claim when it has one.
+
+  Refs are content-addressed over `(tool, repo, query, scope)`, so the same
+  scan in the same scope is the same proof, and a narrowed scope is a different
+  one. Session-scoped and in-memory, like the handoff store itself; the record
+  is capped and never written to disk.
+
+  New `tests/test_v1_108_166.py` (23), one per refusal rule. Receipt gains
+  `absence_attested` when an absence ref is cited, omitted otherwise. No new
+  tool, no schema or tool-count change, `core_compact` unchanged at 3996, no
+  `INDEX_VERSION` bump. Suite 5618.
+
+  #377 stays open: phase 2 (evidence receipts) and phase 4 (caller-declared
+  requirement matching) remain deferred.
+
 ## [1.108.165] - 2026-07-23 - claim-scoped evidence in the handoff contract (handoff/v2 phase 1, #377)
 
 ### Added

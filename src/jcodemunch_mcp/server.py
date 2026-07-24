@@ -6291,6 +6291,32 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent] | CallToolR
         except Exception:
             logger.debug("Steering attach failed", exc_info=True)
 
+        # Absence evidence (#377 phase 3): record every absence-shaped verdict
+        # so a handoff claim can cite the SCAN when nothing was served, and
+        # hand the caller the citable ref in-band. A ref is only surfaced when
+        # the scan can actually prove absence; otherwise the verdict says so,
+        # rather than offering a token that would be refused at finalization.
+        try:
+            if isinstance(result, dict):
+                _v = (result.get("_meta") or {}).get("verdict")
+                if isinstance(_v, dict):
+                    from . import handoff as _handoff_abs
+                    _ref, _why = _handoff_abs.note_absence(
+                        name,
+                        repo_arg,
+                        arguments.get("query"),
+                        _v,
+                        arguments=arguments,
+                        truncated=bool((result.get("_meta") or {}).get("index_truncated")),
+                    )
+                    if _ref:
+                        _v["evidence_ref"] = _ref
+                    elif _why and _v.get("state") == "absent":
+                        _v["absence_citable"] = False
+                        _v["absence_blocked_by"] = _why
+        except Exception:
+            logger.debug("Absence-evidence record failed", exc_info=True)
+
         # Response-level secret redaction — scrub leaked credentials
         # before they reach the LLM context window. Skipped for tools that
         # return raw cached source (any "secret" found is the user's own
