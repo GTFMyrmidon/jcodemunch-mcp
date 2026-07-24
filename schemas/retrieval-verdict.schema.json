@@ -68,7 +68,8 @@
         "index": {
           "enum": [
             "fresh",
-            "stale"
+            "stale",
+            "rebuilding"
           ]
         }
       },

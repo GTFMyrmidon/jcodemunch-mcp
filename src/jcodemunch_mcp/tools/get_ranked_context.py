@@ -548,6 +548,7 @@ def get_ranked_context(
     result["_meta"]["freshness"] = _probe.summary(context_items)
     _attach_confidence(result, context_items, is_stale=_probe.repo_is_stale)
     from ..retrieval.verdict import build_verdict as _build_verdict
+    from ..retrieval.verdict import index_changed_since_load as _index_changed_since_load
     from ..retrieval.verdict import index_coverage_meta as _index_coverage_meta
     _vres = _build_verdict(
         result_count=len(context_items),
@@ -559,6 +560,7 @@ def get_ranked_context(
         source_files=index.source_files,
         semantic_requested=False,
         index_stale=_probe.repo_is_stale,
+        index_changed=_index_changed_since_load(index),
         coverage=_index_coverage_meta(index),
     )
     negative_evidence = _vres["negative_evidence"]

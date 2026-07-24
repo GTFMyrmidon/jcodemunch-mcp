@@ -2,6 +2,61 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.168] - 2026-07-24 - a rebuild underneath a scan cannot prove absence (5th refusal rule)
+
+### Fixed
+
+- **Absence evidence could be minted over an index that was being rewritten.**
+  v1.108.166 shipped four refusal rules for absence proofs — only `absent`
+  proves absence; `low_confidence`/`degraded` do not; a stale index does not; a
+  truncated index does not. None of them covered an index being **rewritten
+  while the scan reads it**.
+
+  The hole was structural: `channels.index` is fed by a git-SHA freshness probe
+  (stored HEAD vs live HEAD), which is blind to a reindex of an **unchanged**
+  tree — a watcher rebuild after an uncommitted edit, or a silent/stalled index
+  run. Such a scan reported `index: "fresh"`, reached state `absent`, and
+  `note_absence` handed back a citable `absent:<sha>` ref. In other words, the
+  contract whose entire purpose is to make "we looked and it is not there"
+  auditable could attest that claim over a half-written index.
+
+  Zero results plus a detected rewrite now yields `degraded` instead of
+  `absent`. Because `degraded` already cannot prove absence, the fifth rule
+  falls out of the existing "only `absent` proves absence" check — there is no
+  new rule to keep in sync. `absence_refusal` names the real cause rather than
+  the generic state so an operator is not left guessing.
+
+- **`channels.index` gains `"rebuilding"`**, disclosed on **every** state, not
+  just the refused one: a caller reading an `ok` result still deserves to know
+  the index moved under it. Only the absence *claim* is refused — a scan that
+  returned results still returns them, because those symbols really were in the
+  index. Published in `schemas/retrieval-verdict.schema.json` (the `channels`
+  object is `additionalProperties: false` with an enumerated `index`, so an
+  unpublished value would fail validation against our own contract).
+
+### Notes
+
+- **Detection is a filesystem signal, deliberately not `reindex_state`.** That
+  module is in-memory and per-process, so a server answering a search cannot
+  see a reindex driven by a separate `watch-all` login service — the common
+  deployment, and the shape behind
+  [#375](https://github.com/jgravelle/jcodemunch-mcp/issues/375). Routing the
+  guard through it would have produced a safety rule that reads as enforced and
+  silently isn't. Instead `load_index` stamps each index with its `.db` path and
+  mtime (`_stamp_load_provenance`), and `retrieval.verdict.index_changed_since_load`
+  re-stats it. The `.db`/`.db-wal` mtime crosses process boundaries; the helper
+  (`_db_mtime_ns`) already existed for LRU cache invalidation.
+- **Unknown is not changed.** An index with no stamped provenance (a test
+  double, a hand-built `CodeIndex`) reports unchanged rather than degrading
+  every verdict.
+- **Cost is confined to correctness, not throughput**: the state downgrade is
+  scoped to the zero-result path, and the check is two `stat` calls.
+- Byte-identical for existing callers when nothing is rebuilding; the legacy
+  `negative_evidence` trigger and shape are untouched. NO new tool, NO
+  tool-count or `INDEX_VERSION` change. New `tests/test_v1_108_168.py` (18).
+- ⚠ **Suite parity owed**: jdoc and jdata ship the same absence contract and the
+  same four rules. Their fifth rule is not yet written.
+
 ## [1.108.167] - 2026-07-24 - cue-anchored delivery ledger: measure what we hand over twice
 
 ### Added

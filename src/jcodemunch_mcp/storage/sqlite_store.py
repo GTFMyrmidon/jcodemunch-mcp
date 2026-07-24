@@ -338,6 +338,24 @@ def _cache_evict(owner: str, name: str) -> None:
             _index_cache.pop(k, None)
 
 
+def _stamp_load_provenance(index, db_path: Path, mtime_ns: int):
+    """Record which .db an index came from and its mtime at load time.
+
+    Lets a retrieval verdict detect that the index was rewritten UNDERNEATH a
+    scan (`retrieval.verdict.index_changed_since_load`). This is deliberately
+    a filesystem signal rather than `reindex_state`: that module is in-memory
+    and per-process, so a server answering a search cannot see a reindex run by
+    a separate `watch-all` service — the common deployment. The .db/.db-wal
+    mtime is visible across processes.
+    """
+    try:
+        index._db_path = str(db_path)
+        index._loaded_mtime_ns = int(mtime_ns)
+    except Exception:  # pragma: no cover - defensive; never break a load
+        logger.debug("Could not stamp load provenance", exc_info=True)
+    return index
+
+
 def _db_mtime_ns(db_path: Path) -> int:
     """Return the most recent mtime_ns between .db and .db-wal files.
 
@@ -1427,7 +1445,7 @@ class SQLiteIndexStore:
                 return None  # file was deleted between exists() and stat()
             cached = _cache_get(owner, safe_name, mtime_ns, branch)
             if cached is not None:
-                return cached
+                return _stamp_load_provenance(cached, db_path, mtime_ns)
 
         # Single-flight cold hydration (#370): concurrent cold callers against
         # the same repo serialize here — one reads the rows and builds the
@@ -1440,7 +1458,7 @@ class SQLiteIndexStore:
                 return None  # file was deleted while waiting on the lock
             cached = _cache_get(owner, safe_name, mtime_ns, branch)
             if cached is not None:
-                return cached
+                return _stamp_load_provenance(cached, db_path, mtime_ns)
 
             try:
                 conn = self._connect(db_path)
@@ -1503,7 +1521,7 @@ class SQLiteIndexStore:
             except OSError:
                 post_mtime_ns = 0
             _cache_put(owner, safe_name, post_mtime_ns, index, branch)
-            return index
+            return _stamp_load_provenance(index, db_path, post_mtime_ns)
 
     def inspect_index(self, owner: str, name: str, branch: str = ""):
         """Check SQLite index presence and compatibility without loading rows."""

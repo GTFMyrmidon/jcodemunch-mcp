@@ -167,6 +167,7 @@ def build_verdict(
     source_files: Optional[Sequence[str]] = None,
     semantic_requested: bool = False,
     index_stale: bool = False,
+    index_changed: bool = False,
     timed_out: bool = False,
     coverage: Optional[dict] = None,
 ) -> dict:
@@ -192,6 +193,17 @@ def build_verdict(
         state = STATE_DEGRADED
     elif semantic_requested and not semantic_available:
         state = STATE_DEGRADED
+    elif result_count == 0 and index_changed:
+        # The index was rewritten underneath this scan, so "we looked and it is
+        # not there" describes a tree that was moving while we read it — the
+        # target may sit in rows written after we passed them. Same reasoning
+        # as the stale and truncated gates: degraded cannot prove absence, so
+        # the absence-evidence refusal rule falls out of the existing
+        # "only `absent` proves absence" check with no new rule to keep in sync.
+        # Deliberately scoped to the absence path: a scan that RETURNED results
+        # still returns them (they were really in the index) and only discloses
+        # the rebuild via channels.index below.
+        state = STATE_DEGRADED
     elif result_count == 0:
         state = STATE_ABSENT
     elif below_threshold:
@@ -213,7 +225,12 @@ def build_verdict(
         "channels": {
             "lexical": "ok",
             "semantic": semantic_channel,
-            "index": "stale" if index_stale else "fresh",
+            # "rebuilding" is disclosed on EVERY state, not just the degraded
+            # one above: a caller reading an `ok` result still deserves to know
+            # the index moved under it. Only the absence CLAIM is refused.
+            "index": (
+                "rebuilding" if index_changed else ("stale" if index_stale else "fresh")
+            ),
         },
         "scorer": SCORER_VERSION,
         "note": _NOTES[state],
@@ -385,6 +402,36 @@ def _index_source_files(index) -> list:
     if isinstance(langs, dict):
         return list(langs.keys())
     return []
+
+
+def index_changed_since_load(index) -> bool:
+    """Whether the .db was rewritten since this index was loaded (never raises).
+
+    Answers a question ``_index_is_stale`` cannot: that probe compares the
+    stored git SHA against live HEAD, so it sees a repo that moved ON DISK but
+    is blind to a reindex of an UNCHANGED tree — a watcher rebuild after an
+    uncommitted edit reports ``fresh`` while rows are being rewritten.
+
+    Deliberately a filesystem signal, not ``reindex_state``: that module is
+    in-memory and per-process, so a server answering a search cannot see a
+    reindex driven by a separate ``watch-all`` service. The .db/.db-wal mtime
+    crosses process boundaries.
+
+    Unknown is NOT changed: an index with no stamped provenance (a test double,
+    a hand-built CodeIndex) returns False rather than degrading every verdict.
+    """
+    try:
+        from pathlib import Path
+
+        from ..storage.sqlite_store import _db_mtime_ns
+
+        db_path = getattr(index, "_db_path", None)
+        loaded_at = getattr(index, "_loaded_mtime_ns", None)
+        if not db_path or loaded_at is None:
+            return False
+        return _db_mtime_ns(Path(db_path)) != int(loaded_at)
+    except Exception:
+        return False
 
 
 def _index_is_stale(index) -> bool:

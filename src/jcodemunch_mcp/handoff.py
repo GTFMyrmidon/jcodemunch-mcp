@@ -105,12 +105,21 @@ def absence_refusal(record: Optional[dict]) -> Optional[str]:
     if not record:
         return None
     state = record.get("state")
+    channels = record.get("channels") or {}
+    if channels.get("index") == "rebuilding":
+        # Checked before the generic state rule so the reason names the cause:
+        # a zero-result scan mid-rebuild already downgrades to 'degraded', so
+        # the generic branch below would refuse it correctly but unhelpfully.
+        return (
+            "the index was being rewritten during the scan, so the target may sit "
+            "in rows written after the scan passed them"
+        )
     if state != "absent":
         return (
             f"the scan's verdict was '{state}', and only 'absent' can prove absence "
             "(a weak or partial scan is not evidence of nothing)"
         )
-    if (record.get("channels") or {}).get("index") == "stale":
+    if channels.get("index") == "stale":
         return (
             "the index was stale at query time, so the scan describes an older "
             "tree than the one being audited"
