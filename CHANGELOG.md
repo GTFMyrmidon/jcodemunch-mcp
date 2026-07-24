@@ -2,6 +2,65 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.167] - 2026-07-24 - cue-anchored delivery ledger: measure what we hand over twice
+
+### Added
+
+- **The session now measures how often it re-delivers a symbol it already
+  bought.** jcm counted byte-identical repeat calls (`note_call_signature` →
+  `yield.repeated_identical_calls`) and did nothing with the count, and that
+  counter could not see the shape that actually costs: the **same symbol
+  re-delivered under a different query**. `search_symbols("auth handler")` and
+  `get_ranked_context("who validates the token")` can return the same three
+  bodies at full byte cost with two different `args_hash` values — invisible.
+  New delivery ledger in `storage/token_tracker.py` (`_delivered`, capped at
+  `_DELIVERED_MAXSIZE = 5000`, insertion-ordered, process lifetime only, never
+  on disk) records `{count, tokens, full_source}` per symbol id.
+- **`yield` block gains `redelivered_symbols` / `redelivery_rate` /
+  `redelivered_tokens_est`** in `get_session_stats`. This is the P0
+  measurement, and it is the gate: a **pre-registered, binding** decision rule
+  (`docs/prd-cue-anchored-delivery.md` §3) says suppression only ships if the
+  measured rate clears 10%. Threshold set before the number exists, honored
+  after — the v1.108.149 cache-stability precedent, where the measurement was
+  the deliverable and the pre-registered threshold told us to hold.
+- **Advisory `_meta.already_delivered`** `{count, symbols[]}` when a response
+  carries symbols the session already received. **Annotation only — no response
+  body changes and nothing is suppressed.** Telling an agent "you already have
+  this" may fix most of it, and costs nothing to find out first. List capped at
+  `_DELIVERY_ANNOTATE_MAX = 20` (count stays exact) so a broad re-search can't
+  flood the envelope.
+- Recorded at the existing `call_tool` chokepoint via new
+  `server._delivery_entries`, covering `search_symbols`, `get_ranked_context`,
+  `get_symbol_source` and `get_context_bundle` (both the flat and batch shapes
+  of the shape-follows-input pair).
+
+### Notes
+
+- **`note_served` is deliberately untouched.** Its record is what the handoff
+  contract ([#374](https://github.com/jgravelle/jcodemunch-mcp/issues/374) /
+  [#377](https://github.com/jgravelle/jcodemunch-mcp/issues/377)) attests
+  `evidence_refs` against; broadening it to the source-dump tools would silently
+  change what a handoff can cite. The delivery ledger is a **parallel** record.
+  Likewise `_yield_served`'s value type is a followed-through bool the yield
+  block sums over, so the ledger sits beside it rather than extending it.
+- **Only full-source deliveries are priced.** A repeat of a signature/summary
+  row is reported but never accrues `redelivered_tokens_est` — re-showing a
+  signature is cheap. A symbol first seen as a search row and later fetched in
+  full is **new bytes, not a redelivery**.
+- **Edit-eviction is the invalidation that ships.** `note_edited_files` now also
+  drops ledger entries for touched files (Windows-separator and suffix-tolerant,
+  reusing the existing path matcher), so stale bytes are never annotated as
+  "you already have this". `content_hash` invalidation is a stated
+  **prerequisite for suppression**, not needed for annotation.
+- **Byte-identical for existing callers**: the `yield` block keeps its exact
+  prior shape when nothing was delivered, and no response body changed. NO new
+  tool, NO schema/tool-count/`INDEX_VERSION` change.
+- Origin: Token Cost Radar 2026-07-24 research watch (arXiv 2607.20972,
+  cue-anchored working memory). Clean-room; the paper's 39% intra-session reread
+  figure is **theirs over their harness** and is deliberately not claimed here —
+  we publish our own number or none. PRD:
+  `docs/prd-cue-anchored-delivery.md`. New `tests/test_v1_108_167.py` (33).
+
 ## [1.108.166] - 2026-07-24 - absence evidence: cite a zero-result scan as proof (handoff/v2 phase 3, #377)
 
 ### Added

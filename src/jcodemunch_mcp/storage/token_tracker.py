@@ -58,6 +58,7 @@ _TELEMETRY_URL = "https://j.gravelle.us/APIs/savings/post.php"
 _FLUSH_INTERVAL = 3  # flush to disk every N calls
 _RESULT_CACHE_MAXSIZE = 256  # max tool-result cache entries per session
 _YIELD_SERVED_MAXSIZE = 5000  # max served-symbol-id entries tracked per session
+_DELIVERED_MAXSIZE = 5000  # max delivery-ledger entries tracked per session
 _CALL_SIG_MAXSIZE = 2000  # max distinct (tool, args_hash) signatures tracked
 _BUDGET_APPROACHING_PCT = 0.8  # _meta.budget appears at >=80% of the limit
 _ESTIMATE_RATIO_MAXSIZE = 50  # closed estimate-vs-actual samples kept per session
@@ -120,6 +121,15 @@ class _State:
         # accumulate into _repeat_calls[tool]
         self._call_signatures: OrderedDict = OrderedDict()
         self._repeat_calls: dict[str, int] = {}
+        # Cue-anchored delivery ledger (docs/prd-cue-anchored-delivery.md, P0+P1;
+        # process lifetime only). symbol id -> {count, tokens, full_source}.
+        # Deliberately PARALLEL to _yield_served rather than an extension of it:
+        # that map's value type is a followed-through bool the yield block sums
+        # over, and _call_signatures only catches byte-identical repeat calls —
+        # it cannot see the same symbol re-delivered under a different query,
+        # which is the shape that actually costs.
+        self._delivered: OrderedDict = OrderedDict()
+        self._redelivered_tokens: int = 0
         # Estimate-vs-actual calibration (v1.108.148; process lifetime only).
         # plan_turn opens an estimate; the next plan_turn closes it against
         # the response tokens actually served in between.
@@ -339,11 +349,61 @@ class _State:
         norm = {str(p).replace("\\", "/").lstrip("./") for p in file_paths if p}
         if not norm:
             return
+        def _touched(sid: str) -> bool:
+            sym_file = sid.split("::", 1)[0].replace("\\", "/").lstrip("./")
+            return any(
+                sym_file == f or sym_file.endswith("/" + f) or f.endswith("/" + sym_file)
+                for f in norm
+            )
+
         with self._lock:
             for sid in self._yield_served:
-                sym_file = sid.split("::", 1)[0].replace("\\", "/").lstrip("./")
-                if any(sym_file == f or sym_file.endswith("/" + f) or f.endswith("/" + sym_file) for f in norm):
+                if _touched(sid):
                     self._yield_served[sid] = True
+            # Delivery-ledger invalidation: an edited file means the bytes we
+            # handed over are stale, so those entries can no longer claim
+            # "already delivered". Evict rather than annotate a lie.
+            for sid in [s for s in self._delivered if _touched(s)]:
+                del self._delivered[sid]
+
+    def note_delivered(self, entries) -> list:
+        """Record symbol deliveries; return the ids already delivered before now.
+
+        `entries` yields ``(symbol_id, est_tokens, full_source)``. The returned
+        list is the advisory ``_meta.already_delivered`` payload — the agent is
+        told it is holding these bytes again, never quietly denied them
+        (P1 annotates; suppression is a separate, opt-in phase).
+
+        Only a repeat of a FULL-SOURCE delivery accrues redundant tokens: a
+        signature/summary row is cheap to re-show, so re-showing one is
+        reported but never priced. Thread-safe.
+        """
+        repeats: list = []
+        with self._lock:
+            for sid, tokens, full_source in entries:
+                if not sid:
+                    continue
+                est = max(0, int(tokens or 0))
+                rec = self._delivered.get(sid)
+                if rec is None:
+                    self._delivered[sid] = {
+                        "count": 1,
+                        "tokens": est,
+                        "full_source": bool(full_source),
+                    }
+                    if len(self._delivered) > _DELIVERED_MAXSIZE:
+                        self._delivered.popitem(last=False)
+                    continue
+                rec["count"] += 1
+                if full_source and rec["full_source"]:
+                    self._redelivered_tokens += est
+                elif full_source:
+                    # First full-source delivery of a symbol previously seen
+                    # only as a signature row — new bytes, not a redelivery.
+                    rec["full_source"] = True
+                    rec["tokens"] = est
+                repeats.append(sid)
+        return repeats
 
     def note_call_signature(self, tool_name: str, args_hash: str) -> None:
         """Count repeated identical (tool, args) calls. Thread-safe."""
@@ -358,18 +418,27 @@ class _State:
                     self._call_signatures.popitem(last=False)
 
     def _yield_locked(self) -> Optional[dict]:
-        """Yield block, or None when nothing rankable was served. Lock held."""
+        """Yield block, or None when nothing was served or delivered. Lock held."""
         served = len(self._yield_served)
-        if served == 0:
+        delivered = len(self._delivered)
+        if served == 0 and delivered == 0:
             return None
-        followed = sum(1 for v in self._yield_served.values() if v)
-        block = {
-            "rate": round(followed / served, 3),
-            "served_results": served,
-            "followed_through": followed,
-        }
+        block: dict = {}
+        if served:
+            followed = sum(1 for v in self._yield_served.values() if v)
+            block["rate"] = round(followed / served, 3)
+            block["served_results"] = served
+            block["followed_through"] = followed
         if self._repeat_calls:
             block["repeated_identical_calls"] = dict(self._repeat_calls)
+        if delivered:
+            total = sum(r["count"] for r in self._delivered.values())
+            block["redelivered_symbols"] = sum(
+                1 for r in self._delivered.values() if r["count"] > 1
+            )
+            block["redelivery_rate"] = round((total - delivered) / total, 3)
+            if self._redelivered_tokens:
+                block["redelivered_tokens_est"] = self._redelivered_tokens
         return block
 
     def _build_stats_locked(self) -> dict:
@@ -1143,6 +1212,11 @@ def served_symbol_ids() -> frozenset:
 def note_edited_files(file_paths) -> None:
     """Mark served symbols in edited files as followed through (edit-through)."""
     _state.note_edited_files(file_paths)
+
+
+def note_delivered(entries) -> list:
+    """Record symbol deliveries; return ids already delivered this session."""
+    return _state.note_delivered(entries)
 
 
 def note_call_signature(tool_name: str, args_hash: str) -> None:

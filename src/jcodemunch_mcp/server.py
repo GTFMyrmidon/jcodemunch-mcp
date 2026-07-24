@@ -4629,6 +4629,58 @@ def _steer_hint_due(name: str, result) -> bool:
     )
 
 
+# Cap on ids listed in the _meta.already_delivered advisory (the count is exact;
+# the list is a sample so a broad re-search can't flood the envelope).
+_DELIVERY_ANNOTATE_MAX = 20
+
+
+def _delivery_est_tokens(source) -> int:
+    """Bytes/4 of a delivered body — the same scale as the savings meter."""
+    return len(source) // 4 if isinstance(source, str) else 0
+
+
+def _delivery_entries(name: str, result):
+    """Yield ``(symbol_id, est_tokens, full_source)`` for a tool response.
+
+    Full-source deliveries are where the bytes are; signature/summary rows are
+    recorded so a repeat is still reported, but never priced as redundant
+    (docs/prd-cue-anchored-delivery.md §7 Q3).
+
+    Deliberately separate from the ``note_served`` calls above: that record is
+    what the handoff contract (#374/#377) attests evidence_refs against, and
+    broadening it would change what a handoff can cite.
+    """
+    if not isinstance(result, dict) or "error" in result:
+        return
+
+    def _entry(e: dict):
+        sid = e.get("symbol_id") or e.get("id")
+        if not sid:
+            return None
+        src = e.get("source")
+        return sid, _delivery_est_tokens(src), bool(src)
+
+    if name == "search_symbols":
+        rows = result.get("results", [])
+    elif name == "get_ranked_context":
+        rows = result.get("context_items", [])
+    elif name in ("get_symbol_source", "get_context_bundle"):
+        # Both are shape-follows-input: a single id returns a flat object, a
+        # batch returns {"symbols": [...]}.
+        flat = _entry(result)
+        if flat:
+            yield flat
+        rows = result.get("symbols", [])
+    else:
+        return
+
+    for row in rows:
+        if isinstance(row, dict):
+            got = _entry(row)
+            if got:
+                yield got
+
+
 async def _handle_counter_tool(name: str, arguments: dict) -> list[TextContent]:
     """Dispatch the Counter front door (order / menu / route)."""
     if name == "order":
@@ -6265,6 +6317,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent] | CallToolR
                         e.get("symbol_id") or e.get("id")
                         for e in result.get("context_items", []) if isinstance(e, dict)
                     )
+                # Cue-anchored delivery ledger: tell the agent when it is being
+                # handed bytes it already bought this session. Advisory only —
+                # the response body is unchanged (P1 of
+                # docs/prd-cue-anchored-delivery.md).
+                _repeats = _budget_tracker.note_delivered(_delivery_entries(name, result))
+                if _repeats:
+                    result.setdefault("_meta", {})["already_delivered"] = {
+                        "count": len(_repeats),
+                        "symbols": _repeats[:_DELIVERY_ANNOTATE_MAX],
+                    }
                 _b = _budget_tracker.budget_status()
                 if _b is not None and _b["state"] in ("approaching", "over"):
                     result.setdefault("_meta", {})["budget"] = _b
