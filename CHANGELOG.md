@@ -2,6 +2,56 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.165] - 2026-07-23 - claim-scoped evidence in the handoff contract (handoff/v2 phase 1, #377)
+
+### Added
+
+- **A handoff section may now carry caller-authored `claims`, each with its own
+  `evidence_refs`.** v1 proved every cited ref was retrieved this session, but
+  it could not say WHICH retrieval backs which sentence: refs landed in one
+  global block at the end of the body. Phase 1 of the `handoff/v2` design
+  proposed by @mightydanp in [#377](https://github.com/jgravelle/jcodemunch-mcp/issues/377)
+  closes that gap.
+
+  Each claim is `{id, statement, evidence_refs, classification?}`. New
+  `_validate_claims` requires ids unique across the WHOLE handoff, not per
+  section, since the id is the machine-readable anchor a caller cites and two
+  sections owning the same id would make that citation ambiguous. Statements
+  and classifications are preserved verbatim; the server never rewrites one.
+  Each claim's refs are attested separately through the existing
+  `_validate_evidence`, so an unknown ref returns `invalid_claims:
+  [{claim_id, unknown_refs}]` and names the claim that cited it instead of
+  vanishing into one global failure list. `render_handoff` prints the claim as
+  a `###` heading with its evidence indented beneath it.
+
+  Three decisions the proposal left open:
+
+  - **The input picks the contract.** No claims anywhere means the schema
+    string stays `jcodemunch.handoff/v1` and the body is byte-identical to
+    what v1 rendered; `claims_attested` is omitted from the receipt entirely
+    rather than reported as `0`. Any claim promotes the handoff to
+    `jcodemunch.handoff/v2`.
+  - **Claims can satisfy `evidence_refs`.** A caller who scoped everything to
+    claims should not have to restate it globally, so the top-level list may be
+    empty when claims carry refs. Strictly more permissive; no existing call
+    changes.
+  - **Claim refs join the canonical evidence index**, caller order first, so a
+    v1 consumer reading a v2 handoff still sees every reference in the place it
+    expects.
+
+  Section `content` becomes optional only for a section that carries claims.
+  `finalize_handoff` is standard tier, so `core_compact` is unchanged at 3996.
+  New `tests/test_v1_108_165.py` (18, incl. the byte-identical v1 guard). No
+  `INDEX_VERSION` or tool-count change.
+
+  Known limit, disclosed on #377 before anyone builds against it: phase 1 does
+  not narrow what counts as a match. `_validate_evidence` still attests a ref
+  against the file component of a served id, so citing a whole file attests
+  even when one unrelated symbol from it was served. Narrowing that is phase 2
+  (evidence receipts), which is deferred.
+
+  Suite parity same day: jdocmunch-mcp v1.116.0 + jdatamunch-mcp v1.25.0.
+
 ## [1.108.164] - 2026-07-23 - A path-shaped `repo` arg returns a routed error, not a raw storage crash (#376)
 
 ### Fixed

@@ -12,6 +12,13 @@ served-symbol ids) at finalization time, so a finalized handoff attests that
 every evidence reference it cites corresponds to something actually served
 by this server in this session. Unknown refs fail closed.
 
+``handoff/v2`` (#377, claim-scoped evidence) is the same contract one level
+deeper: a section may carry caller-authored ``claims``, each with its OWN
+``evidence_refs``, so the body shows which retrieval backs which sentence
+instead of one global list at the end. v1 proved "this was retrieved in this
+session"; v2 proves that per claim. The schema string is chosen by the INPUT —
+no claims anywhere means a v1 body, byte-identical to what v1 produced.
+
 Charter constraints (accepted scope, issue #374):
 - Deterministic: same repo/task/profile/sections/evidence/appendices ->
   byte-identical body, same id, same sha256.
@@ -30,6 +37,7 @@ import threading
 from typing import Iterable, Optional
 
 HANDOFF_SCHEMA = "jcodemunch.handoff/v1"
+HANDOFF_SCHEMA_V2 = "jcodemunch.handoff/v2"
 HANDOFF_URI_PREFIX = "munch://handoff/"
 HANDOFF_CONTENT_TYPE = "text/markdown"
 
@@ -70,10 +78,61 @@ def _validate_evidence(refs, served_ids: Iterable[str]):
     return ordered, unknown
 
 
+def _validate_claims(raw, si, seen_ids):
+    """Validate one section's caller-authored claims (#377 phase 1).
+
+    Claim ids are unique across the WHOLE handoff, not per section: they are
+    the machine-readable anchor a caller cites, and two sections owning the
+    same id would make that citation ambiguous. Returns (claims, error).
+    """
+    if raw is None:
+        return [], None
+    if not isinstance(raw, list) or not raw:
+        return None, f"sections[{si}].claims must be a non-empty list when present"
+    out = []
+    for j, claim in enumerate(raw):
+        where = f"sections[{si}].claims[{j}]"
+        if not isinstance(claim, dict):
+            return None, f"{where} must be an object with 'id', 'statement' and 'evidence_refs'"
+        cid = claim.get("id")
+        statement = claim.get("statement")
+        if not isinstance(cid, str) or not cid.strip():
+            return None, f"{where}.id must be a non-empty string"
+        if not isinstance(statement, str) or not statement.strip():
+            return None, f"{where}.statement must be a non-empty string"
+        cid = cid.strip()
+        if cid in seen_ids:
+            return None, f"duplicate claim id: {cid!r} (claim ids must be unique across the handoff)"
+        seen_ids.add(cid)
+        refs = claim.get("evidence_refs")
+        if not isinstance(refs, list) or not refs:
+            return None, (
+                f"{where}.evidence_refs must be a non-empty list of session "
+                "retrieval references (a claim with no evidence is not attestable)"
+            )
+        classification = claim.get("classification")
+        if classification is not None and (
+            not isinstance(classification, str) or not classification.strip()
+        ):
+            return None, f"{where}.classification must be a non-empty string when present"
+        out.append(
+            {
+                "id": cid,
+                # Caller-authored text is preserved verbatim; the server never
+                # rewrites a statement or a classification.
+                "statement": statement.strip(),
+                "classification": classification.strip() if classification else None,
+                "raw_refs": refs,
+            }
+        )
+    return out, None
+
+
 def _validate_sections(sections):
     if not isinstance(sections, list) or not sections:
         return None, "sections must be a non-empty list of {heading, content} objects"
     out = []
+    seen_ids: set[str] = set()
     for i, sec in enumerate(sections):
         if not isinstance(sec, dict):
             return None, f"sections[{i}] must be an object with 'heading' and 'content'"
@@ -81,9 +140,16 @@ def _validate_sections(sections):
         content = sec.get("content")
         if not isinstance(heading, str) or not heading.strip():
             return None, f"sections[{i}].heading must be a non-empty string"
-        if not isinstance(content, str) or not content.strip():
+        claims, err = _validate_claims(sec.get("claims"), i, seen_ids)
+        if err:
+            return None, err
+        # Content stays required in the v1 shape; a claims-carrying section may
+        # omit it, since the claims themselves are then the section's body.
+        if content is None and claims:
+            content = ""
+        if not isinstance(content, str) or (not content.strip() and not claims):
             return None, f"sections[{i}].content must be a non-empty string"
-        out.append((heading.strip(), content.rstrip()))
+        out.append((heading.strip(), content.rstrip(), claims))
     return out, None
 
 
@@ -112,18 +178,38 @@ def _validate_appendices(appendices):
     return out, None
 
 
-def render_handoff(repo: str, task: str, profile: str, sections, evidence_refs, appendices) -> str:
+def render_handoff(
+    repo: str,
+    task: str,
+    profile: str,
+    sections,
+    evidence_refs,
+    appendices,
+    schema: str = HANDOFF_SCHEMA,
+) -> str:
     """Deterministic canonical Markdown. No timestamps, no randomness."""
     lines = [
         f"# Handoff: {task}",
         "",
-        f"- Schema: {HANDOFF_SCHEMA}",
+        f"- Schema: {schema}",
         f"- Repo: {repo}",
         f"- Profile: {profile}",
         "",
     ]
-    for heading, content in sections:
-        lines += [f"## {heading}", "", content, ""]
+    for heading, content, claims in sections:
+        lines += [f"## {heading}", ""]
+        if content:
+            lines += [content, ""]
+        for claim in claims:
+            # Evidence renders BESIDE the claim it supports — the whole point of
+            # v2. The global index below stays for v1 compatibility.
+            lines += [f"### {claim['statement']}", ""]
+            lines.append(f"- Claim id: `{claim['id']}`")
+            if claim["classification"]:
+                lines.append(f"- Classification: {claim['classification']}")
+            lines.append("- Evidence:")
+            lines += [f"  - `{ref}`" for ref in claim["refs"]]
+            lines.append("")
     lines += [
         "## Evidence",
         "",
@@ -167,15 +253,47 @@ def finalize_handoff(
     apps, err = _validate_appendices(appendices)
     if err:
         return {"error": err}
-    if not isinstance(evidence_refs, list) or not evidence_refs:
+    served = list(served_ids or ())
+    claim_count = sum(len(claims) for _, _, claims in sec)
+
+    # Attest each claim's refs on their own, so an unknown ref names the claim
+    # that cited it instead of vanishing into one global failure list (#377).
+    invalid_claims = []
+    for _, _, claims in sec:
+        for claim in claims:
+            claim_refs, claim_unknown = _validate_evidence(claim["raw_refs"], served)
+            claim["refs"] = claim_refs
+            if claim_unknown:
+                invalid_claims.append({"claim_id": claim["id"], "unknown_refs": claim_unknown})
+    if invalid_claims:
+        return {
+            "error": (
+                "claim evidence attestation failed: the following claims cite "
+                "refs that do not correspond to anything retrieved in this session"
+            ),
+            "invalid_claims": invalid_claims,
+            "hint": (
+                "Every claim-scoped ref must be a symbol id (or its file path) "
+                "this session actually served. Retrieve the evidence that "
+                "supports the claim, then finalize."
+            ),
+        }
+
+    # `evidence_refs` stays required in the v1 shape, but claims can satisfy it:
+    # a caller who scoped everything to claims should not have to restate it.
+    claim_refs_flat = [ref for _, _, claims in sec for claim in claims for ref in claim["refs"]]
+    if not isinstance(evidence_refs, list) or (not evidence_refs and not claim_refs_flat):
         return {
             "error": (
                 "evidence_refs must be a non-empty list of session retrieval "
                 "references (symbol ids or file paths served this session by "
-                "search_symbols / get_ranked_context)"
+                "search_symbols / get_ranked_context), or every claim must "
+                "carry its own evidence_refs"
             )
         }
-    refs, unknown = _validate_evidence(evidence_refs, served_ids or ())
+    # The canonical index is the union, caller order first: every claim ref is
+    # discoverable from the global list, which keeps v1 consumers whole.
+    refs, unknown = _validate_evidence(list(evidence_refs) + claim_refs_flat, served)
     if unknown:
         return {
             "error": (
@@ -190,12 +308,15 @@ def finalize_handoff(
             ),
         }
 
-    body = render_handoff(repo.strip(), task.strip(), profile.strip(), sec, refs, apps)
+    # The input picks the contract: no claims anywhere is still a v1 handoff,
+    # and its body is byte-identical to what v1 rendered.
+    schema = HANDOFF_SCHEMA_V2 if claim_count else HANDOFF_SCHEMA
+    body = render_handoff(repo.strip(), task.strip(), profile.strip(), sec, refs, apps, schema)
     raw = body.encode("utf-8")
     sha256 = hashlib.sha256(raw).hexdigest()
     handoff_id = sha256[:16]
     receipt = {
-        "schema": HANDOFF_SCHEMA,
+        "schema": schema,
         "handoff_id": handoff_id,
         "repo": repo.strip(),
         "profile": profile.strip(),
@@ -208,6 +329,9 @@ def finalize_handoff(
         "evidence_count": len(refs),
         "appendices": [name for name, _, _ in apps],
     }
+    if claim_count:
+        # Omitted entirely on a v1 handoff, so v1 receipts stay unchanged.
+        receipt["claims_attested"] = claim_count
     with _lock:
         _handoffs[handoff_id] = {"body": body, "receipt": receipt}
     return dict(receipt)
