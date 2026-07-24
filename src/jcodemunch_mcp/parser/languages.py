@@ -1433,8 +1433,7 @@ STYL_SPEC = LanguageSpec(
 
 
 # TOML specification
-# NOTE: TOML tables are the closest analogue to symbols. Custom extraction
-# deferred. Files are indexed for text search.
+# Custom extraction in extractor.py handles tables, array tables, and key-value pairs.
 TOML_SPEC = LanguageSpec(
     ts_language="toml",
     symbol_node_types={},
