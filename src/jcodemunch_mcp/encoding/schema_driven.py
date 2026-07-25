@@ -78,6 +78,7 @@ def encode(
     nested_dicts: dict[str, list[str]] | None = None,
     meta_keys: Iterable[str] = (),
     json_blobs: Iterable[str] = (),
+    meta_json_blobs: Iterable[str] = (),
 ) -> tuple[str, str]:
     tables = list(tables)
     nested_dicts = nested_dicts or {}
@@ -110,6 +111,16 @@ def encode(
     for k in meta_keys:
         if k in meta:
             scalar_payload[f"_meta.{k}"] = meta[k]
+    # Structured _meta values (dicts/lists) that must survive compaction intact.
+    # meta_keys flattens to a scalar, which would stringify a dict — the retrieval
+    # verdict is the reason this exists: dropping it hands the agent a confident
+    # zero-result answer with no way to know the scan was degraded (and silently
+    # discards the absence evidence_ref minted in call_tool).
+    for k in meta_json_blobs:
+        if k in meta:
+            scalar_payload[f"__json._meta.{k}"] = json.dumps(
+                meta[k], separators=(",", ":")
+            )
     for k in json_blobs:
         if k in response:
             scalar_payload[f"__json.{k}"] = json.dumps(response[k], separators=(",", ":"))
@@ -173,6 +184,7 @@ def decode(
     nested_dicts: dict[str, list[str]] | None = None,
     meta_keys: Iterable[str] = (),
     json_blobs: Iterable[str] = (),
+    meta_json_blobs: Iterable[str] = (),
     scalar_types: Mapping[str, str] | None = None,
 ) -> dict:
     tables = list(tables)
@@ -224,6 +236,13 @@ def decode(
         prefixed = f"_meta.{k}"
         if prefixed in raw_scalars:
             meta_out[k] = _coerce(raw_scalars[prefixed], stypes.get(prefixed, "str"))
+    for k in meta_json_blobs:
+        prefixed = f"__json._meta.{k}"
+        if prefixed in raw_scalars:
+            try:
+                meta_out[k] = json.loads(raw_scalars[prefixed])
+            except Exception:
+                meta_out[k] = raw_scalars[prefixed]
     if meta_out:
         result["_meta"] = meta_out
     # JSON blobs

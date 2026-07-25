@@ -19,11 +19,12 @@ _META = (
     "timing_ms", "files_searched", "truncated",
     "tokens_saved", "total_tokens_saved",
 )
+_META_JSON = ("verdict",)  # structured _meta that must survive compaction
 
 
 def encode(tool: str, response: dict) -> tuple[str, str]:
-    return sd.encode(tool, response, ENCODING_ID, _TABLES, _SCALARS, meta_keys=_META)
+    return sd.encode(tool, response, ENCODING_ID, _TABLES, _SCALARS, meta_keys=_META, meta_json_blobs=_META_JSON)
 
 
 def decode(payload: str) -> dict:
-    return sd.decode(payload, _TABLES, _SCALARS, meta_keys=_META)
+    return sd.decode(payload, _TABLES, _SCALARS, meta_keys=_META, meta_json_blobs=_META_JSON)

@@ -18,6 +18,7 @@ _TABLES = [
 ]
 _SCALARS = ("repo", "identifier", "reference_count", "note")
 _META = ("timing_ms", "truncated", "tokens_saved", "total_tokens_saved")
+_META_JSON = ("verdict",)  # structured _meta that must survive compaction
 _JSON = ("results", _EMPTY_GROUPS_KEY)
 
 
@@ -78,12 +79,12 @@ def _regroup(decoded: dict) -> dict:
 
 def encode(tool: str, response: dict) -> tuple[str, str]:
     if "references" not in response:
-        return sd.encode(tool, response, ENCODING_ID, _TABLES, _SCALARS, meta_keys=_META, json_blobs=_JSON)
-    return sd.encode(tool, _flatten(response), ENCODING_ID, _TABLES, _SCALARS, meta_keys=_META, json_blobs=_JSON)
+        return sd.encode(tool, response, ENCODING_ID, _TABLES, _SCALARS, meta_keys=_META, meta_json_blobs=_META_JSON, json_blobs=_JSON)
+    return sd.encode(tool, _flatten(response), ENCODING_ID, _TABLES, _SCALARS, meta_keys=_META, meta_json_blobs=_META_JSON, json_blobs=_JSON)
 
 
 def decode(payload: str) -> dict:
-    decoded = sd.decode(payload, _TABLES, _SCALARS, meta_keys=_META, json_blobs=_JSON)
+    decoded = sd.decode(payload, _TABLES, _SCALARS, meta_keys=_META, meta_json_blobs=_META_JSON, json_blobs=_JSON)
     if _ROWS_KEY in decoded:
         return _regroup(decoded)
     return decoded

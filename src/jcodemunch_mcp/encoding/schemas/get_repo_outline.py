@@ -32,6 +32,7 @@ _SCALARS = (
 _META = (
     "timing_ms", "tokens_saved", "total_tokens_saved", "is_stale",
 )
+_META_JSON = ("verdict",)  # structured _meta that must survive compaction
 _JSON = (
     "languages", "directories", "symbol_kinds",
     "most_imported_files", "most_central_symbols",
@@ -41,11 +42,11 @@ _JSON = (
 def encode(tool: str, response: dict) -> tuple[str, str]:
     return sd.encode(
         tool, response, ENCODING_ID, _TABLES, _SCALARS,
-        meta_keys=_META, json_blobs=_JSON,
+        meta_keys=_META, meta_json_blobs=_META_JSON, json_blobs=_JSON,
     )
 
 
 def decode(payload: str) -> dict:
     return sd.decode(
-        payload, _TABLES, _SCALARS, meta_keys=_META, json_blobs=_JSON,
+        payload, _TABLES, _SCALARS, meta_keys=_META, meta_json_blobs=_META_JSON, json_blobs=_JSON,
     )

@@ -54,6 +54,7 @@ _BATCH_TABLES = [
 
 _SCALARS = ("repo", "file", "symbol_count", "language")
 _META = ("timing_ms", "tokens_saved", "total_tokens_saved")
+_META_JSON = ("verdict",)  # structured _meta that must survive compaction
 
 
 def _is_batch(response: dict) -> bool:
@@ -146,13 +147,13 @@ def _payload_is_batch(payload: str) -> bool:
 def encode(tool: str, response: dict) -> tuple[str, str]:
     if _is_batch(response):
         return sd.encode(
-            tool, _flatten_batch(response), ENCODING_ID, _BATCH_TABLES, _SCALARS, meta_keys=_META
+            tool, _flatten_batch(response), ENCODING_ID, _BATCH_TABLES, _SCALARS, meta_keys=_META, meta_json_blobs=_META_JSON
         )
-    return sd.encode(tool, response, ENCODING_ID, _SINGLE_TABLES, _SCALARS, meta_keys=_META)
+    return sd.encode(tool, response, ENCODING_ID, _SINGLE_TABLES, _SCALARS, meta_keys=_META, meta_json_blobs=_META_JSON)
 
 
 def decode(payload: str) -> dict:
     if _payload_is_batch(payload):
-        flat = sd.decode(payload, _BATCH_TABLES, _SCALARS, meta_keys=_META)
+        flat = sd.decode(payload, _BATCH_TABLES, _SCALARS, meta_keys=_META, meta_json_blobs=_META_JSON)
         return _unflatten_batch(flat)
-    return sd.decode(payload, _SINGLE_TABLES, _SCALARS, meta_keys=_META)
+    return sd.decode(payload, _SINGLE_TABLES, _SCALARS, meta_keys=_META, meta_json_blobs=_META_JSON)

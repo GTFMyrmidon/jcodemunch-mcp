@@ -17,6 +17,7 @@ _TABLES = [
 ]
 _SCALARS = ("repo", "cycle_count")
 _META = ("timing_ms",)
+_META_JSON = ("verdict",)  # structured _meta that must survive compaction
 
 
 def encode(tool: str, response: dict) -> tuple[str, str]:
@@ -26,11 +27,11 @@ def encode(tool: str, response: dict) -> tuple[str, str]:
             {"length": len(c), "files": _CYCLE_SEP.join(c)}
             for c in r["cycles"] if isinstance(c, list)
         ]
-    return sd.encode(tool, r, ENCODING_ID, _TABLES, _SCALARS, meta_keys=_META)
+    return sd.encode(tool, r, ENCODING_ID, _TABLES, _SCALARS, meta_keys=_META, meta_json_blobs=_META_JSON)
 
 
 def decode(payload: str) -> dict:
-    result = sd.decode(payload, _TABLES, _SCALARS, meta_keys=_META)
+    result = sd.decode(payload, _TABLES, _SCALARS, meta_keys=_META, meta_json_blobs=_META_JSON)
     if "cycles" in result:
         result["cycles"] = [
             c["files"].split(_CYCLE_SEP) for c in result["cycles"]

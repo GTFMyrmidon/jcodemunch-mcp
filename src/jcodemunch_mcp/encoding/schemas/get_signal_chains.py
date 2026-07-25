@@ -25,6 +25,7 @@ _DISCOVERY_META = (
     "timing_ms", "max_depth", "include_tests",
     "symbols_on_chains", "total_functions_methods",
 )
+_META_JSON = ("verdict",)  # structured _meta that must survive compaction
 _LOOKUP_META = ("timing_ms", "total_gateways")
 _NO_GATEWAY_META = ("timing_ms",)
 _META = tuple(dict.fromkeys(_DISCOVERY_META + _LOOKUP_META + _NO_GATEWAY_META))
@@ -48,5 +49,5 @@ def encode(tool: str, response: dict) -> tuple[str, str]:
 
 def decode(payload: str) -> dict:
     return sd.decode(
-        payload, _TABLES, _SCALARS, meta_keys=_META, json_blobs=_JSON,
+        payload, _TABLES, _SCALARS, meta_keys=_META, meta_json_blobs=_META_JSON, json_blobs=_JSON,
     )

@@ -31,18 +31,19 @@ _TABLES = [
 _SCALARS = ("repo", "direction", "depth", "depth_reached", "caller_count", "callee_count")
 _NESTED = {"symbol": ["id", "name", "kind", "file", "line"]}
 _META = ("timing_ms", "methodology", "confidence_level", "source", "tip")
+_META_JSON = ("verdict",)  # structured _meta that must survive compaction
 _JSON = ("resolution_tiers",)
 
 
 def encode(tool: str, response: dict) -> tuple[str, str]:
     return sd.encode(
         tool, response, ENCODING_ID, _TABLES, _SCALARS,
-        nested_dicts=_NESTED, meta_keys=_META, json_blobs=_JSON,
+        nested_dicts=_NESTED, meta_keys=_META, meta_json_blobs=_META_JSON, json_blobs=_JSON,
     )
 
 
 def decode(payload: str) -> dict:
     return sd.decode(
         payload, _TABLES, _SCALARS,
-        nested_dicts=_NESTED, meta_keys=_META, json_blobs=_JSON,
+        nested_dicts=_NESTED, meta_keys=_META, meta_json_blobs=_META_JSON, json_blobs=_JSON,
     )

@@ -2,6 +2,56 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.169] - 2026-07-25 - the retrieval verdict survives compaction
+
+### Fixed
+
+- **Every compact encoder silently dropped `_meta.verdict`.** `schema_driven.encode`
+  filters `_meta` through a strict allowlist (`for k in meta_keys: if k in meta`),
+  and `verdict` appeared in **none of the 15** schema files. Under MUNCH encoding
+  the whole retrieval-verdict contract was invisible: `state`, `channels`,
+  `coverage`, `scorer`, and the `did_you_mean` near-misses never reached the
+  caller. Tools *without* a custom encoder (`get_file_content`) kept their
+  verdict, so the signal was present exactly where it was least needed and
+  absent on `search_symbols` / `search_text` / `get_ranked_context` — the three
+  tools the absence contract is built on.
+
+  **The sharpest consequence was on absence evidence.** `server.py`'s chokepoint
+  mints the citable `absent:<sha>` ref onto `_meta.verdict.evidence_ref`, and in
+  compact mode the caller never received it — so a proof the server had already
+  recorded could not be cited, and the in-band `absence_citable:false` /
+  `absence_blocked_by` refusal reason was discarded with it. The token-saving
+  layer was eating the safety layer.
+
+  Fix: new `meta_json_blobs` parameter on `schema_driven.encode`/`decode`,
+  mirroring the existing `json_blobs` mechanism. A structured `_meta` value rides
+  as `__json._meta.<key>` and round-trips as a real dict. **`meta_keys` could not
+  be reused** — that path flattens to a scalar, which would have stringified the
+  verdict into a Python repr. All 15 schemas now declare `_META_JSON = ("verdict",)`.
+
+- **`search_text` was never wired for the v1.108.168 rebuilding rule.** That
+  release added `index_changed=index_changed_since_load(index)` to
+  `search_symbols` and `get_ranked_context` only. The absence chokepoint is
+  **generic** — it fires on any `_meta.verdict` dict — so `search_text` could
+  reach `absent` and mint a citable ref while structurally unable to detect a
+  rewrite underneath its own scan. Same hole as the one .168 closed, left open in
+  the third tool. Now passes `index_changed=`.
+
+### Notes
+
+- **Honest cost:** carrying the verdict adds ~58 tokens to a 20-result encoded
+  search (+18.6%) and ~89 tokens to a zero-result response. The zero-result case
+  is where the value is — that is precisely the response an agent would otherwise
+  read as proven absence. The verdict is carried at **full fidelity**: trimming it
+  inside the encoder would make compact and JSON disagree, which is the exact
+  class of bug being fixed here. If the `ok` verdict is too chatty (`note`
+  duplicates `state` in prose), that is a verdict-construction change for its own
+  release, not something the compaction layer gets to decide.
+- No new tool, no schema/tool-count/INDEX_VERSION change. New
+  `tests/test_v1_108_169.py` (10), including a guard that every schema declaring
+  `_META` also declares `verdict` in `_META_JSON`, so a future encoder cannot
+  reintroduce the drop.
+
 ## [1.108.168] - 2026-07-24 - a rebuild underneath a scan cannot prove absence (5th refusal rule)
 
 ### Fixed

@@ -129,9 +129,9 @@ is a byte the agent doesn't pay to read.
 <!-- WHATSNEW:START -->
 #### What's new
 
-- **[v1.108.154](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.154)** (2026-07-21) — `surface` CLI subcommand
-- **[v1.108.153](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.153)** (2026-07-21) — tool-surface schema receipt in session stats
-- **[v1.108.152](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.152)** (2026-07-21) — runtime identity resource (#371)
+- **[v1.108.169](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.169)** (2026-07-25) — the retrieval verdict survives compaction
+- **[v1.108.168](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.168)** (2026-07-24) — a rebuild underneath a scan cannot prove absence (5th refusal rule)
+- **[v1.108.167](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.167)** (2026-07-24) — cue-anchored delivery ledger: measure what we hand over twice
 <!-- WHATSNEW:END -->
 
 ![License](https://img.shields.io/badge/license-dual--use-blue)
@@ -345,6 +345,8 @@ All of these are computed inline from session state — no new background behavi
 Every confidence constant the suite emits traces to a stated basis: **`measured`** (backed by a committed, reproducible benchmark artifact — `benchmarks/provenance/measured.json`, drift-guarded in CI so the constants and the artifact can never silently diverge) or **`declared`** (an engineering prior, honestly labeled as exactly that). `find_implementations` responses carry the per-channel basis in `_meta.confidence_provenance`, and the response contracts themselves are published as JSON Schemas in [`schemas/`](schemas/) (`retrieval-verdict`, `confidence-provenance`, `ranked-context-response`) so CI pipelines and agents can validate responses mechanically. A prior is never presented as a measurement: a `declared` value graduates to `measured` only when a gold-labeled corpus backs it, and a build that claims otherwise fails.
 
 An absence claim is also refused when the ground moved under it. A zero-result scan proves nothing if the index was **being rewritten while the scan read it** — the target may sit in rows written after the scan passed them — so that case reports `degraded` and `channels.index: "rebuilding"` instead of `absent`. This is caught by re-checking the index file itself rather than in-process reindex state, because the rebuild is usually driven by a *separate* watcher process that in-process state cannot see. The rebuild is disclosed on every verdict, not only the refused one: a caller reading a successful result still deserves to know the index moved under it, and only the absence *claim* is withheld.
+
+The verdict survives compaction. jCodeMunch's compact wire format encodes `_meta` through a strict allowlist, and the verdict is carried through it deliberately rather than trimmed for bytes — a safety signal the token-saving layer deletes is no safety signal, and a dropped verdict turns "the scan was degraded" into a confident-looking empty result. That applies to the absence `evidence_ref` too: a proof the server has already recorded stays citable in every response format.
 
 Absence claims carry their own receipts: an `absent` or `degraded` verdict discloses a **coverage contract** — what the corpus *excluded* at index time (unsupported extensions, oversize/binary/secret skips, cap-dropped files, zero-symbol files) plus the index generation it was scanned against — so "scanned N symbols, found nothing" can't lie by omission. An index that predates the contract omits the block: coverage unknown is never presented as "nothing was excluded". Every verdict is also pinned to a `scorer` version, and `benchmarks/calibration/planted_queries.json` records planted positive/negative query rates re-measured live in CI — a scorer change without a re-measured artifact fails the build.
 

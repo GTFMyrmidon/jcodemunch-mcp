@@ -1,23 +1,23 @@
 {
-  "current": "1.108.154",
+  "current": "1.108.169",
   "entries": [
     {
-      "version": "1.108.154",
-      "date": "2026-07-21",
-      "title": "`surface` CLI subcommand",
-      "summary": "- **`jcodemunch-mcp surface [--json]`** \u2014 prints the tool-surface schema receipt (the same block `get_session_stats` reports as `tool_surface`): active surface/profile, visible vs catalog tool counts, estimated schema tokens for each, `schema_tokens_avoided`, and the heaviest tool schemas."
+      "version": "1.108.169",
+      "date": "2026-07-25",
+      "title": "the retrieval verdict survives compaction",
+      "summary": "- **Every compact encoder silently dropped `_meta.verdict`.** `schema_driven.encode` filters `_meta` through a strict allowlist (`for k in meta_keys: if k in meta`), and `verdict` appeared in **none of the 15** schema files. Under MUNCH encoding the whole retrieval-verdict contract was invisible: `state`, `channels`,"
     },
     {
-      "version": "1.108.153",
-      "date": "2026-07-21",
-      "title": "tool-surface schema receipt in session stats",
-      "summary": "- **`tool_surface` block in `get_session_stats`** \u2014 an advisory receipt for what the tool surface itself costs: `visible_tools` / `catalog_tools` counts, `schema_tokens_visible` / `schema_tokens_catalog` / `schema_tokens_avoided` (what the active surface + tier saves vs"
+      "version": "1.108.168",
+      "date": "2026-07-24",
+      "title": "a rebuild underneath a scan cannot prove absence (5th refusal rule)",
+      "summary": "- **Absence evidence could be minted over an index that was being rewritten.** v1.108.166 shipped four refusal rules for absence proofs \u2014 only `absent` proves absence; `low_confidence`/`degraded` do not; a stale index does not; a truncated index does not. None of them covered an index being **rewritten"
     },
     {
-      "version": "1.108.152",
-      "date": "2026-07-21",
-      "title": "runtime identity resource (#371)",
-      "summary": "- **`munch://runtime/identity` MCP resource** (#371, requested by @rknighton) \u2014 a read-only `munch.runtime.identity/v1` document giving multi-agent harnesses process provenance for this server instance: `schema`, `product`, `version`, `transport`, `pid`, `process_start {value, source}`, `instance_id`, and an"
+      "version": "1.108.167",
+      "date": "2026-07-24",
+      "title": "cue-anchored delivery ledger: measure what we hand over twice",
+      "summary": "- **The session now measures how often it re-delivers a symbol it already bought.** jcm counted byte-identical repeat calls (`note_call_signature` \u2192 `yield.repeated_identical_calls`) and did nothing with the count, and that counter could not see the shape that actually costs: the **same symbol"
     }
   ]
 }

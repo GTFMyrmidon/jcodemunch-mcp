@@ -48,6 +48,7 @@ _META = (
     "tokens_saved",
     "total_tokens_saved",
 )
+_META_JSON = ("verdict",)  # structured _meta that must survive compaction
 # Per-scalar type hints so numeric/bool values round-trip as native types
 # instead of raw strings.
 _SCALAR_TYPES: dict[str, str] = {
@@ -114,7 +115,7 @@ def _regroup(decoded: dict) -> dict:
 
 def encode(tool: str, response: dict) -> tuple[str, str]:
     return sd.encode(
-        tool, _flatten(response), ENCODING_ID, _TABLES, _SCALARS, meta_keys=_META,
+        tool, _flatten(response), ENCODING_ID, _TABLES, _SCALARS, meta_keys=_META, meta_json_blobs=_META_JSON,
     )
 
 
@@ -123,7 +124,7 @@ def decode(payload: str) -> dict:
         payload,
         _TABLES,
         _SCALARS,
-        meta_keys=_META,
+        meta_keys=_META, meta_json_blobs=_META_JSON,
         scalar_types=_SCALAR_TYPES,
     )
     return _regroup(decoded)
