@@ -124,6 +124,17 @@ _SCALA_IMPORT = re.compile(r"""^import\s+([\w.{}]+)""", re.MULTILINE)
 # Haskell: import Data.Map (fromList)
 _HASKELL_IMPORT = re.compile(r"""^import\s+(?:qualified\s+)?(\S+)""", re.MULTILINE)
 
+# Gleam: import gleam/option.{type Option, None, Some} as opt
+# Module paths are lowercase snake_case segments joined by '/'. The optional
+# `.{...}` clause lists unqualified imports (values, constructors, and
+# `type X` entries); the optional trailing `as` alias renames the module but
+# does not change the specifier. gleam format may wrap long `.{...}` lists
+# across lines, so the brace body must span newlines ([^}] does).
+_GLEAM_IMPORT = re.compile(
+    r"""^\s*import\s+([a-z][a-z0-9_]*(?:/[a-z][a-z0-9_]*)*)(?:\.\{([^}]*)\})?""",
+    re.MULTILINE,
+)
+
 
 def _clean_names(raw: str) -> list[str]:
     """Parse comma-separated names from an import clause, stripping aliases/whitespace."""
@@ -389,6 +400,32 @@ def _extract_haskell_imports(content: str) -> list[dict]:
     return [{"specifier": m.group(1), "names": []} for m in _HASKELL_IMPORT.finditer(content)]
 
 
+def _extract_gleam_imports(content: str) -> list[dict]:
+    """Extract Gleam import statements.
+
+    Handles:
+        import gleam/io
+        import gleam/option.{type Option, None, Some}
+        import holmes_msg as msg
+        import webse/config_types.{type Config, Config}
+
+    ``names`` are the unqualified imports from the ``.{...}`` clause with the
+    ``type `` prefix stripped and ``X as Y`` reduced to the original name
+    (both handled by :func:`_clean_names`). Gleam forbids duplicate imports
+    of the same module, so first-wins dedup is sufficient.
+    """
+    edges: list[dict] = []
+    seen: set[str] = set()
+    for m in _GLEAM_IMPORT.finditer(content):
+        specifier, names_raw = m.group(1), m.group(2)
+        if specifier in seen:
+            continue
+        seen.add(specifier)
+        names = _clean_names(names_raw) if names_raw else []
+        edges.append({"specifier": specifier, "names": names})
+    return edges
+
+
 # Dart: import 'package:flutter/material.dart' / import 'dart:async' / import './foo.dart'
 _DART_IMPORT = re.compile(
     r"""^\s*(?:import|export)\s+['"]([^'"]+)['"]""", re.MULTILINE
@@ -642,6 +679,7 @@ _LANGUAGE_EXTRACTORS = {
     "swift": _extract_swift_imports,
     "scala": _extract_scala_imports,
     "haskell": _extract_haskell_imports,
+    "gleam": _extract_gleam_imports,
     "dart": _extract_dart_imports,
     "sql": _extract_sql_dbt_imports,
     "asm": _extract_asm_imports,
@@ -887,6 +925,47 @@ def _python_source_roots(source_files) -> tuple[str, ...]:
     roots.add("")
     result = tuple(sorted(roots))
     _python_roots_cache[cache_key] = result
+    return result
+
+
+# Cache: frozenset(source_files) -> tuple of Gleam source root prefixes.
+# Same keying rationale as _python_roots_cache above.
+_gleam_roots_cache: dict[frozenset, tuple[str, ...]] = {}
+
+
+def _gleam_source_roots(source_files) -> tuple[str, ...]:
+    """Detect Gleam source roots from the indexed file set.
+
+    A Gleam module path like ``webse/config_types`` is relative to a
+    package's ``src/``, ``test/`` or ``dev/`` directory, so those
+    directories are the source roots. They are derived structurally: every
+    path prefix of an indexed ``.gleam`` file that ends in a ``src``,
+    ``test`` or ``dev`` segment (``cells/webse/src/webse/config.gleam`` ->
+    ``cells/webse/src``), plus ``<dir>/src``, ``<dir>/test`` and
+    ``<dir>/dev`` for every indexed ``gleam.toml``. The two signals overlap
+    for normal packages; the gleam.toml one also covers packages whose
+    files did not make it into the index, and the structural one covers
+    indexes that exclude toml files.
+    """
+    cache_key = source_files if isinstance(source_files, frozenset) else frozenset(source_files)
+    cached = _gleam_roots_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    roots: set[str] = set()
+    for f in source_files:
+        if f.endswith(".gleam"):
+            parts = f.split("/")
+            for i, seg in enumerate(parts[:-1]):
+                if seg in ("src", "test", "dev"):
+                    roots.add("/".join(parts[: i + 1]))
+        elif f == "gleam.toml" or f.endswith("/gleam.toml"):
+            pkg_dir = f[: -len("/gleam.toml")] if "/" in f else ""
+            for sub in ("src", "test", "dev"):
+                roots.add(f"{pkg_dir}/{sub}" if pkg_dir else sub)
+
+    result = tuple(sorted(roots))
+    _gleam_roots_cache[cache_key] = result
     return result
 
 
@@ -1275,6 +1354,31 @@ def resolve_specifier(
     for c in _candidates(specifier):
         if c in source_files:
             return c
+
+    # Gleam module-style import: 'webse/config_types' →
+    # 'cells/webse/src/webse/config_types.gleam'. Gleam module paths are
+    # slash-joined lowercase segments resolved against a package's src/,
+    # test/ or dev/ root; the target extension is always .gleam, so candidates
+    # are built directly instead of via _candidates. The importer's own package
+    # root is tried first: module paths are only unique per package, and
+    # same-package imports are the common case. Stdlib and hex-dependency
+    # imports (gleam/io, gleam/list) resolve to nothing — no edge is created.
+    if importer_path.endswith(".gleam") and not specifier.startswith("."):
+        candidate = specifier + ".gleam"
+        if candidate in source_files:
+            return candidate
+        roots = _gleam_source_roots(source_files)
+        # "Own" roots share the importer's package dir (the part above
+        # src/test), so a test module prefers its package's src/ root too.
+        # A root-level src/test (dirname "") means a single-package repo.
+        own = [
+            r for r in roots
+            if not posixpath.dirname(r) or importer_path.startswith(posixpath.dirname(r) + "/")
+        ]
+        for root in own + [r for r in roots if r not in own]:
+            prefixed = f"{root}/{candidate}"
+            if prefixed in source_files:
+                return prefixed
 
     # Python module-style absolute import: 'app.notifications.mentions' →
     # 'app/notifications/mentions.py'. Also try prefixing with detected
