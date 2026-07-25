@@ -304,6 +304,8 @@ def parse_file(content: str, filename: str, language: str, source_bytes: Optiona
         symbols = _parse_css_symbols(source_bytes, filename)
     elif language == "scss":
         symbols = _parse_scss_symbols(source_bytes, filename)
+    elif language == "toml":
+        symbols = _parse_toml_symbols(source_bytes, filename)
     elif language == "pascal":
         symbols = _parse_pascal_symbols(source_bytes, filename)
     elif language == "matlab":
@@ -6346,6 +6348,133 @@ def _parse_json_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
             content_hash=compute_content_hash(source_bytes[pair.start_byte:pair.end_byte]),
         ))
 
+    return symbols
+
+
+def _parse_toml_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
+    """Parse TOML files and extract tables, array tables, and key-value pairs as symbols.
+
+    Extracted symbol kinds:
+    - Table ([section]) → kind "type"
+    - Array table ([[section]]) → kind "class"
+    - Key-value pair → kind "constant"
+
+    TOML tables are the primary structural units, similar to sections in INI files.
+    Array tables represent lists of tables. Key-value pairs at the top level
+    and inside tables are extracted as constants.
+    """
+    try:
+        parser = get_parser("toml")
+    except Exception:
+        return []
+
+    tree = parser.parse(source_bytes)
+    symbols: list[Symbol] = []
+
+    def _extract_key(node) -> Optional[str]:
+        """Extract key name from a TOML key node."""
+        if node.type == "bare_key":
+            return source_bytes[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+        elif node.type == "quoted_key":
+            content = source_bytes[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+            return content.strip('"').strip("'")
+        elif node.type == "dotted_key":
+            parts = []
+            for child in node.children:
+                if child.type in ("bare_key", "quoted_key"):
+                    parts.append(_extract_key(child))
+            return ".".join(p for p in parts if p)
+        return None
+
+    def _walk_node(node, parent_path: list[str] = None):
+        """Walk the AST and extract symbols."""
+        if parent_path is None:
+            parent_path = []
+
+        if node.type == "table":
+            key_node = next((c for c in node.children if c.type in ("bare_key", "quoted_key", "dotted_key")), None)
+            if key_node:
+                key = _extract_key(key_node)
+                if key:
+                    full_path = ".".join(parent_path + [key]) if parent_path else key
+                    symbols.append(Symbol(
+                        id=make_symbol_id(filename, full_path, "type"),
+                        file=filename,
+                        name=key,
+                        qualified_name=full_path,
+                        kind="type",
+                        language="toml",
+                        signature=f"[{full_path}]",
+                        line=node.start_point[0] + 1,
+                        end_line=node.end_point[0] + 1,
+                        byte_offset=node.start_byte,
+                        byte_length=node.end_byte - node.start_byte,
+                        content_hash=compute_content_hash(source_bytes[node.start_byte:node.end_byte]),
+                    ))
+                    new_path = parent_path + [key]
+                    for child in node.children:
+                        _walk_node(child, new_path)
+            return
+
+        if node.type == "table_array_element":
+            key_node = next((c for c in node.children if c.type in ("bare_key", "quoted_key", "dotted_key")), None)
+            if key_node:
+                key = _extract_key(key_node)
+                if key:
+                    full_path = ".".join(parent_path + [key]) if parent_path else key
+                    symbols.append(Symbol(
+                        id=make_symbol_id(filename, full_path + "[]", "class"),
+                        file=filename,
+                        name=key + "[]",
+                        qualified_name=full_path,
+                        kind="class",
+                        language="toml",
+                        signature=f"[[{full_path}]]",
+                        line=node.start_point[0] + 1,
+                        end_line=node.end_point[0] + 1,
+                        byte_offset=node.start_byte,
+                        byte_length=node.end_byte - node.start_byte,
+                        content_hash=compute_content_hash(source_bytes[node.start_byte:node.end_byte]),
+                    ))
+                    new_path = parent_path + [key]
+                    for child in node.children:
+                        _walk_node(child, new_path)
+            return
+
+        if node.type == "pair":
+            key_node = None
+            for child in node.children:
+                if child.type in ("bare_key", "quoted_key", "dotted_key"):
+                    key_node = child
+                    break
+            if key_node:
+                key = _extract_key(key_node)
+                if key:
+                    full_path = ".".join(parent_path + [key]) if parent_path else key
+                    val_src = source_bytes[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+                    sig = " ".join(val_src.split())
+                    if len(sig) > 100:
+                        sig = sig[:97] + "..."
+                    symbols.append(Symbol(
+                        id=make_symbol_id(filename, full_path, "constant"),
+                        file=filename,
+                        name=key,
+                        qualified_name=full_path,
+                        kind="constant",
+                        language="toml",
+                        signature=sig,
+                        line=node.start_point[0] + 1,
+                        end_line=node.end_point[0] + 1,
+                        byte_offset=node.start_byte,
+                        byte_length=node.end_byte - node.start_byte,
+                        content_hash=compute_content_hash(source_bytes[node.start_byte:node.end_byte]),
+                    ))
+            return
+
+        for child in node.children:
+            _walk_node(child, parent_path)
+
+    _walk_node(tree.root_node)
     return symbols
 
 

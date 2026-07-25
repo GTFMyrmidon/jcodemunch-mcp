@@ -50,6 +50,7 @@
 | SCSS              | `.scss`                                         | tree-sitter-scss + custom walker | function (`@mixin`/`@function`/`@include`), class (selectors/`%placeholder`), type (`@media`/`@supports`), constant (`$variable`) | — | `//` and `/* */` comments | Full SCSS extraction including variables and nested rules |
 | SASS              | `.sass`                                         | text search only (no grammar)   | — (files indexed for text search) | — | — | Indented SASS syntax; no tree-sitter-sass grammar in language-pack; falls back to CSS parser which cannot handle indented syntax → no symbols emitted |
 | YAML              | `.yaml`, `.yml`                                 | custom dict walker (pyyaml)     | function/type/constant (structural keys and containers extracted by depth/shape) | — | — | Generic YAML; Ansible-specific YAML detected via path heuristics and routed to the Ansible parser instead |
+| TOML              | `.toml`                                         | tree-sitter-toml + custom walker | type (table), class (array table), constant (key-value pair) | — | `#` preceding comments | Tables (`[section]`) as types, array tables (`[[section]]`) as classes, key-value pairs as constants; nested paths via dotted qualified names |
 | Ansible           | `.yaml`, `.yml` (path-detected)                 | custom dict walker (pyyaml)     | class (play names), function (task/handler/role names), constant (variable keys) | — | — | Detected via path heuristics (tasks/, handlers/, group_vars/, site.yml, etc.); requires pyyaml |
 | OpenAPI / Swagger | `.openapi.yaml`, `.openapi.json`, `.swagger.yaml`, `.swagger.json`, `openapi.yaml`, `swagger.json` | custom dict walker (pyyaml + json) | function (path operations: `GET /users`, `POST /orders/{id}`), type (component schemas / v2 definitions) | — | — | Supports OpenAPI 3.x and Swagger 2.0; requires pyyaml for YAML variants |
 | JSON              | `.json`                                         | custom json walker (stdlib)     | constant (top-level object keys)                                                           | — | — | Compound extensions (`.openapi.json`, `.swagger.json`) and well-known basenames are routed to the OpenAPI parser first |
@@ -88,7 +89,6 @@ These languages are fully indexed and searchable via `search_text`. Symbol extra
 
 | Language | Extensions     | Notes                                                              |
 | -------- | -------------- | ------------------------------------------------------------------ |
-| TOML     | `.toml`        | Tables indexed; key-as-symbol extractor planned                    |
 | R        | `.r`           | Functions are name-bound values (`f <- function(){}`); custom extractor planned |
 | LESS     | `.less`        | No tree-sitter-less grammar in language-pack; indexed for text search |
 | Stylus   | `.styl`        | No tree-sitter-stylus grammar in language-pack; indexed for text search |
