@@ -405,15 +405,58 @@ wiring absent. Verified against a TRIAL MERGE onto current main (branch-green is
 not merged-green), 210 neighbouring import/language tests green. Landed AFTER the
 1.108.170 release commit, so it rides the NEXT release, not that one.
 
-**Open PRs (2026-07-25):** #378 TOML symbol extraction (@zuoYu-zzz, unreviewed;
-verify no collision with dbt/SQLMesh column work or jcm's own `configs/*.toml`).
-**#380 Atlas Cloud summarizer — HELD pending demand** (jjg's call). It correctly
-adds `atlascloud` to `_PAID_CLOUD_PROVIDERS` (money-safety guard respected), but
-it is a branded wrapper over `_make_openai_compat` — identical behavior is already
-reachable via `OPENAI_API_BASE`. Costs: SIX permanent env-var spellings under the
-1.x no-removal contract, no README/USER_GUIDE/CONFIGURATION/CHANGELOG updates, and
-the author account forked minutes before opening it. Precedent exists (MiniMax/GLM/
-OpenRouter are branded aliases), so this is a demand question, not a quality reject.
+**Merged 2026-07-25: #378 (@zuoYu-zzz) TOML symbol extraction** — tables → `type`,
+array tables → `class`, key-value pairs → `constant`. Merged rather than
+review-round-tripped, then fixed on top in **`f0eda7b`**. ⚠ **The defect worth
+remembering: `_extract_key` scanned a `dotted_key`'s DIRECT children for
+`bare_key`/`quoted_key`, but tree-sitter-toml nests `dotted_key`
+LEFT-RECURSIVELY** (`[tool.ruff.lint]` = `dotted_key(dotted_key(tool, ruff),
+lint)`), so every segment but the last was dropped. **Two-level paths worked,
+which is exactly why it read as correct** — the bug only shows at three-plus, and
+on jcm's OWN pyproject.toml `[tool.hatch.build.targets.wheel]` came back as
+`wheel` with signature `[wheel]`, **a header that appears nowhere in the file**
+(search_symbols would have handed an agent fabricated source text). Fix returns
+path SEGMENTS and recurses; building from segments also fixed `name`/
+`qualified_name`, which the PR set to the same value (now leaf / full dotted path,
+matching every other extractor). New test asserts three- AND five-deep tables plus
+a signature-occurs-in-source check, proven non-vacuous. **The PR's own test used
+only single-segment headers, so nothing in the suite could have caught it** — the
+general lesson for any new nested-grammar walker. Rides the next release with #379.
+
+**Closed 2026-07-25: #380 Atlas Cloud summarizer** (@binyangzhu000-sudo). Closed on
+DEMAND, not quality: CLA unsigned (hard blocker), and the capability is fully
+reachable today via `OPENAI_API_BASE` + `SUMMARIZER_PROVIDER=openai` since Atlas
+Cloud is OpenAI-compatible. Cost of merging was **8** permanent env-var spellings
+(`ATLASCLOUD_`/`ATLAS_CLOUD_` × `API_KEY`/`API_BASE`/`BASE_URL`/`MODEL`) plus 3
+aliases, permanent under the 1.x no-removal contract. ⚠ **Do NOT re-close a future
+one of these "we don't take branded providers"** — MiniMax/GLM/OpenRouter are
+exactly this shape and already merged; the comment concedes that on the record.
+The bar is a user asking, same as platform installers. It correctly added
+atlascloud to `_PAID_CLOUD_PROVIDERS`, so the money-safety guard was respected.
+**Open issues (2026-07-25): #375 + #377 only, both jjg-filed; ZERO open PRs.**
+
+**#375 (index_folder silent 1800s+ on Linux) — investigated 2026-07-25, NOT fixed,
+awaiting a py-spy dump.** Of the four sub-problems: **B (zero `index_folder` log
+lines) is CLOSED as not-a-defect** — that file has 16 `logger.info`/18
+`logger.debug` against 6 warnings/2 errors and the default `log_level` is
+`WARNING` (`config.py:432`), so a healthy run emits nothing; setting `log_level`
+to `INFO` is the cheapest heartbeat available today. **D (two-instance lock
+contention) is near-ruled-out** — every `indexwrite` acquire passes
+`wait_seconds=60.0` and RAISES naming the holder (`sqlite_store.py` 875/1323/1674/
+2966, `import_scip.py:83`), so it cannot present as unbounded silence. **A
+(no emission without `progressToken`) confirmed** (`progress.py:213`). **C
+(freshness lies) NOT yet investigated.** ⚠ **NEW finding not in the issue:
+`index_folder` is MISSING from `_AUTO_WATCH_EXCLUDED` (`server.py:4499`) while
+`index_file` is present, so `_auto_watch_if_needed` (`server.py:4531`) awaits a
+full `ensure_indexed(X)` BEFORE the tool dispatches and then the tool indexes X
+again — a silent double index, independent of progressToken.** ⚠ **Deliberately
+NOT patched: dropping the redundant `ensure_indexed` while keeping `add_folder`
+would let the watch task's own initial index race the tool's index on the same
+`indexwrite` lock (60s waits, plausibly WORSE); excluding `index_folder` outright
+silently removes auto-start-watching. Both wait on localisation.** The stall is
+still unexplained — one repro was a `.claude/` chunk, far too small for 1800s, so
+something BLOCKS rather than grinds.
+
 **#381 (MCP Toplist badge) CLOSED by jjg** — 120 identical drive-by PRs from that
 author; the badge renders "Top 1% of 81,432", not the rank the PR body promised,
 and it is live third-party-controlled content in a README that also renders on PyPI.
