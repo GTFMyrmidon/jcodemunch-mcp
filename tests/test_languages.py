@@ -2455,3 +2455,87 @@ def test_verilog_extension_mapping():
     assert get_language_for_path("src/alu.sv") == "verilog"
     assert get_language_for_path("src/pkg.svh") == "verilog"
     assert get_language_for_path("SRC/ALU.SV") == "verilog"
+
+
+# ---------------------------------------------------------------------------
+# TOML
+# ---------------------------------------------------------------------------
+
+TOML_SOURCE = '''\
+# Project configuration
+name = "jcodemunch-mcp"
+version = "1.0.0"
+description = "A token-efficient MCP server for GitHub code search"
+
+[author]
+name = "John Doe"
+email = "john@example.com"
+
+[server]
+host = "localhost"
+port = 8080
+
+[[features]]
+name = "search"
+enabled = true
+
+[[features]]
+name = "semantic"
+enabled = false
+'''
+
+
+def test_parse_toml():
+    """Test TOML parsing — tables, array tables, and key-value pairs."""
+    symbols = parse_file(TOML_SOURCE, "pyproject.toml", "toml")
+
+    # Top-level constants
+    name = next((s for s in symbols if s.name == "name" and s.kind == "constant"), None)
+    assert name is not None
+    assert name.qualified_name == "name"
+
+    version = next((s for s in symbols if s.name == "version" and s.kind == "constant"), None)
+    assert version is not None
+
+    description = next((s for s in symbols if s.name == "description" and s.kind == "constant"), None)
+    assert description is not None
+
+    # Tables (type symbols)
+    author = next((s for s in symbols if s.name == "author" and s.kind == "type"), None)
+    assert author is not None
+    assert author.signature == "[author]"
+
+    server = next((s for s in symbols if s.name == "server" and s.kind == "type"), None)
+    assert server is not None
+    assert server.signature == "[server]"
+
+    # Array tables (class symbols)
+    features_array = next((s for s in symbols if s.name == "features[]" and s.kind == "class"), None)
+    assert features_array is not None
+    assert features_array.signature == "[[features]]"
+
+    # Nested constants inside tables
+    author_name = next((s for s in symbols if s.name == "name" and s.qualified_name == "author.name"), None)
+    assert author_name is not None
+    assert author_name.kind == "constant"
+
+    author_email = next((s for s in symbols if s.name == "email" and s.qualified_name == "author.email"), None)
+    assert author_email is not None
+    assert author_email.kind == "constant"
+
+    server_host = next((s for s in symbols if s.name == "host" and s.qualified_name == "server.host"), None)
+    assert server_host is not None
+
+    server_port = next((s for s in symbols if s.name == "port" and s.qualified_name == "server.port"), None)
+    assert server_port is not None
+
+    # All symbols tagged as toml
+    assert all(s.language == "toml" for s in symbols)
+
+
+def test_toml_extension_mapping():
+    """.toml extensions map to toml language."""
+    from jcodemunch_mcp.parser.languages import get_language_for_path
+    assert get_language_for_path("pyproject.toml") == "toml"
+    assert get_language_for_path("config/settings.toml") == "toml"
+    assert get_language_for_path("CONFIG/SETTINGS.TOML") == "toml"
