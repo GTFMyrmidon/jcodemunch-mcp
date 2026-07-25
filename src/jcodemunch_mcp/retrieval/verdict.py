@@ -343,6 +343,7 @@ def build_file_verdict(
     source_files: Optional[Sequence[str]] = None,
     index_stale: bool = False,
     empty_symbols: bool = False,
+    index_changed: bool = False,
 ) -> dict:
     """`_meta.verdict` for the file-read tools.
 
@@ -369,9 +370,21 @@ def build_file_verdict(
         state = STATE_OK
         note = _NOTES[STATE_OK]
         suggestions = []
+    if index_changed and state == STATE_ABSENT:
+        # #93 class: a rebuild deletes and reinserts rows, so a present file
+        # can read as missing — and an indexed file can transiently expose no
+        # symbols — for the duration. Neither absence is provable here, and the
+        # empty_symbols note ("re-requesting will not change this") would be
+        # actively wrong mid-rewrite.
+        state = STATE_DEGRADED
+        note = _NOTES[STATE_DEGRADED]
+        suggestions = []
     verdict = {
         "state": state,
-        "channels": {"index": "stale" if index_stale else "fresh"},
+        "channels": {
+            "index": "rebuilding" if index_changed
+            else ("stale" if index_stale else "fresh")
+        },
         "note": note,
     }
     if suggestions:
@@ -391,6 +404,7 @@ def symbol_verdict_for_index(
         requested_id=requested_id,
         symbols=getattr(index, "symbols", None) if found_count == 0 else None,
         index_stale=_index_is_stale(index),
+        index_changed=index_changed_since_load(index),
     )
     _attach_coverage(verdict, index_coverage_meta(index))
     return verdict
@@ -464,6 +478,7 @@ def file_verdict_for_index(
         source_files=_index_source_files(index) if not present else None,
         index_stale=_index_is_stale(index),
         empty_symbols=empty_symbols,
+        index_changed=index_changed_since_load(index),
     )
     _attach_coverage(verdict, index_coverage_meta(index))
     return verdict
@@ -475,6 +490,7 @@ def build_symbol_verdict(
     requested_id: Optional[str] = None,
     symbols: Optional[Sequence[dict]] = None,
     index_stale: bool = False,
+    index_changed: bool = False,
 ) -> dict:
     """`_meta.verdict` for ``get_symbol_source``.
 
@@ -482,7 +498,14 @@ def build_symbol_verdict(
     share the requested name; any resolved symbol yields ``ok`` (a partial batch
     is still a hit).
     """
-    if found_count == 0:
+    if found_count == 0 and index_changed:
+        # jdoc/jcm #93 class: a rebuild deletes and reinserts rows, so a
+        # genuinely-present symbol reads as missing for the duration. Absence
+        # is not provable against an index being rewritten.
+        state = STATE_DEGRADED
+        note = _NOTES[STATE_DEGRADED]
+        suggestions = []
+    elif found_count == 0:
         state = STATE_ABSENT
         note = "Symbol id is not in the index. " + _NOTES[STATE_ABSENT]
         suggestions = suggest_symbol_ids(requested_id, symbols)
@@ -492,7 +515,10 @@ def build_symbol_verdict(
         suggestions = []
     verdict = {
         "state": state,
-        "channels": {"index": "stale" if index_stale else "fresh"},
+        "channels": {
+            "index": "rebuilding" if index_changed
+            else ("stale" if index_stale else "fresh")
+        },
         "note": note,
     }
     if suggestions:

@@ -2,6 +2,47 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.170] - 2026-07-25 - the file and symbol tools can see a rebuild too
+
+### Fixed
+
+- **`get_file_content`, `get_file_outline` and `get_symbol_source` could mint
+  absence evidence over an index being rewritten.** v1.108.168 added the 5th
+  refusal rule to `build_verdict`, and v1.108.169 wired the last search tool
+  into it — but the file and symbol tools do not use `build_verdict`. They go
+  through `symbol_verdict_for_index` / `file_verdict_for_index`, which accept a
+  live index and then delegate to `build_symbol_verdict` / `build_file_verdict`,
+  neither of which had an `index_changed` parameter at all.
+
+  Both reach `state: "absent"` (a missing symbol, a missing path), and the
+  absence chokepoint in `server.py` is generic — it fires on any
+  `_meta.verdict` dict — so both were minting citable `absent:<sha>` refs with
+  the rebuilding rule structurally unable to fire. A rebuild deletes and
+  reinserts rows, so a genuinely-present file reads as missing for the
+  duration; this is the likeliest way to observe a false absence, not the
+  rarest.
+
+  Both builders now take `index_changed` and downgrade an absence to
+  `degraded` + `channels.index: "rebuilding"`, and both wrappers pass
+  `index_changed_since_load(index)`. `did_you_mean` is suppressed on the
+  degraded path — suggesting near-miss names for a scan that could not see the
+  index is worse than saying nothing.
+
+  The `empty_symbols` case is degraded too: its note tells the agent that
+  "re-requesting the outline will not change this", which is actively wrong
+  mid-rewrite.
+
+### Notes
+
+- New `tests/test_absence_wiring_guard.py` (7) encodes the invariant rather
+  than the instances: every `build_verdict` call in `tools/` must pass
+  `index_changed=`, the scan is alias-aware (each tool imports it renamed) and
+  fails if it ever finds no calls, and the index-aware wrappers are held in a
+  ratchet that fails when a listed wrapper turns out to be wired. That set is
+  now empty and kept as the declaration point for any future gap.
+- No schema, tool-count, or INDEX_VERSION change. `"rebuilding"` was already
+  published in `schemas/retrieval-verdict.schema.json` by v1.108.168.
+
 ## [1.108.169] - 2026-07-25 - the retrieval verdict survives compaction
 
 ### Fixed

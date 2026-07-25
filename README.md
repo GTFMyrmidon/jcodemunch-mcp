@@ -129,9 +129,9 @@ is a byte the agent doesn't pay to read.
 <!-- WHATSNEW:START -->
 #### What's new
 
+- **[v1.108.170](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.170)** (2026-07-25) — the file and symbol tools can see a rebuild too
 - **[v1.108.169](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.169)** (2026-07-25) — the retrieval verdict survives compaction
 - **[v1.108.168](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.168)** (2026-07-24) — a rebuild underneath a scan cannot prove absence (5th refusal rule)
-- **[v1.108.167](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.167)** (2026-07-24) — cue-anchored delivery ledger: measure what we hand over twice
 <!-- WHATSNEW:END -->
 
 ![License](https://img.shields.io/badge/license-dual--use-blue)
