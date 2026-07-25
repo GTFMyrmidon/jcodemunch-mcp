@@ -6362,6 +6362,14 @@ def _parse_toml_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
     TOML tables are the primary structural units, similar to sections in INI files.
     Array tables represent lists of tables. Key-value pairs at the top level
     and inside tables are extracted as constants.
+
+    Unlike ``_parse_json_symbols``, which caps at root-level keys to avoid noise
+    in large config files, this extracts every pair at every depth. That
+    divergence is deliberate: TOML tables are genuinely structural, lock files
+    do not route here (Cargo.lock / uv.lock / poetry.lock carry no ``.toml``
+    extension), and a typical pyproject.toml yields tens of symbols, not
+    thousands. ``name`` is the leaf segment and ``qualified_name`` the full
+    dotted path, matching every other extractor in this module.
     """
     try:
         parser = get_parser("toml")
@@ -6371,20 +6379,26 @@ def _parse_toml_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
     tree = parser.parse(source_bytes)
     symbols: list[Symbol] = []
 
-    def _extract_key(node) -> Optional[str]:
-        """Extract key name from a TOML key node."""
+    def _extract_key_parts(node) -> list[str]:
+        """Extract a TOML key node as its path segments.
+
+        tree-sitter-toml nests ``dotted_key`` left-recursively, so
+        ``[tool.ruff.lint]`` is ``dotted_key(dotted_key(tool, ruff), lint)``.
+        Recursing on the nested node is what keeps every segment; matching only
+        the leaf types drops all but the last one.
+        """
         if node.type == "bare_key":
-            return source_bytes[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+            return [source_bytes[node.start_byte:node.end_byte].decode("utf-8", errors="replace")]
         elif node.type == "quoted_key":
             content = source_bytes[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
-            return content.strip('"').strip("'")
+            return [content.strip('"').strip("'")]
         elif node.type == "dotted_key":
-            parts = []
+            parts: list[str] = []
             for child in node.children:
-                if child.type in ("bare_key", "quoted_key"):
-                    parts.append(_extract_key(child))
-            return ".".join(p for p in parts if p)
-        return None
+                if child.type in ("bare_key", "quoted_key", "dotted_key"):
+                    parts.extend(_extract_key_parts(child))
+            return [p for p in parts if p]
+        return []
 
     def _walk_node(node, parent_path: list[str] = None):
         """Walk the AST and extract symbols."""
@@ -6394,13 +6408,13 @@ def _parse_toml_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
         if node.type == "table":
             key_node = next((c for c in node.children if c.type in ("bare_key", "quoted_key", "dotted_key")), None)
             if key_node:
-                key = _extract_key(key_node)
-                if key:
-                    full_path = ".".join(parent_path + [key]) if parent_path else key
+                key_parts = _extract_key_parts(key_node)
+                if key_parts:
+                    full_path = ".".join(parent_path + key_parts)
                     symbols.append(Symbol(
                         id=make_symbol_id(filename, full_path, "type"),
                         file=filename,
-                        name=key,
+                        name=key_parts[-1],
                         qualified_name=full_path,
                         kind="type",
                         language="toml",
@@ -6411,7 +6425,7 @@ def _parse_toml_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
                         byte_length=node.end_byte - node.start_byte,
                         content_hash=compute_content_hash(source_bytes[node.start_byte:node.end_byte]),
                     ))
-                    new_path = parent_path + [key]
+                    new_path = parent_path + key_parts
                     for child in node.children:
                         _walk_node(child, new_path)
             return
@@ -6419,13 +6433,13 @@ def _parse_toml_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
         if node.type == "table_array_element":
             key_node = next((c for c in node.children if c.type in ("bare_key", "quoted_key", "dotted_key")), None)
             if key_node:
-                key = _extract_key(key_node)
-                if key:
-                    full_path = ".".join(parent_path + [key]) if parent_path else key
+                key_parts = _extract_key_parts(key_node)
+                if key_parts:
+                    full_path = ".".join(parent_path + key_parts)
                     symbols.append(Symbol(
                         id=make_symbol_id(filename, full_path + "[]", "class"),
                         file=filename,
-                        name=key + "[]",
+                        name=key_parts[-1] + "[]",
                         qualified_name=full_path,
                         kind="class",
                         language="toml",
@@ -6436,7 +6450,7 @@ def _parse_toml_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
                         byte_length=node.end_byte - node.start_byte,
                         content_hash=compute_content_hash(source_bytes[node.start_byte:node.end_byte]),
                     ))
-                    new_path = parent_path + [key]
+                    new_path = parent_path + key_parts
                     for child in node.children:
                         _walk_node(child, new_path)
             return
@@ -6448,9 +6462,9 @@ def _parse_toml_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
                     key_node = child
                     break
             if key_node:
-                key = _extract_key(key_node)
-                if key:
-                    full_path = ".".join(parent_path + [key]) if parent_path else key
+                key_parts = _extract_key_parts(key_node)
+                if key_parts:
+                    full_path = ".".join(parent_path + key_parts)
                     val_src = source_bytes[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
                     sig = " ".join(val_src.split())
                     if len(sig) > 100:
@@ -6458,7 +6472,7 @@ def _parse_toml_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
                     symbols.append(Symbol(
                         id=make_symbol_id(filename, full_path, "constant"),
                         file=filename,
-                        name=key,
+                        name=key_parts[-1],
                         qualified_name=full_path,
                         kind="constant",
                         language="toml",

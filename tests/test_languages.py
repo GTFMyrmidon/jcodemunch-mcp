@@ -2539,3 +2539,64 @@ def test_toml_extension_mapping():
     assert get_language_for_path("pyproject.toml") == "toml"
     assert get_language_for_path("config/settings.toml") == "toml"
     assert get_language_for_path("CONFIG/SETTINGS.TOML") == "toml"
+
+
+TOML_DEEP_SOURCE = '''\
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pkg"]
+
+[a]
+x.y.z = 1
+
+[[tool.pytest.suites]]
+name = "unit"
+'''
+
+
+def test_parse_toml_dotted_paths_deeper_than_two_levels():
+    """Every segment of a dotted key survives.
+
+    tree-sitter-toml nests ``dotted_key`` left-recursively, so a walker that
+    matches only leaf key types keeps the last segment and silently drops the
+    rest. Two-level paths still look right under that bug, which is why the
+    assertions below go three and five deep: ``[tool.hatch.build.targets.wheel]``
+    came back as ``wheel`` with a fabricated ``[wheel]`` signature.
+    """
+    symbols = parse_file(TOML_DEEP_SOURCE, "pyproject.toml", "toml")
+    tables = {s.qualified_name: s for s in symbols if s.kind == "type"}
+
+    assert "tool.ruff.lint" in tables
+    assert "tool.hatch.build.targets.wheel" in tables
+
+    lint = tables["tool.ruff.lint"]
+    # name is the leaf, qualified_name the full path — the convention every
+    # other extractor in extractor.py follows.
+    assert lint.name == "lint"
+    # The signature must be text that actually appears in the file.
+    assert lint.signature == "[tool.ruff.lint]"
+    assert lint.signature in TOML_DEEP_SOURCE
+
+    wheel = tables["tool.hatch.build.targets.wheel"]
+    assert wheel.name == "wheel"
+    assert wheel.signature == "[tool.hatch.build.targets.wheel]"
+
+    # Pairs inherit the full table path, and a dotted key inside a table keeps
+    # its own segments too.
+    select = next(s for s in symbols if s.qualified_name == "tool.ruff.lint.select")
+    assert select.kind == "constant"
+    assert select.name == "select"
+
+    nested_pair = next(s for s in symbols if s.qualified_name == "a.x.y.z")
+    assert nested_pair.name == "z"
+
+    # Array tables carry the full path as well.
+    suites = next(s for s in symbols if s.kind == "class")
+    assert suites.qualified_name == "tool.pytest.suites"
+    assert suites.name == "suites[]"
+    assert suites.signature == "[[tool.pytest.suites]]"
