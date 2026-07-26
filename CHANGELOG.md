@@ -171,7 +171,7 @@ All notable changes to jcodemunch-mcp are documented here.
   change response bytes on calls that never asked for a receipt, so it is its own
   change, not a rider on this one.
 
-- New `tests/test_v1_108_183.py` (78). No tool-count change, no `INDEX_VERSION`
+- New `tests/test_v1_108_183.py` (79). No tool-count change, no `INDEX_VERSION`
   change, no new background process, no write to the user's repository or index
   store.
 

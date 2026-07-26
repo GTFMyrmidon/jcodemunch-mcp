@@ -504,6 +504,71 @@ class TestSnapshotBinding:
         eid, _ = _r183_serve_and_receipt(server, repo)
         assert _r183_receipts.lookup(eid)[0]["snapshot"]["scorer_version"] == SCORER_VERSION
 
+    def test_a_real_checkout_binds_fresh_with_both_revisions(self, tmp_path, monkeypatch):
+        """`fresh` is the one state a fixture cannot fake (the v1.108.180 lesson).
+
+        On a plain folder every receipt reports `not_tracked`, so a suite made only
+        of folder fixtures would never exercise the path where both revisions are
+        read and compared, which is the whole point of the snapshot binding.
+        """
+        import subprocess
+
+        monkeypatch.setenv("CODE_INDEX_PATH", str(tmp_path / "idx"))
+        proj = tmp_path / "gitproj"
+        (proj / "src").mkdir(parents=True)
+        (proj / "src" / "a.py").write_text(
+            "def refresh_token(user):\n    return user\n", encoding="utf-8"
+        )
+        for cmd in (
+            ["git", "init", "-q"],
+            ["git", "config", "user.email", "t@example.invalid"],
+            ["git", "config", "user.name", "t"],
+            ["git", "add", "-A"],
+            ["git", "commit", "-qm", "init"],
+        ):
+            if subprocess.run(cmd, cwd=proj, capture_output=True).returncode != 0:
+                pytest.skip("git is unavailable in this environment")
+        from jcodemunch_mcp import server
+
+        _r183_receipts.clear_receipts()
+        try:
+            indexed, _ = _r183_call(server, "index_folder", {"path": str(proj)})
+            repo = indexed["repo"]
+            body, _ = _r183_call(
+                server,
+                "get_symbol_source",
+                {
+                    "repo": repo,
+                    "symbol_id": "src/a.py::refresh_token#function",
+                    "receipt": True,
+                    "format": "json",
+                },
+            )
+            snapshot = _r183_receipts.lookup(_r183_receipt_ids(body)[0])[0]["snapshot"]
+            assert snapshot["freshness"] == "fresh"
+            assert snapshot["indexed_revision"]
+            assert snapshot["indexed_revision"] == snapshot["live_revision"]
+            assert snapshot["conditions"] == []
+
+            # A zero-result scan measures the tree, so this one is not `unknown`.
+            absent, _ = _r183_call(
+                server,
+                "search_symbols",
+                {
+                    "repo": repo,
+                    "query": "zzz_absent_thing",
+                    "receipt": True,
+                    "format": "json",
+                },
+            )
+            envelope = _r183_receipts.lookup(_r183_receipt_ids(absent)[0])[0]
+            assert envelope["snapshot"]["working_tree"] == "clean"
+            assert envelope["capabilities"]["proves_absence"] is True
+            assert envelope["absence_ref"].startswith("absent:")
+        finally:
+            _r183_receipts.clear_receipts()
+            _handoff_mod.clear_absences()
+
     def test_coverage_is_fingerprinted_so_two_corpora_cannot_share_an_id(self):
         a = _r183_receipts.coverage_fingerprint({"files_indexed": 10, "complete": True})
         b = _r183_receipts.coverage_fingerprint({"files_indexed": 11, "complete": True})
