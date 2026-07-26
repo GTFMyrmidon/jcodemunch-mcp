@@ -1145,6 +1145,7 @@ def search_symbols(
         source_files=index.source_files,
         semantic_requested=bool(semantic or semantic_only),
         index_stale=_probe.repo_is_stale,
+        freshness=_probe.repo_freshness,
         index_changed=_index_changed_since_load(index),
         coverage=_index_coverage_meta(index),
         moved_during_scan=_subject_pre.moved_during_scan(

@@ -128,6 +128,14 @@ def absence_refusal(record: Optional[dict]) -> Optional[str]:
             "the index was being rewritten during the scan, so the target may sit "
             "in rows written after the scan passed them"
         )
+    if channels.get("index") == "unknown":
+        # Named before the generic state rule (#377 item 4): a zero-result scan
+        # whose freshness could not be established already downgrades, and
+        # "the verdict was degraded" hides which capability failed.
+        return (
+            "index freshness could not be established at query time, so whether the "
+            "scan describes the current tree or an older one is unknown"
+        )
     if channels.get("index") == "partial":
         # Checked before the generic state rule so the reason names the cause:
         # a zero-result scan over a corpus with known gaps already downgrades to

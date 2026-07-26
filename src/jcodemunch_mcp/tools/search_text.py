@@ -248,6 +248,7 @@ def search_text(
         coverage=_index_coverage_meta(index),
         index_changed=_index_changed_since_load(index),
         index_stale=_probe.repo_is_stale,
+        freshness=_probe.repo_freshness,
         incomplete=_incomplete,
         moved_during_scan=_subject.moved_during_scan(
             _state_before, index, result_count=result_count

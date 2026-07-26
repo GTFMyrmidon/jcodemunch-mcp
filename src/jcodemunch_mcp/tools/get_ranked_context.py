@@ -441,6 +441,7 @@ def get_ranked_context(
             query_terms=query_terms,
             source_files=index.source_files,
             index_stale=_p.repo_is_stale,
+            freshness=_p.repo_freshness,
             index_changed=_icsl(index),
             coverage=_icm(index),
             moved_during_scan=_subject.moved_during_scan(
@@ -597,6 +598,7 @@ def get_ranked_context(
         source_files=index.source_files,
         semantic_requested=False,
         index_stale=_probe.repo_is_stale,
+        freshness=_probe.repo_freshness,
         index_changed=_index_changed_since_load(index),
         coverage=_index_coverage_meta(index),
         moved_during_scan=_subject.moved_during_scan(

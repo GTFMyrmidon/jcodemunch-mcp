@@ -29,6 +29,13 @@ _FRESH = "fresh"
 _EDITED = "edited_uncommitted"
 _STALE = "stale_index"
 
+# Repo-level freshness states (#377 item 4). Deliberately separate strings from
+# the per-symbol buckets above: those classify one returned file, these classify
+# whether the index as a whole can be compared to the tree at all.
+_STALE_REPO = "stale"
+_UNKNOWN = "unknown"
+_NOT_TRACKED = "not_tracked"
+
 
 def _parse_iso(ts: str) -> Optional[float]:
     """Parse the ISO timestamp recorded in the index. Returns Unix epoch
@@ -73,6 +80,26 @@ def _resolve_git_dir(source_root: Path) -> Optional[Path]:
     except OSError:
         return None
     return None
+
+
+def _is_git_backed(source_root: Path) -> bool:
+    """Is this path inside a git checkout? Walks up the way git itself does.
+
+    Used only to tell `not_tracked` (nothing to compare, ever) from `unknown`
+    (something to compare that could not be read) — never to resolve a
+    revision, which stays with ``_git_head``.
+    """
+    try:
+        p = source_root.resolve()
+    except OSError:
+        return False
+    for candidate in (p, *p.parents):
+        try:
+            if (candidate / ".git").exists():
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def _head_signature(git_dir: Path) -> Optional[tuple]:
@@ -197,6 +224,49 @@ class FreshnessProbe:
         if not cur or not self._index_sha:
             return False
         return cur != self._index_sha
+
+    @property
+    def repo_freshness(self) -> str:
+        """One of ``fresh`` / ``stale`` / ``unknown`` / ``not_tracked`` (#377 item 4).
+
+        ``repo_is_stale`` is a Boolean, and a Boolean has nowhere to put "I could
+        not find out". Both "the SHAs match" and "one of them is missing"
+        answered False, and the verdict then rendered False as ``fresh`` — so an
+        index whose freshness was never established claimed current-snapshot
+        equivalence. These are different facts and only one of them is proof:
+
+          fresh        indexed revision equals the live revision
+          stale        they differ
+          unknown      this subject HAS a revision we should be able to read and
+                       we could not: git failed, the binary is missing, the
+                       source root moved, or the index stored no SHA
+          not_tracked  this subject has no revision at all (a plain folder), so
+                       there is nothing to compare and there never will be
+
+        The split matters because the two non-answers deserve opposite
+        treatment: `unknown` is a capability we have, failing, so an absence
+        claim cannot be current-state proven; `not_tracked` is a capability the
+        subject does not support, which is disclosed rather than refused (the
+        call jDataMunch made in v1.26.0, for the same reason).
+        """
+        if not self._source_root or not self._source_root.exists():
+            return _UNKNOWN
+        cur = self._lazy_current_sha()
+        if cur:
+            # The revision reads, so this subject is tracked either way. An
+            # index that stored no SHA of its own leaves the comparison
+            # unmade, which is unknown rather than fresh.
+            return (
+                _FRESH if cur == self._index_sha
+                else _STALE_REPO if self._index_sha
+                else _UNKNOWN
+            )
+        # No revision came back. Distinguish "there is none to read" from
+        # "there is one and reading it failed" by looking for a repository the
+        # way git does, walking up: a monorepo SUBDIRECTORY is tracked by the
+        # checkout above it, and calling that not_tracked would understate what
+        # we know about it.
+        return _NOT_TRACKED if not _is_git_backed(self._source_root) else _UNKNOWN
 
     def _lazy_current_sha(self) -> Optional[str]:
         if self._current_sha_resolved:

@@ -351,7 +351,11 @@ async def test_search_text_now_reports_index_freshness(dispatch_repo, full_meta)
     )
     body = json.loads(_content(out)[0].text)
     channels = ((body.get("_meta") or {}).get("verdict") or {}).get("channels") or {}
-    assert channels.get("index") in ("fresh", "stale", "partial", "rebuilding")
+    # v1.108.180 widened this: the fixture is a plain folder, so the honest
+    # answer is `not_tracked` rather than the `fresh` it used to claim.
+    assert channels.get("index") in (
+        "fresh", "stale", "partial", "rebuilding", "unknown", "not_tracked"
+    )
 
 
 @pytest.mark.asyncio

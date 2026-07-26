@@ -195,6 +195,7 @@ def build_verdict(
     matches_before_packing: Optional[int] = None,
     incomplete: Optional[dict] = None,
     moved_during_scan: Optional[str] = None,
+    freshness: Optional[str] = None,
 ) -> dict:
     """Compute the unified verdict plus the legacy negative_evidence dict.
 
@@ -207,6 +208,17 @@ def build_verdict(
     """
     terms = [t for t in (query_terms or []) if t]
     did_you_mean = _did_you_mean(source_files, terms)
+
+    # #377 item 4. `index_stale` is a Boolean with nowhere to put "I could not
+    # find out", and False was being rendered as `fresh` — so an index whose
+    # freshness was never established claimed current-snapshot equivalence.
+    # A producer that passes the richer state wins; one that does not keeps
+    # exactly its previous two-state behavior.
+    if freshness not in ("fresh", "stale", "unknown", "not_tracked"):
+        freshness = "stale" if index_stale else "fresh"
+    elif freshness == "stale":
+        index_stale = True
+    freshness_unknown = freshness == "unknown"
 
     semantic_available = _semantic_provider_available() if semantic_requested else True
     below_threshold = (
@@ -241,6 +253,13 @@ def build_verdict(
         # so the same degraded gate as the stale/truncated/rebuilding cases
         # applies and the absence-refusal rule falls out of the existing "only
         # `absent` proves absence" check with nothing new to keep in sync.
+        state = STATE_DEGRADED
+    elif result_count == 0 and freshness_unknown:
+        # This subject HAS a revision we should be able to read and we could
+        # not, so whether the index lags the tree is unestablished — and an
+        # absence claim rests entirely on that. `not_tracked` is deliberately
+        # NOT here: a subject with no revision at all is disclosed, not refused,
+        # or every plain-folder index would lose absence evidence outright.
         state = STATE_DEGRADED
     elif result_count == 0 and moved_during_scan:
         # #377 hardening item 6. The scan started against one state and finished
@@ -292,11 +311,15 @@ def build_verdict(
             # a rebuild in flight beats a known gap beats mere lag. "partial"
             # exists because `fresh` was answering the wrong question — it means
             # "not behind in time", never "covers everything" (#375).
+            # `unknown` and `not_tracked` (#377 item 4) sit below `stale` and
+            # above `fresh`: a known lag is worse than an unestablished one, and
+            # both are worse than proven currency. `fresh` now means only what
+            # it says.
             "index": (
                 "rebuilding" if index_changed
                 else "partial" if coverage_is_incomplete(coverage)
                 else "stale" if index_stale
-                else "fresh"
+                else freshness
             ),
         },
         "scorer": SCORER_VERSION,
@@ -307,6 +330,13 @@ def build_verdict(
     # Disclosed on EVERY state, not just the refused one: a caller reading a
     # short result list deserves to know matches were dropped to fit the
     # response, whether or not an absence claim is involved.
+    if freshness_unknown and state == STATE_DEGRADED and result_count == 0:
+        verdict["note"] = (
+            "Index freshness could not be established for this repository, so "
+            "whether the index lags the tree is unknown and absence is NOT proven. "
+            "Results a scan returns are still real; only the claim that nothing "
+            "exists needs the comparison this scan could not make."
+        )
     if moved_during_scan:
         verdict["moved_during_scan"] = {"reason": moved_during_scan}
         if state == STATE_DEGRADED and result_count == 0:
@@ -336,7 +366,10 @@ def build_verdict(
     # --- legacy negative_evidence: unchanged trigger + shape ---
     negative_evidence = None
     _packed_empty = result_count == 0 and (
-        (matches_before_packing or 0) > 0 or bool(incomplete) or bool(moved_during_scan)
+        (matches_before_packing or 0) > 0
+        or bool(incomplete)
+        or bool(moved_during_scan)
+        or freshness_unknown
     )
     if _packed_empty:
         # The legacy block would say "no_implementation_found", and

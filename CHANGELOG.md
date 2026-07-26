@@ -2,6 +2,51 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.180] - 2026-07-26 - unknown freshness stops collapsing into fresh
+
+### Fixed
+
+- **An index whose freshness was never established was claiming current-snapshot
+  equivalence.** Item 4 of the
+  [#377](https://github.com/jgravelle/jcodemunch-mcp/issues/377) review by
+  @mightydanp. `FreshnessProbe.repo_is_stale` is a Boolean, and a Boolean has
+  nowhere to put "I could not find out": it returned `False` both when the SHAs
+  matched and when either of them was missing, and the verdict rendered `False`
+  as `channels.index: "fresh"`. Every absence gate downstream then trusted a
+  comparison that had never been made.
+- New `FreshnessProbe.repo_freshness` returns `fresh` / `stale` / `unknown` /
+  `not_tracked`, and `build_verdict` takes it as `freshness=`. `channels.index`
+  reports it, so `fresh` now means only what it says.
+
+### Notes
+
+- **`unknown` and `not_tracked` get opposite treatment, on purpose.** `unknown`
+  is a capability we have, failing (git absent, the source root moved, the index
+  stored no SHA), so a zero-result scan is `degraded` and the absence claim is
+  refused. `not_tracked` is a capability the subject does not support — a plain
+  indexed folder has no revision and never will — so it is disclosed and the
+  absence stays citable. That is the call jDataMunch made in v1.26.0 for
+  freshness it cannot model, and refusing here instead would strip absence
+  evidence from every folder index on the grounds of a limitation that is
+  permanent, already stated, and unrelated to whether the target exists.
+- **A subdirectory of a checkout is tracked by the checkout above it.** The
+  trackability test walks up the way git does, so a monorepo subdir index still
+  reports `fresh` or `stale` rather than understating what we know about it.
+- Precedence: `rebuilding` > `partial` > `stale` > `unknown` / `not_tracked` >
+  `fresh`. A known lag is worse than an unestablished one; both beat proven
+  currency.
+- Disclosed on every state, refused only for the absence claim, expressed as a
+  downgrade. The refusal names the failed capability rather than the state.
+- **Zero blast radius for a producer that passes nothing:** `build_verdict`
+  without `freshness=` keeps its exact two-state behavior, pinned by a test. An
+  unrecognized value is ignored rather than propagated.
+- `channels.index` gains `unknown` and `not_tracked` in
+  `schemas/retrieval-verdict.schema.json` — the enum is closed, so a value not
+  published there fails our own contract.
+- New `tests/test_v1_108_180.py` (26), including a real one-commit checkout,
+  because `fresh` is the one state a fixture cannot fake. No tool-count or
+  INDEX_VERSION change.
+
 ## [1.108.179] - 2026-07-26 - the subject has to hold still for the scan
 
 ### Fixed

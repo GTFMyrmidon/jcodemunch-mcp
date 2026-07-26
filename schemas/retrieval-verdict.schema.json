@@ -70,8 +70,11 @@
             "fresh",
             "stale",
             "rebuilding",
-            "partial"
-          ]
+            "partial",
+            "unknown",
+            "not_tracked"
+          ],
+          "description": "fresh = the indexed revision equals the live one; stale = they differ; rebuilding = the index was rewritten under the scan; partial = the corpus has known gaps; unknown = this subject has a revision that could not be read, so freshness was never established (an absence claim is refused); not_tracked = the subject has no revision at all, so there is nothing to compare and never will be (disclosed, not refused). 'fresh' means only what it says: before v1.108.180 an unestablished comparison also rendered as fresh."
         }
       },
       "additionalProperties": false
