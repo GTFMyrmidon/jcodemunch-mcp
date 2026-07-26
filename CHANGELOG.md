@@ -2,6 +2,119 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.184] - 2026-07-26 - a ranking cannot prove absence
+
+### Fixed
+
+- **`search_symbols`'s semantic exit asserted absence with no verdict at all, and
+  the reproduction is worse than the missing block.** Named as an open finding when
+  1.108.183 shipped; this closes it. That exit hand-rolled the legacy
+  `negative_evidence` block and emitted no `_meta.verdict`, so not one of the
+  absence gates shipped since 1.108.166 applied to it — while it printed "Do not
+  claim this feature exists" anyway. Third instance of the class found in
+  1.108.179: an early return is a second implementation of the answer and inherits
+  nothing.
+
+  ⚠ **Reproduced before touching code, `semantic=True, token_budget=1` over a repo
+  CONTAINING the target:**
+
+  ```
+  result_count:     0
+  _meta.truncated:  true
+  best_match_score: 53.774
+  warning:          "No implementation found for 'refresh_token'.
+                     Do not claim this feature exists."
+  _meta.verdict:    null
+  ```
+
+  A strong match reported in the same breath as its own absence, with nothing in
+  the response able to contradict it. That is the item-1 defect ("an empty RESPONSE
+  is not an empty SEARCH") fixed on the lexical path in 1.108.177 and left standing
+  here, which is exactly what a duplicated answer costs.
+
+  The exit now builds the **same** verdict as the lexical one, so every gate
+  applies: stale, rebuilding, partial, unknown freshness, working tree, movement,
+  packing. It also finally receives the pre-scan identity capture (#377 item 6),
+  which was taken on the shared path and simply never handed to the branch that
+  diverges. `matches_before_packing` is the post-cap match count, so a budget that
+  empties the response can no longer read as an empty search.
+
+- ⚠ **A refused scan now reaches a default-configured caller.** Every absence gate
+  since 1.108.166 works by DOWNGRADING to `degraded`, and the in-band disclosure
+  was gated on the state still reading `absent` — so **the better a gate worked,
+  the less the caller was told.** A refused zero-result came back as a bare empty
+  response, and since jcodemunch ships `meta_fields: []` by default, with no
+  verdict either. New `verdict.absence_refused` (set by the verdict, which is the
+  only party that knows both that the result was empty and that the claim was
+  refused) widens the carrier to every refused zero-result. The alternative was a
+  hand-kept tuple of per-tool result keys in the dispatcher, which is the class of
+  bug that stops covering the next producer somebody adds.
+
+### Added
+
+- **`verdict.absence_unprovable`: a retrieval mode that cannot establish absence
+  says so, on every state.** The lexical path's absence rests on a corpus fact —
+  no symbol in the index contains any query term. An embedding ranking's zero
+  result rests on embedding geometry, and **a symbol can sit in the corpus while
+  scoring at or below zero against the query vector.** That is a statement about
+  the model, not about the repository, and it must never be citable as one. A
+  semantic or hybrid zero result is therefore `degraded` and can never reach
+  `absent` at any freshness, at any coverage.
+
+  ⚠ **Expressed as a DOWNGRADE, so `handoff.absence_refusal` does the refusing off
+  the existing "only `absent` proves absence" rule — no second rule to keep in
+  sync.** `absence_refusal` names this cause before the generic state branch,
+  because unlike every sibling gate it describes something that cannot be different
+  next time, and a caller told only "the verdict was degraded" would keep re-running
+  a search that can never answer the question.
+
+  ⚠ **Checked LAST among the degraded gates, deliberately.** Every gate above it
+  names a condition the caller can act on (re-index, widen the scope, raise the
+  budget). Measured: the `token_budget=1` reproduction above now reports the budget
+  as its note and carries `absence_unprovable` alongside, rather than leading with
+  a permanent property when a fixable one applies.
+
+- Both new blocks published in `schemas/retrieval-verdict.schema.json` in the same
+  commit that emits them. Live verdicts from all three semantic shapes are
+  validated against it.
+
+### Changed
+
+- **`Producer.completeness_by_mode`, and the receipt gate caught its own author.**
+  Giving the semantic exit a verdict made it mintable — under a `completeness`
+  declaration reading "lexical BM25 over the inverted index", which is false for an
+  embedding ranking. `test_v1_108_183.py`'s pinning test failed, the mode got
+  reviewed, and `hybrid` / `semantic_only` now declare their own completeness
+  (every filtered symbol, no inverted-index narrowing, ranked by similarity, so the
+  receipt speaks for what was returned and never for what was not). **A capability
+  that reads enforced and is not is the failure Phase 2 exists to prevent, so the
+  gate catching this is the design working rather than a nuisance.** A mode absent
+  from the table falls back to the default, so adding one without reviewing it is a
+  visible omission instead of a silent inheritance.
+
+- `semantic`, `semantic_only` and `semantic_weight` join `search_symbols`' receipt
+  `mode_args`, and the projector records the exit's own `_meta.search_mode`: a
+  semantic and a lexical search of one string are different operations and must not
+  collide on one evidence id. `channels.semantic` alone could not tell hybrid from
+  `semantic_only`.
+
+### Notes
+
+- **DELIBERATELY NOT DONE: the two fusion exits still carry no verdict.** They
+  assert nothing false — no verdict and no absence prose either — so nothing there
+  is lying to anyone. Giving them one means first deciding whether a
+  Weighted-Reciprocal-Rank ranking that *includes* a lexical channel can prove
+  absence, and that is its own review rather than a rider on this one. Pinned by a
+  test so the decision cannot be made by accident.
+- A genuine semantic zero-result now returns no `negative_evidence` and no warning
+  string, because the only sentence the old block could produce was one it had no
+  standing to make. The reason rides the verdict and, on a default install, the
+  re-attached carrier.
+- New `tests/test_v1_108_184.py` (31), including the reproduction pinned and the
+  lexical path proven still able to reach `absent` — the gate has to be scoped to
+  the mode that earned it, not applied to every search. No tool-count change, no
+  `INDEX_VERSION` change.
+
 ## [1.108.183] - 2026-07-26 - a receipt says what it proves, and only that
 
 ### Added

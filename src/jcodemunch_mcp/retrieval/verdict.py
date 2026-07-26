@@ -197,6 +197,7 @@ def build_verdict(
     moved_during_scan: Optional[str] = None,
     freshness: Optional[str] = None,
     working_tree: Optional[dict] = None,
+    absence_unprovable: Optional[str] = None,
 ) -> dict:
     """Compute the unified verdict plus the legacy negative_evidence dict.
 
@@ -288,6 +289,20 @@ def build_verdict(
         # refusal falls out of the existing "only `absent` proves absence"
         # check with no second rule to keep in sync.
         state = STATE_DEGRADED
+    elif result_count == 0 and absence_unprovable:
+        # v1.108.184. Checked LAST among the degraded gates on purpose: every gate
+        # above names a condition the caller can do something about (re-index,
+        # widen the scope, raise the budget, re-run the search). This one names a
+        # permanent property of the retrieval mode that ran, so reporting a
+        # fixable cause in preference to it is strictly more useful.
+        #
+        # The case it exists for: a zero result from an embedding ranking. The
+        # lexical path's absence rests on a corpus fact — no symbol in the index
+        # contains any query term. A cosine ranking's zero result rests on
+        # embedding geometry, and a symbol can exist in the corpus while scoring
+        # at or below zero against the query vector. That is a statement about the
+        # model, not about the repository, and it must not be citable as one.
+        state = STATE_DEGRADED
     elif result_count == 0:
         state = STATE_ABSENT
     elif below_threshold:
@@ -332,6 +347,19 @@ def build_verdict(
         "scorer": SCORER_VERSION,
         "note": _NOTES[state],
     }
+    if state == STATE_DEGRADED and result_count == 0:
+        # The verdict is the authority on this, so it says it here rather than
+        # leaving the dispatcher to re-derive "was the response empty" from a
+        # hand-kept tuple of per-tool result keys — which is exactly the class of
+        # bug that tuple always has (a new producer is added, nobody adds its key,
+        # and the disclosure silently stops firing for it).
+        #
+        # It matters because jcodemunch ships `meta_fields: []` by DEFAULT: on a
+        # default install the verdict is deleted before the agent sees it, and only
+        # the re-attached carrier survives. That carrier used to fire for `absent`
+        # alone, so every REFUSED zero-result reached a default-configured caller
+        # as a bare empty response with no reason attached.
+        verdict["absence_refused"] = True
     if did_you_mean:
         verdict["did_you_mean"] = did_you_mean
     # Disclosed on EVERY state, not just the refused one: a caller reading a
@@ -363,6 +391,18 @@ def build_verdict(
                 f"The subject moved while this scan ran: {moved_during_scan}. "
                 "Absence is NOT proven against either state; re-run the search."
             )
+    if absence_unprovable:
+        # Disclosed on EVERY state, like every sibling block: a caller reading an
+        # `ok` semantic result still deserves to know this mode cannot prove
+        # absence, because the next thing they do may be to re-run it expecting
+        # one. Only the CLAIM is refused.
+        verdict["absence_unprovable"] = {"reason": absence_unprovable}
+        if state == STATE_DEGRADED and result_count == 0:
+            verdict["note"] = (
+                f"Nothing was returned, and {absence_unprovable} Absence is NOT "
+                "proven; re-run the search without the semantic channel to get an "
+                "answer that can prove it."
+            )
     if incomplete:
         verdict["incomplete"] = dict(incomplete)
         if state == STATE_DEGRADED and result_count == 0 and incomplete.get("note"):
@@ -390,11 +430,14 @@ def build_verdict(
         or bool(moved_during_scan)
         or freshness_unknown
         or bool((working_tree or {}).get("blocks"))
+        or bool(absence_unprovable)
     )
     if _packed_empty:
         # The legacy block would say "no_implementation_found", and
         # search_symbols renders that as "Do not claim this feature exists" —
-        # a false statement when matches were found and dropped by the packer.
+        # a false statement when matches were found and dropped by the packer,
+        # and an unfounded one when the mode that ran cannot establish absence
+        # at all (v1.108.184).
         pass
     elif result_count == 0 or below_threshold:
         negative_evidence = {

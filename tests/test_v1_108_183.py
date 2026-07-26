@@ -695,22 +695,19 @@ class TestProducerRegistration:
             is None
         )
 
-    def test_the_semantic_exit_of_search_symbols_carries_no_verdict_to_mint_from(self):
-        """Pins the live instance of the class, in the source rather than by fixture.
-
-        `_search_symbols_semantic` asserts absence through the legacy
-        negative_evidence block and never calls build_verdict, so it cannot mint.
-        If it ever gains a verdict, this test fails and the exit gets reviewed
-        before it starts minting — which is the point of the gate.
+    def test_the_semantic_exit_declares_its_own_completeness(self):
+        """This test used to assert the semantic exit had no verdict, so it could
+        not mint. v1.108.184 gave it one — and the test failed, which is the gate
+        doing its job: gaining a verdict made the exit mintable under a
+        `completeness` reading "lexical BM25 over the inverted index", false for an
+        embedding ranking. The mode was reviewed and now declares its own.
         """
-        source = (
-            _R183_ROOT / "src" / "jcodemunch_mcp" / "tools" / "search_symbols.py"
-        ).read_text(encoding="utf-8")
-        semantic = source.split("def _search_symbols_semantic")[1].split(
-            "def _search_symbols_fusion"
-        )[0]
-        assert 'meta["verdict"]' not in semantic
-        assert "build_verdict" not in semantic
+        producer = _r183_producers.PRODUCERS["search_symbols"]
+        for mode in ("hybrid", "semantic_only"):
+            declared = producer.completeness_for(mode)
+            assert declared != producer.completeness, mode
+            assert "cosine" in declared, mode
+        assert "BM25 over the inverted index" in producer.completeness_for(None)
 
     def test_the_fusion_exit_of_search_symbols_carries_no_verdict_to_mint_from(self):
         source = (

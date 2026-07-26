@@ -118,6 +118,19 @@
       },
       "additionalProperties": false
     },
+    "absence_unprovable": {
+      "type": "object",
+      "description": "The retrieval mode that ran cannot establish absence, whatever its freshness or coverage. Disclosed on EVERY state; when the result is empty the state is 'degraded', so the refusal falls out of the existing 'only absent proves absence' rule with no second rule to keep in sync. Unlike every sibling block this names a permanent property rather than a fixable condition, which is why it is checked LAST among the degraded gates: a cause the caller can act on is reported in preference to one they cannot. Emitted by search_symbols' semantic and hybrid exits (v1.108.184): the lexical path's absence rests on a corpus fact, that no symbol in the index contains any query term, while a cosine ranking's zero result rests on embedding geometry, and a symbol can sit in the corpus scoring at or below zero against the query vector.",
+      "properties": {
+        "reason": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "absence_refused": {
+      "type": "boolean",
+      "description": "This scan returned nothing AND its absence claim was refused. Set by the verdict rather than re-derived downstream, because the verdict is the only party that knows both facts; the alternative was a hand-kept tuple of per-tool result keys that would silently stop covering the next producer added. The dispatcher uses it to attach the refusal reason in band: every gate since v1.108.166 works by downgrading to 'degraded', so a disclosure gated on 'absent' meant the better a gate worked the less the caller was told — and jcodemunch ships meta_fields: [] by default, so a refused scan otherwise reached a default install as a bare empty response.",
+      "const": true
+    },
     "moved_during_scan": {
       "type": "object",
       "description": "The subject changed between the start of this scan and its end (concurrent edit, watcher reindex, incremental save, published generation, or a long scan crossing a rebuild). Checked for a zero-result scan only; the state is then 'degraded', because a scan whose subject moved describes neither the state it started against nor the one it finished in.",

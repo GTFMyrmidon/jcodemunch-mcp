@@ -20,10 +20,19 @@ structural rather than remembered:
 
 An exit that asserts absence without building a verdict therefore cannot mint —
 not because it is listed as an exception, but because it never produced the
-thing a receipt is derived from. Two live instances of that class today:
-``search_symbols``'s semantic exit emits the legacy ``negative_evidence`` block
-with no ``_meta.verdict`` at all, and both fusion exits emit neither. Neither
-can mint, and ``tests/test_v1_108_183.py`` pins that.
+thing a receipt is derived from. Both fusion exits are live instances of that
+class: they emit no verdict, so they cannot mint, and ``test_v1_108_183.py``
+pins it.
+
+The gate has since done its job once, which is worth recording. In v1.108.183
+``search_symbols``'s semantic exit could not mint because it emitted the legacy
+``negative_evidence`` block and no verdict at all. v1.108.184 gave it a real
+verdict — and that made it mintable under a ``completeness`` declaration reading
+"lexical BM25 over the inverted index", which is false for an embedding ranking.
+The pinning test failed, the mode got reviewed, and it now declares its own
+completeness through ``completeness_by_mode``. A capability that reads enforced
+and is not is the failure this whole phase exists to prevent, so the gate
+catching its own author is the design working, not a nuisance.
 
 The canonical projector is also the structural fix for the class of bug the
 hand-kept ``handoff._SCOPE_ARGS`` tuple keeps having (review item 12): a new
@@ -96,6 +105,7 @@ class Producer:
     #: different operations and must not collide on one id.
     mode_args: tuple
     #: How this producer knows its scan covered what it claims to have covered.
+    #: This is the DEFAULT, meaning the exit that does not label its search mode.
     completeness: str
     #: Which freshness signal backs a claim from this producer.
     freshness: str
@@ -110,6 +120,16 @@ class Producer:
     id_field: str = "id"
     #: Extra per-producer guard on the result, beyond the verdict-shape gate.
     accepts: Optional[Callable] = None
+    #: Per-MODE completeness, keyed by the response's own `_meta.search_mode`.
+    #:
+    #: Review item 20 asks for each mode to be reviewed rather than to inherit
+    #: capability by accident, and a shared `completeness` string is precisely how
+    #: that inheritance happens: v1.108.184 gave the semantic exit a real verdict,
+    #: which made it mintable under a declaration that said "lexical BM25 over the
+    #: inverted index" — a capability that reads enforced and is not. A mode that
+    #: is not listed here uses the default, so adding a mode without reviewing it
+    #: is a visible omission rather than a silent inheritance.
+    completeness_by_mode: dict = field(default_factory=dict)
     snapshot_fields: tuple = field(
         default=(
             "index_generation",
@@ -125,6 +145,12 @@ class Producer:
 
     def may_mint(self, proof_kind: str) -> bool:
         return proof_kind in self.proof_kinds
+
+    def completeness_for(self, search_mode: Optional[str]) -> str:
+        """The completeness declared for the exit that actually ran."""
+        if search_mode and search_mode in self.completeness_by_mode:
+            return self.completeness_by_mode[search_mode]
+        return self.completeness
 
 
 def _not_fusion(result: dict) -> bool:
@@ -183,12 +209,36 @@ PRODUCERS: dict[str, Producer] = {
             "detail_level",
             "max_results",
             "token_budget",
+            # v1.108.184: a semantic search and a lexical search of the same
+            # string are different operations and must not collide on one evidence
+            # id. `channels.semantic` alone could not tell hybrid from
+            # semantic_only, and the weight changes the ranking outright.
+            "semantic",
+            "semantic_only",
+            "semantic_weight",
         ),
         completeness=(
             "lexical BM25 over the inverted index, with the full symbol set as "
             "the fallback candidate basis; the response's own packing is "
             "disclosed as verdict.omitted"
         ),
+        completeness_by_mode={
+            # Reviewed for v1.108.184, when this exit gained a real verdict. It
+            # scores EVERY filtered symbol rather than narrowing through the
+            # inverted index, so its candidate basis is wider — and its ordering
+            # is embedding cosine, which is why a zero result here carries
+            # verdict.absence_unprovable and can never reach `absent`.
+            "hybrid": (
+                "hybrid BM25 + embedding cosine over every filtered symbol (no "
+                "inverted-index narrowing); ranked by similarity, so this "
+                "receipt speaks for what was returned and never for what was not"
+            ),
+            "semantic_only": (
+                "embedding cosine alone over every filtered symbol, with the "
+                "lexical channel switched off; ranked by similarity, so this "
+                "receipt speaks for what was returned and never for what was not"
+            ),
+        },
         freshness="FreshnessProbe.repo_freshness, four-state (v1.108.180)",
         coverage="index_coverage_meta; complete is tri-state and null never reads as true",
         integrity=(
@@ -359,6 +409,10 @@ def _project(producer: Producer, arguments: dict, result: dict) -> dict:
             projected["mode"]["fuzzy_pass_ran"] = True
     if isinstance(meta.get("exact_match"), dict):
         projected["mode"]["exact_match"] = bool(meta["exact_match"].get("found"))
+    if isinstance(meta.get("search_mode"), str):
+        # The exit labels its own mode, so identity records what actually ran
+        # rather than what the arguments asked for.
+        projected["mode"]["search_mode"] = meta["search_mode"]
     channels = (result.get("_meta") or {}).get("verdict", {}).get("channels") or {}
     if channels.get("semantic") and channels["semantic"] != "off":
         projected["mode"]["semantic"] = channels["semantic"]
@@ -582,6 +636,7 @@ def mint(
         trust_channel=(producer.verdict_shape == SHAPE_RETRIEVAL),
     )
     effective = _project(producer, arguments or {}, result)
+    search_mode = (result.get("_meta") or {}).get("search_mode")
     identity = _repo_identity(index, repo, owner, name)
     channels = dict(verdict.get("channels") or {})
     # Every condition limitation comes from a token that is inside the identity
@@ -621,7 +676,7 @@ def mint(
                         or integrity.get("hash_source") == "index_content_hash"
                     ),
                     "proves_absence": False,
-                    "completeness": producer.completeness,
+                    "completeness": producer.completeness_for(search_mode),
                     "freshness_semantics": producer.freshness,
                     "coverage_semantics": producer.coverage,
                     "integrity_semantics": producer.integrity,
@@ -665,7 +720,7 @@ def mint(
                     # refusal rules, and a receipt read hours later cannot
                     # disagree with the gate.
                     "proves_absence": refusal is None,
-                    "completeness": producer.completeness,
+                    "completeness": producer.completeness_for(search_mode),
                     "freshness_semantics": producer.freshness,
                     "coverage_semantics": producer.coverage,
                     "integrity_semantics": producer.integrity,

@@ -183,6 +183,18 @@ def absence_refusal(record: Optional[dict]) -> Optional[str]:
             f"{_omitted['matches_found']} match(es) were found and omitted to fit the "
             "response budget, so the empty response describes packing, not absence"
         )
+    _unprovable = record.get("absence_unprovable") or {}
+    if _unprovable.get("reason"):
+        # Named before the generic state rule (v1.108.184). Every other gate here
+        # describes something that could be different next time — re-index, widen
+        # the scope, raise the budget. This one is a permanent property of the
+        # retrieval mode that ran, so the reason has to say so or a caller will
+        # keep re-running a search that can never answer the question.
+        return (
+            f"{_unprovable['reason']} A ranking cannot establish that a symbol is "
+            "absent from the corpus; re-run the search without the semantic "
+            "channel to get a scan that can"
+        )
     _incomplete = record.get("incomplete") or {}
     if _incomplete.get("reason") == "empty_scope":
         return (
@@ -248,6 +260,7 @@ def note_absence(tool: str, repo, query, verdict, arguments=None, truncated=Fals
         "revalidated": verdict.get("revalidated"),
         "moved_during_scan": verdict.get("moved_during_scan"),
         "working_tree": verdict.get("working_tree"),
+        "absence_unprovable": verdict.get("absence_unprovable"),
         "truncated": bool(truncated),
         "scorer": verdict.get("scorer"),
     }

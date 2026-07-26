@@ -6419,7 +6419,17 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent] | CallToolR
                     if _ref:
                         _v["evidence_ref"] = _ref
                         _absence_carrier = {"ref": _ref, "citable": True}
-                    elif _why and _v.get("state") == "absent":
+                    elif _why and (
+                        _v.get("state") == "absent" or _v.get("absence_refused")
+                    ):
+                        # v1.108.184: `absence_refused` widens this to every
+                        # zero-result scan whose absence claim was refused, not
+                        # just the ones that still read `absent`. Every gate since
+                        # v1.108.166 works by DOWNGRADING to `degraded`, so gating
+                        # the disclosure on `absent` meant the better the gate
+                        # worked, the less the caller was told: a refused scan came
+                        # back as a bare empty response, and on a default install
+                        # (`meta_fields: []`) with no verdict either.
                         _v["absence_citable"] = False
                         _v["absence_blocked_by"] = _why
                         _absence_carrier = {"citable": False, "blocked_by": _why}

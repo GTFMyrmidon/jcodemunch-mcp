@@ -836,6 +836,10 @@ def search_symbols(
             provider=_semantic_provider[0],
             model=_semantic_provider[1],
             start=start,
+            # #377 item 6 reaches this exit too (v1.108.184): the capture is taken
+            # before retrieval on the shared path above and was simply never
+            # handed to the branch that diverges here.
+            state_before=_state_before,
         )
 
     # ── Fusion search path ──────────────────────────────────────────────
@@ -1243,6 +1247,7 @@ def _search_symbols_semantic(
     provider: str,
     model: str,
     start: float,
+    state_before: Optional[dict] = None,
 ) -> dict:
     """Semantic / hybrid scoring path for search_symbols.
 
@@ -1255,6 +1260,7 @@ def _search_symbols_semantic(
     When ``semantic_weight=0.0`` the result is identical to pure BM25.
     """
     from .embed_repo import embed_texts, _sym_text, EMBED_BATCH_SIZE, _gemini_task_aware
+    from ..retrieval import subject_state as _subject_state
     from ..storage.embedding_store import EmbeddingStore
     import logging as _logging
 
@@ -1496,38 +1502,84 @@ def _search_symbols_semantic(
         **_feat,
     )
     best_score = max_cos if semantic_only else max_bm25
-    if not scored_results or best_score < _ne_threshold:
-        # Find files whose names partially match query terms
-        query_lower = query.lower()
-        related_existing: list[str] = []
-        for f in index.source_files:
-            fname = f.lower().split("/")[-1].split("\\")[-1]
-            for term in query_terms:
-                if term in fname:
-                    related_existing.append(f)
-                    break
-        related_existing = related_existing[:5]  # cap at 5
 
-        verdict = "no_implementation_found" if not scored_results else "low_confidence_matches"
-        result["negative_evidence"] = {
-            "verdict": verdict,
-            "scanned_symbols": len(raw),
-            "scanned_files": len(seen_files) if seen_files else len(index.source_files),
-            "best_match_score": round(best_score, 3) if best_score > 0 else 0.0,
-            **({"related_existing": related_existing} if related_existing else {}),
-        }
-        # Add warning string alongside negative_evidence
+    # v1.108.184. This exit used to hand-roll the legacy `negative_evidence` block
+    # and emit NO `_meta.verdict` at all, so not one of the absence gates shipped
+    # since v1.108.166 applied to it \u2014 and it asserted "Do not claim this feature
+    # exists" anyway.
+    #
+    # \u26a0 The reproduction, because the shape matters more than the missing block:
+    # `semantic=True, token_budget=1` over a repo CONTAINING the target returned
+    # `result_count: 0`, `_meta.truncated: True`, "No implementation found ... Do
+    # not claim this feature exists", and `best_match_score: 53.774` \u2014 a strong
+    # match reported in the same breath as its own absence. That is the item-1
+    # defect ("an empty RESPONSE is not an empty SEARCH") fixed on the lexical
+    # path in v1.108.177 and left standing here, which is what an early return
+    # that reimplements the answer costs.
+    #
+    # This exit now builds the SAME verdict as the lexical one, so every gate
+    # applies: stale, rebuilding, partial, unknown freshness, working tree,
+    # movement, packing. `matches_before_packing` is the post-cap match count, so
+    # a budget that empties the response can no longer read as an empty search.
+    from ..retrieval.verdict import build_verdict as _build_verdict
+    from ..retrieval.verdict import index_changed_since_load as _index_changed_since_load
+    from ..retrieval.verdict import index_coverage_meta as _index_coverage_meta
+    _vres = _build_verdict(
+        result_count=len(scored_results),
+        matches_before_packing=len(top),
+        scanned_symbols=len(raw),
+        scanned_files=len(seen_files) if seen_files else len(index.source_files),
+        best_score=best_score,
+        threshold=_ne_threshold,
+        query_terms=query_terms,
+        source_files=index.source_files,
+        # The provider was resolved before this function was reached, so the
+        # channel really did run; `semantic_requested` would re-probe it.
+        semantic_requested=False,
+        index_stale=_probe.repo_is_stale,
+        freshness=_probe.repo_freshness,
+        index_changed=_index_changed_since_load(index),
+        coverage=_index_coverage_meta(index),
+        moved_during_scan=_subject_state.moved_during_scan(
+            state_before, index, result_count=len(scored_results)
+        ),
+        working_tree=(
+            _subject_state.working_tree_state(
+                index, scope=file_pattern, freshness=_probe.repo_freshness
+            )
+            if not scored_results else None
+        ),
+        # \u26a0 The load-bearing line. A zero result here is a statement about
+        # embedding geometry, not about the repository: a symbol can sit in the
+        # corpus and still score at or below zero against the query vector. The
+        # lexical path's absence rests on a corpus fact (no symbol contains any
+        # query term); this one cannot, ever, at any freshness. Expressed as a
+        # DOWNGRADE so `handoff.absence_refusal` does the refusing off the
+        # existing "only `absent` proves absence" rule, with no second rule to
+        # keep in sync.
+        absence_unprovable=(
+            "a semantic ranking scores similarity rather than looking a name up, "
+            "so a symbol can be present in the index and still fall at or below "
+            "zero against this query vector."
+        ),
+    )
+    meta["verdict"] = _vres["verdict"]
+    # The semantic channel really ran, and the verdict should say so rather than
+    # inherit the `off` default from `semantic_requested=False` above.
+    meta["verdict"]["channels"]["semantic"] = "ok"
+    negative_evidence = _vres["negative_evidence"]
+    if negative_evidence is not None:
+        result["negative_evidence"] = negative_evidence
         query_display = query[:80]
-        if verdict == "no_implementation_found":
+        if negative_evidence["verdict"] == "no_implementation_found":
             result["\u26a0 warning"] = (
                 f"No implementation found for '{query_display}'. "
                 f"Do not claim this feature exists."
             )
         else:
-            _best = result["negative_evidence"]["best_match_score"]
             result["\u26a0 warning"] = (
                 f"Low-confidence matches for '{query_display}' "
-                f"(best score: {_best}). "
+                f"(best score: {negative_evidence['best_match_score']}). "
                 f"Verify before claiming this feature exists."
             )
 
