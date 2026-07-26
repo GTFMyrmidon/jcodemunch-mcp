@@ -196,6 +196,7 @@ def build_verdict(
     incomplete: Optional[dict] = None,
     moved_during_scan: Optional[str] = None,
     freshness: Optional[str] = None,
+    working_tree: Optional[dict] = None,
 ) -> dict:
     """Compute the unified verdict plus the legacy negative_evidence dict.
 
@@ -253,6 +254,12 @@ def build_verdict(
         # so the same degraded gate as the stale/truncated/rebuilding cases
         # applies and the absence-refusal rule falls out of the existing "only
         # `absent` proves absence" check with nothing new to keep in sync.
+        state = STATE_DEGRADED
+    elif result_count == 0 and (working_tree or {}).get("blocks"):
+        # #377 hardening item 5. Git HEAD can sit still while the tree holds an
+        # edit the corpus has not read, and a zero-result scan has no returned
+        # file to hang per-file freshness on. Only work INSIDE the scanned
+        # scope, and only work the index has not caught up with, gets here.
         state = STATE_DEGRADED
     elif result_count == 0 and freshness_unknown:
         # This subject HAS a revision we should be able to read and we could
@@ -330,6 +337,18 @@ def build_verdict(
     # Disclosed on EVERY state, not just the refused one: a caller reading a
     # short result list deserves to know matches were dropped to fit the
     # response, whether or not an absence claim is involved.
+    if working_tree:
+        # Disclosed whenever it was measured. It is measured only for a
+        # zero-result scan: probing the tree on every search would price a
+        # subprocess into the answers that do not need it.
+        verdict["working_tree"] = {k: v for k, v in working_tree.items() if k != "blocks"}
+        if working_tree.get("blocks") and state == STATE_DEGRADED and result_count == 0:
+            _n = working_tree.get("files_not_in_index", 0)
+            verdict["note"] = (
+                f"{_n} uncommitted change(s) inside this scope are not in the index "
+                "yet, so the target may sit in an edit the scan could not read. "
+                "Absence is NOT proven; re-index or narrow the scope."
+            )
     if freshness_unknown and state == STATE_DEGRADED and result_count == 0:
         verdict["note"] = (
             "Index freshness could not be established for this repository, so "
@@ -370,6 +389,7 @@ def build_verdict(
         or bool(incomplete)
         or bool(moved_during_scan)
         or freshness_unknown
+        or bool((working_tree or {}).get("blocks"))
     )
     if _packed_empty:
         # The legacy block would say "no_implementation_found", and

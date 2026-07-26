@@ -253,6 +253,12 @@ def search_text(
         moved_during_scan=_subject.moved_during_scan(
             _state_before, index, result_count=result_count
         ),
+        working_tree=(
+            _subject.working_tree_state(
+                index, scope=file_pattern, freshness=_probe.repo_freshness
+            )
+            if result_count == 0 else None
+        ),
     )
     _meta = {
         "timing_ms": round(elapsed, 1),

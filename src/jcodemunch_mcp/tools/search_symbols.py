@@ -1151,6 +1151,12 @@ def search_symbols(
         moved_during_scan=_subject_pre.moved_during_scan(
             _state_before, index, result_count=len(scored_results)
         ),
+        working_tree=(
+            _subject_pre.working_tree_state(
+                index, scope=file_pattern, freshness=_probe.repo_freshness
+            )
+            if not scored_results else None
+        ),
     )
     negative_evidence = _vres["negative_evidence"]
     meta["verdict"] = _vres["verdict"]

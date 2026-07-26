@@ -447,6 +447,9 @@ def get_ranked_context(
             moved_during_scan=_subject.moved_during_scan(
                 _state_before, index, result_count=0
             ),
+            working_tree=_subject.working_tree_state(
+                index, scope=scope, freshness=_p.repo_freshness
+            ),
         )["verdict"]
         return result
 
@@ -603,6 +606,12 @@ def get_ranked_context(
         coverage=_index_coverage_meta(index),
         moved_during_scan=_subject.moved_during_scan(
             _state_before, index, result_count=len(context_items)
+        ),
+        working_tree=(
+            _subject.working_tree_state(
+                index, scope=scope, freshness=_probe.repo_freshness
+            )
+            if not context_items else None
         ),
     )
     negative_evidence = _vres["negative_evidence"]

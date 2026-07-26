@@ -104,6 +104,20 @@
       },
       "additionalProperties": false
     },
+    "working_tree": {
+      "type": "object",
+      "description": "Scope-level working-tree state behind an absence claim. Measured for a zero-result scan only (probing the tree on every search would price a subprocess into answers that do not need it). Only dirty_in_scope can refuse the claim, and only when files_not_in_index is nonzero: work outside the scanned scope does not invalidate a narrow proof, and an edit the index has already re-read is not a gap.",
+      "properties": {
+        "state": {
+          "enum": ["clean", "dirty_in_scope", "dirty_outside_scope", "unknown", "not_applicable"]
+        },
+        "files_dirty": {"type": "integer", "minimum": 0},
+        "files_dirty_in_scope": {"type": "integer", "minimum": 0},
+        "files_not_in_index": {"type": "integer", "minimum": 0},
+        "sample": {"type": "array", "items": {"type": "string"}, "description": "Up to five repo-relative paths the scan could not have read at their current content."}
+      },
+      "additionalProperties": false
+    },
     "moved_during_scan": {
       "type": "object",
       "description": "The subject changed between the start of this scan and its end (concurrent edit, watcher reindex, incremental save, published generation, or a long scan crossing a rebuild). Checked for a zero-result scan only; the state is then 'degraded', because a scan whose subject moved describes neither the state it started against nor the one it finished in.",

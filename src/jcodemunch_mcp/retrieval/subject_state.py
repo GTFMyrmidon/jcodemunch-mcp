@@ -39,20 +39,46 @@ logger = logging.getLogger(__name__)
 # picked up within a couple of seconds, long enough that a fan-out of searches
 # does not spawn a subprocess each.
 _TREE_CACHE_TTL_S = 2.0
-_tree_cache: dict[str, tuple[Optional[str], float]] = {}
+_tree_cache: dict[str, tuple[Optional[tuple[str, tuple]], float]] = {}
 
 
 def _clear_tree_cache() -> None:
-    """Test hook: drop cached working-tree fingerprints."""
+    """Test hook: drop cached working-tree readings."""
     _tree_cache.clear()
 
 
-def working_tree_fingerprint(source_root: Optional[str]) -> Optional[str]:
-    """Digest of the working tree's uncommitted state, or None when unknown.
+def _parse_porcelain(raw: bytes) -> tuple:
+    """Repo-relative paths from ``git status --porcelain`` output.
+
+    A rename reports ``R  old -> new``; the NEW path is the one that exists in
+    the tree, and it is the one a search would have had to see. Quoted paths
+    (spaces, non-ASCII) are unquoted so they compare against index paths.
+    """
+    paths: list[str] = []
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        if len(line) < 4:
+            continue
+        entry = line[3:]
+        if " -> " in entry:
+            entry = entry.split(" -> ", 1)[1]
+        entry = entry.strip()
+        if entry.startswith('"') and entry.endswith('"') and len(entry) > 1:
+            try:
+                entry = entry[1:-1].encode().decode("unicode_escape")
+            except (UnicodeDecodeError, ValueError):
+                entry = entry[1:-1]
+        if entry:
+            paths.append(entry.replace("\\", "/"))
+    return tuple(paths)
+
+
+def _working_tree_reading(source_root: Optional[str]) -> Optional[tuple[str, tuple]]:
+    """``(fingerprint, dirty_paths)`` for the tree, or None when unknown.
 
     None means "could not be determined" (not a git checkout, git missing, the
-    command failed) and must never be compared as equality with a real
-    fingerprint — unknown is not unchanged.
+    command failed) and must never be compared as equality with a real reading —
+    unknown is not unchanged. TTL-cached so a burst of searches shares one
+    subprocess.
     """
     if not source_root:
         return None
@@ -60,7 +86,7 @@ def working_tree_fingerprint(source_root: Optional[str]) -> Optional[str]:
     hit = _tree_cache.get(source_root)
     if hit is not None and (now - hit[1]) < _TREE_CACHE_TTL_S:
         return hit[0]
-    fp: Optional[str] = None
+    reading: Optional[tuple[str, tuple]] = None
     try:
         out = subprocess.run(
             ["git", "status", "--porcelain", "--untracked-files=normal"],
@@ -70,11 +96,20 @@ def working_tree_fingerprint(source_root: Optional[str]) -> Optional[str]:
             check=False,
         )
         if out.returncode == 0:
-            fp = hashlib.sha256(out.stdout).hexdigest()[:16]
+            reading = (
+                hashlib.sha256(out.stdout).hexdigest()[:16],
+                _parse_porcelain(out.stdout),
+            )
     except (OSError, subprocess.SubprocessError):
         logger.debug("Working-tree probe failed for %s", source_root, exc_info=True)
-    _tree_cache[source_root] = (fp, now)
-    return fp
+    _tree_cache[source_root] = (reading, now)
+    return reading
+
+
+def working_tree_fingerprint(source_root: Optional[str]) -> Optional[str]:
+    """Digest of the working tree's uncommitted state, or None when unknown."""
+    reading = _working_tree_reading(source_root)
+    return reading[0] if reading else None
 
 
 def capture(index, *, include_tree: bool = False, fresh_head: bool = False) -> dict:
@@ -151,6 +186,100 @@ def changed(
             "scan never saw"
         )
     return None
+
+
+def _in_scope(path: str, scope: Optional[str]) -> bool:
+    """Would a scan restricted to *scope* have had to look at *path*?
+
+    No scope means the whole repository, so everything is in it. A glob is
+    matched the way the tools match one: against the full repo-relative path
+    and against the bare basename, since ``*.py`` is meant to mean "any Python
+    file", not "a Python file at the root".
+    """
+    if not scope:
+        return True
+    from fnmatch import fnmatch
+
+    return fnmatch(path, scope) or fnmatch(path, f"*/{scope}")
+
+
+def working_tree_state(
+    index, *, scope: Optional[str] = None, freshness: Optional[str] = None
+) -> Optional[dict]:
+    """Scope-level working-tree state behind an absence claim (#377 item 5).
+
+    Git HEAD can sit still while the tree holds a modified file, a brand-new
+    untracked implementation, a deletion, or a rename into or out of scope. A
+    zero-result scan has no returned file to hang per-file freshness on, so the
+    scope needs a state of its own:
+
+        clean                nothing uncommitted anywhere
+        dirty_outside_scope  uncommitted work exists, none of it in this scope
+        dirty_in_scope       uncommitted work exists inside this scope
+        unknown              the tree could not be read
+        not_applicable       the subject has no revision control at all
+
+    Only `dirty_in_scope` can block, and only when at least one of those files
+    is ALSO missing from the index or older in it than on disk. A watcher that
+    has already re-indexed the edit leaves the corpus current, and refusing
+    there would fire on every developer with unsaved work in a repo whose index
+    is up to date — a false alarm that teaches people to ignore the signal.
+    """
+    if freshness == "not_tracked":
+        return {"state": "not_applicable", "blocks": False}
+    source_root = getattr(index, "source_root", "") or None
+    reading = _working_tree_reading(source_root)
+    if reading is None:
+        return {"state": "unknown", "blocks": False}
+    _fp, dirty = reading
+    if not dirty:
+        return {"state": "clean", "blocks": False}
+    in_scope = [p for p in dirty if _in_scope(p, scope)]
+    if not in_scope:
+        return {
+            "state": "dirty_outside_scope",
+            "files_dirty": len(dirty),
+            "blocks": False,
+        }
+    unreflected = _unreflected_in_index(index, source_root, in_scope)
+    state = {
+        "state": "dirty_in_scope",
+        "files_dirty": len(dirty),
+        "files_dirty_in_scope": len(in_scope),
+        "files_not_in_index": len(unreflected),
+        "blocks": bool(unreflected),
+    }
+    if unreflected:
+        state["sample"] = sorted(unreflected)[:5]
+    return state
+
+
+def _unreflected_in_index(index, source_root: Optional[str], paths) -> list:
+    """Of *paths*, those the index does not hold at their current content.
+
+    A path the index never saw, or holds at an older mtime than the file on
+    disk, is a real gap: the scan could not have matched what is in it. A path
+    the index already re-read is not, however dirty git considers it.
+    """
+    mtimes = getattr(index, "file_mtimes", None) or {}
+    root = Path(source_root) if source_root else None
+    missing = []
+    for rel in paths:
+        indexed_ns = mtimes.get(rel)
+        if indexed_ns is None:
+            missing.append(rel)
+            continue
+        if root is None:
+            continue
+        try:
+            disk = root / rel
+            if not disk.exists():
+                missing.append(rel)  # deleted under the index
+            elif disk.stat().st_mtime_ns > int(indexed_ns):
+                missing.append(rel)
+        except (OSError, TypeError, ValueError):
+            missing.append(rel)
+    return missing
 
 
 def moved_during_scan(before: Optional[dict], index, *, result_count: int) -> Optional[str]:

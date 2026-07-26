@@ -2,6 +2,47 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.181] - 2026-07-26 - uncommitted work is represented, per scope
+
+### Fixed
+
+- **A zero-result scan could not see the edit that would have answered it.**
+  Item 5 of the [#377](https://github.com/jgravelle/jcodemunch-mcp/issues/377)
+  review by @mightydanp. Git HEAD sits still while the tree holds a modified
+  file, a brand-new untracked implementation, a deletion, or a rename into or
+  out of scope, so every freshness gate we had could report `fresh` over a
+  corpus that had not read the file the target lives in. A scan that returns
+  rows carries per-file freshness on them; a scan that returns nothing has
+  nowhere to put it.
+- New `subject_state.working_tree_state` gives the SCOPE a state of its own:
+  `clean` / `dirty_in_scope` / `dirty_outside_scope` / `unknown` /
+  `not_applicable`, disclosed as `verdict.working_tree` and wired into
+  `search_symbols`, `search_text` and both of `get_ranked_context`'s exits.
+
+### Notes
+
+- **Only `dirty_in_scope` can refuse, and only when the index has not caught
+  up.** Two restrictions do the work, and both are load-bearing:
+  - work OUTSIDE the scanned scope never blocks, which is the reviewer's own
+    distinction: a dirty file elsewhere does not invalidate a narrow proof;
+  - an edit the index has ALREADY re-read is not a gap. `files_not_in_index`
+    compares each dirty in-scope path against `index.file_mtimes`, so a
+    watcher-fresh corpus keeps proving absence. Without that, the gate would
+    fire on every developer with unsaved work in an up-to-date repo, and a
+    signal that fires constantly is one people learn to ignore.
+- The refusal counts the files and names up to five of them, so the reader can
+  see what the scan could not read rather than being told to distrust it.
+- **Measured for a zero-result scan only.** Probing the tree costs a `git
+  status`, and pricing a subprocess into answers that do not need it would be a
+  tax on the common path. Same discipline as items 3 and 6; the reading is
+  TTL-cached and shared with the cached-negative revalidation.
+- Rename handling matters here: `R old -> new` records the NEW path, which is
+  the one that exists in the tree and the one a search would have had to see.
+  Quoted and backslashed paths are normalised so they compare against index
+  paths.
+- `working_tree` published in `schemas/retrieval-verdict.schema.json`. New
+  `tests/test_v1_108_181.py` (27). No tool-count or INDEX_VERSION change.
+
 ## [1.108.180] - 2026-07-26 - unknown freshness stops collapsing into fresh
 
 ### Fixed

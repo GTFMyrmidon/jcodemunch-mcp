@@ -145,6 +145,17 @@ def absence_refusal(record: Optional[dict]) -> Optional[str]:
             "the index did not cover the whole tree at scan time, so the target "
             "may sit in a file that never entered the corpus"
         )
+    _tree = record.get("working_tree") or {}
+    if _tree.get("files_not_in_index"):
+        # Named before the generic state rule (#377 item 5). Work OUTSIDE the
+        # scanned scope never reaches here, and neither does an edit the index
+        # has already re-read: refusing on either would fire on every developer
+        # with unsaved work and teach people to ignore the signal.
+        return (
+            f"{_tree['files_not_in_index']} uncommitted change(s) inside the scanned "
+            "scope had not reached the index, so the target may sit in an edit the "
+            "scan could not read"
+        )
     _moved = record.get("moved_during_scan") or {}
     if _moved.get("reason"):
         # Named before the generic state rule: the scan itself was fine, and
@@ -236,6 +247,7 @@ def note_absence(tool: str, repo, query, verdict, arguments=None, truncated=Fals
         "incomplete": verdict.get("incomplete"),
         "revalidated": verdict.get("revalidated"),
         "moved_during_scan": verdict.get("moved_during_scan"),
+        "working_tree": verdict.get("working_tree"),
         "truncated": bool(truncated),
         "scorer": verdict.get("scorer"),
     }
