@@ -2,6 +2,33 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.174] - 2026-07-25 - an empty index says so
+
+### Added
+
+- **`list_repos` reports an empty store instead of returning a bare zero.**
+  Raised in correspondence on
+  [#375](https://github.com/jgravelle/jcodemunch-mcp/issues/375). A user ran the
+  suite for months with jdatamunch holding zero datasets and jdocmunch holding
+  three documents, and only discovered it by going looking. Their summary of the
+  class: every tool answers confidently regardless of how little it holds, so an
+  agent cannot tell "I searched everything and it is not there" from "I have
+  almost nothing indexed". Their words on the fix: "we would have fed both tools
+  months ago."
+
+  An empty listing is the one case where that ambiguity is trivially removable,
+  because zero indexed repositories is a fact rather than an inference. When
+  nothing is indexed, `list_repos` now adds `empty: true` and a `hint` naming
+  the command that fixes it and why it matters.
+
+  ⚠ Top-level rather than under `_meta` deliberately: the sibling servers strip
+  `_meta` by default, so a nudge placed there would be deleted before the agent
+  ever saw it. Same key names across all three servers.
+
+  Additive and silent once anything is indexed: no key, no token, no behavior
+  change. New `tests/test_v1_108_174.py` (4). Suite parity: jdatamunch-mcp
+  v1.28.0. NO schema, tool-count, or INDEX_VERSION change.
+
 ## [1.108.173] - 2026-07-25 - exact-match honesty: a fuzzy near-miss stops looking like a hit
 
 ### Fixed

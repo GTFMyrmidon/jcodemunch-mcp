@@ -17,13 +17,31 @@ def list_repos(storage_path: Optional[str] = None) -> dict:
     repos = store.list_repos()
     elapsed = (time.perf_counter() - start) * 1000
 
-    return {
+    result = {
         "count": len(repos),
         "repos": repos,
         "_meta": {
             "timing_ms": round(elapsed, 1),
         },
     }
+
+    # Empty-store nudge (jcm#375 correspondence, suggestion C). A user ran the
+    # suite for months with jdatamunch holding zero datasets and jdocmunch
+    # holding three documents, and only found out by going looking: every tool
+    # answered confidently regardless of how little it held. An empty listing is
+    # indistinguishable from a broken one unless it says so.
+    #
+    # Top-level rather than under `_meta` deliberately: the sibling servers strip
+    # `_meta` by default, so a nudge placed there would be deleted before the
+    # agent ever saw it. Same key names across all three servers.
+    if not repos:
+        result["empty"] = True
+        result["hint"] = (
+            "No repositories are indexed yet, so every search will come back "
+            "empty regardless of the query. Index one with "
+            "index_folder(path='.') or the `jcodemunch-mcp index` CLI."
+        )
+    return result
 
 
 def repos_report(storage_path: Optional[str] = None) -> list[dict]:
