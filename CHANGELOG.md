@@ -2,6 +2,179 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.183] - 2026-07-26 - a receipt says what it proves, and only that
+
+### Added
+
+- **Exact immutable evidence receipts** (`jcodemunch.evidence/v1`),
+  [#377](https://github.com/jgravelle/jcodemunch-mcp/issues/377) Phase 2, P1 + P2
+  of the PRD sequencing. Design by **@mightydanp**, whose post-ship review items
+  12-22 this implements.
+
+  Phase 1 (1.108.165) answered *which reference is attached to which claim*. It
+  did not narrow **what a reference proves**, and we said so publicly when we
+  shipped it. `handoff._validate_evidence` attests a ref matching a served symbol
+  id **or the file component of one**, so:
+
+      served this session:  src/auth/session.py::refresh_token#function
+      attests:              src/auth/session.py::refresh_token#function   correct
+      attests:              src/auth/session.py                           over-broad
+
+  A claim citing a whole file was attested when one unrelated symbol from it was
+  the only thing retrieved, and the reader of a finalized handoff could not tell
+  those two citations apart. The server was the only party in the exchange that
+  knew the difference.
+
+  A receipt is the narrow answer. New `evidence/receipts.py` binds one canonical
+  subject — symbol id, file, line range, `content_sha256` — to one snapshot and
+  to the operation that actually ran, then derives its identity from exactly
+  those three, so **different snapshots cannot share an evidence id**. Read at
+  `munch://evidence/<id>`, beside `munch://runtime/identity` (#371) and
+  `munch://handoff/<id>` (#374). **No new tool**: the tool-schema budget is a
+  real constraint (90 tools in `full`, `core_compact` pinned at 3996) and the
+  reviewer flagged it before we did. The response carries an **id**, not the
+  receipt; the body is read from the resource on demand.
+
+- **Producer registration with canonical projectors** (`evidence/producers.py`),
+  the load-bearing half. An envelope without registration is a contract anything
+  can mint into, which is the defect this phase exists to fix, so P1 and P2
+  shipped together. A reviewed producer declares its verdict shape, the proof
+  kinds it may mint, its canonical projector, and its completeness / freshness /
+  coverage / integrity semantics — once.
+
+  ⚠ **This is where the hardest lesson of the 1.x hardening work goes.**
+  `get_ranked_context` asserted "Do not claim this feature exists" from an early
+  return that never called `build_verdict`, so eight shipped absence gates were
+  invisible to it until 1.108.179 went looking. An early return is a second
+  implementation of the answer and inherits nothing. Registration makes that
+  structural rather than remembered: **minting requires a verdict of the shape
+  the producer registered**, so an exit that asserts an answer without building
+  one cannot mint — not as a listed exception, but because it never produced the
+  thing a receipt is derived from.
+
+- **Four producers registered, and the boundary is stated rather than implied.**
+  `get_symbol_source` (`symbol_definition`; positive only — its "not in the
+  index" answer carries no scan counts, no coverage and no query, so it cannot
+  back an absence claim and is not registered to try), `search_symbols` and
+  `get_ranked_context` (`symbol_definition` + `symbol_lookup_absence`, both
+  `get_ranked_context` exits since 1.108.179), `search_text`
+  (`literal_text_absence` only — a text hit is a `(file, line, matched text)`
+  tuple, not a symbol definition, and giving it a positive kind would mean
+  inventing a subject nothing downstream knows how to compare).
+
+- **Opt-in `receipt` argument** on those four, and only those four. Default false
+  is today's response bytes, **pinned by a test**. Passing it to an unregistered
+  tool is disclosed as `ignored_arguments` (the 1.108.175 contract) rather than
+  silently accepted, so "no receipt came back" is never a mystery.
+
+- **`schemas/evidence-receipt.schema.json`**, published in the same commit that
+  emits it. That trap has now fired three times (1.108.168, .176, .180); the
+  receipt envelope is closed (`additionalProperties: false`) and the tests
+  validate live receipts from all three shapes against it.
+
+### Changed
+
+- **`_meta.receipts` joins `UNIVERSAL_META_JSON`.** It is the only thing in the
+  response that names the receipt, so an encoder that dropped it would convert an
+  opted-in call back into one that proved nothing. Verified across json, compact
+  and auto encoding, `meta_fields: []`, a partial `meta_fields` filter and
+  `suppress_meta` — the same ordering rule as 1.108.177 item 10: the receipt is
+  minted against the COMPLETE internal result and the carrier is re-attached
+  after presentation filtering. A display preference must never decide what a
+  scan proved.
+
+- **`finalize_handoff` distinguishes exact evidence from broadened evidence, and
+  the input picks the contract.** A handoff citing **no** receipt keeps the
+  historical file-component broadening exactly and renders byte-identically, so
+  no shipped caller changes — but its receipt now carries `evidence_precision`
+  (`exact` / `symbol_exact` / `broadened`) and `broadened_refs`, which name the
+  file-level citation and what actually backed it. A handoff that **does** cite a
+  receipt is held to the subject its evidence proves: a file-level ref backed
+  only by a served symbol from that file is **refused** as over-broad, with its
+  own error and its own fix. That closes the Phase 1 caveat, and
+  `tests/test_v1_108_183.py` proves the test is not vacuous by showing the same
+  finalization attests the file ref with the narrowing disabled.
+
+- `absence_attested` now counts absence **receipts** as well as bare `absent:`
+  tokens: a receipt points at the same recorded scan, and a reader counting
+  absence proofs would otherwise undercount every receipt-citing handoff. (The
+  rename to `absence_scans_attested` is P4 and is not in this release.)
+
+### Notes
+
+- **Phase 3 refs keep working, unchanged.** An absence receipt LINKS to the scan
+  `note_absence` recorded (new `handoff.absence_ref_for` derives the ref from the
+  same projection) instead of re-deriving whether that scan proves anything, so
+  `absence_refusal` stays the single implementation of the refusal rules and a
+  receipt read hours later cannot disagree with the gate that issued it.
+  `capabilities.proves_absence` is advisory; finalization re-derives it.
+
+- **The snapshot is BOUND, not built.** Every field already ships:
+  `subject_state.capture` (1.108.178), `FreshnessProbe.repo_freshness`
+  (1.108.180), `index_coverage_meta` (1.108.176), `verdict.working_tree`
+  (1.108.181). ⚠ One divergence found while wiring it and handled rather than
+  papered over: `build_symbol_verdict` never got the item-4 four-state treatment,
+  so ITS `channels.index` reports `fresh` for a plain indexed folder that has no
+  revision at all. A receipt from `get_symbol_source` therefore probes
+  `repo_freshness` directly instead of trusting the channel — believing that
+  value would have been the 1.108.176 mistake again, a signal read as answering a
+  question it does not answer. The divergence is visible inside one envelope
+  (`channels.index: fresh`, `snapshot.freshness: not_tracked`) and pinned.
+
+- **The subject is read from the SERVED row only, never re-read from the index.**
+  A receipt describes what the caller was handed: `search_symbols` at standard
+  detail serves no `end_line` and no content hash, so the receipt omits both and
+  says so in `limitations` rather than quietly filling them in from a lookup the
+  caller never saw. `detail_level: "full"` serves the body, so the served bytes
+  are hashed. `limitations` is what makes a weak receipt usable rather than
+  discardable.
+
+- **Full digests, and fail-closed on collision.** 48 bits of displayed identity
+  is a birthday problem waiting for a large session (review item 19), so the id
+  is the whole sha256; rendered prose shows a short prefix, identity and storage
+  never do. An id that has ever named two different receipts names neither
+  afterwards — keeping one would make every later citation of it a coin flip.
+
+- ⚠ **`snapshot.conditions` exists because fail-closed and `limitations` were
+  about to fight each other.** `limitations` is not part of the evidence id, so a
+  condition that changed it WITHOUT changing the id would give one id two
+  different bodies — and the fail-closed check would then refuse both, deleting a
+  receipt an agent was already holding. A cached `search_symbols` replay whose
+  verdict gains `revalidated` is exactly that case: the generation and both
+  revisions sit still while the response's honesty changes. So every condition is
+  now a token INSIDE the snapshot (`rebuilding`, `partial`, `stale`,
+  `freshness_unknown`, `not_tracked`, `no_coverage_contract`,
+  `semantic_unavailable`, `replayed_from_stale_cache`, `moved_during_scan`,
+  `incomplete_inputs`, `omitted_matches`), every limitation is derived from one,
+  and a subject measured under different conditions therefore gets a different
+  id — which is what "different snapshot, different id" has to mean when the
+  conditions are what changed. Found reviewing this change, not by a test failing.
+
+- **DELIBERATELY NOT DONE, so nobody builds on it:** session keying, the full
+  expiry taxonomy (`wrong_session` / `wrong_subject` / `expired` /
+  `snapshot_invalidated`) and finalization deep-freeze are P3; redacted public
+  rendering and the `absence_scans_attested` rename are P4; **suite parity for
+  jdocmunch and jdatamunch is P5 and is untouched here.** `lookup` does
+  distinguish `never_recorded` from `evicted`, because a bounded store makes that
+  one bit unavoidable and reporting the wrong reason would be worse than
+  reporting none. Receipts are capped at 25 per call, and the truncation is
+  DISCLOSED in the carrier rather than silent.
+
+- **Two ungated absence assertions found and NOT fixed here, stated plainly
+  rather than left to be discovered:** `search_symbols`'s semantic exit emits the
+  legacy `negative_evidence` block — including "Do not claim this feature
+  exists" — with no `_meta.verdict` at all, so none of the absence gates shipped
+  since 1.108.166 apply to it; both fusion exits emit neither a verdict nor
+  negative evidence. Neither can mint a receipt, which is the registration gate
+  working, and tests pin that against the source so a future verdict there forces
+  a review before it starts minting. Repairing the semantic exit's prose would
+  change response bytes on calls that never asked for a receipt, so it is its own
+  change, not a rider on this one.
+
+- New `tests/test_v1_108_183.py` (78). No tool-count change, no `INDEX_VERSION`
+  change, no new background process, no write to the user's repository or index
+  store.
+
 ## [1.108.182] - 2026-07-26 - a stall has a name and a ceiling
 
 ### Fixed

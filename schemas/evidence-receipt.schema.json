@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jcodemunch.com/schemas/evidence-receipt.schema.json",
+  "title": "jCodeMunch evidence receipt",
+  "description": "An immutable evidence receipt (jcodemunch.evidence/v1, #377 phase 2), served at munch://evidence/<evidence_id>. Records what exact evidence a reference proves, against what snapshot, produced by what operation. The server attests; it never concludes. Whether a receipt SATISFIES a claim's declared needs is Phase 4 and is deliberately not modelled here.",
+  "type": "object",
+  "required": [
+    "schema",
+    "evidence_id",
+    "proof_kind",
+    "product",
+    "subject",
+    "effective_search",
+    "snapshot",
+    "limitations"
+  ],
+  "properties": {
+    "schema": {
+      "const": "jcodemunch.evidence/v1"
+    },
+    "evidence_id": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "sha256 over the canonical (subject, effective_search, snapshot) payload. Different snapshot means a different id. Always the FULL digest: 48 bits of displayed identity is a birthday problem waiting for a large session. Rendered prose may show a short prefix; identity, comparison and storage never do."
+    },
+    "proof_kind": {
+      "enum": [
+        "symbol_definition",
+        "symbol_lookup_absence",
+        "literal_text_absence",
+        "declaration_kind_absence",
+        "reference_graph_absence",
+        "implementation_graph_absence",
+        "document_section",
+        "document_topic_absence",
+        "column_definition",
+        "column_identity_absence"
+      ],
+      "description": "What this receipt is a proof OF. A producer may mint only the kinds its operation supports (evidence/producers.py). The document_* and column_* kinds are the jdocmunch and jdatamunch halves of the suite vocabulary, named here so parity attaches to one enum rather than inventing a second."
+    },
+    "product": {
+      "type": "string",
+      "description": "The suite member that minted this receipt."
+    },
+    "subject": {
+      "type": "object",
+      "description": "The exact thing this receipt proves something about — the Phase 1 caveat closed. Read from the SERVED row only, never re-read from the index: a receipt describes what the caller was handed. Fields the response did not carry are OMITTED and named in limitations rather than quietly filled in.",
+      "required": ["repo_identity"],
+      "properties": {
+        "repo_identity": {
+          "type": "string",
+          "description": "RESOLVED repo identity, not the caller's argument string: '.', an alias, a path and a worktree can all name one repo."
+        },
+        "symbol_id": {"type": "string"},
+        "file": {"type": "string", "description": "Repo-relative, forward-slashed."},
+        "start_line": {"type": "integer", "minimum": 1},
+        "end_line": {"type": "integer", "minimum": 1},
+        "content_sha256": {
+          "type": "string",
+          "description": "Hash of the symbol body. With a line range, a file-level citation stops being indistinguishable from a symbol-level one."
+        },
+        "query": {
+          "type": "string",
+          "description": "Absence receipts only: the query whose absence was scanned for."
+        }
+      },
+      "additionalProperties": false
+    },
+    "effective_search": {
+      "type": "object",
+      "description": "A descriptor of the operation that ACTUALLY ran, emitted by the producer's canonical projector — not the raw caller arguments, and not the finalizer reverse-engineering semantics from them. Absent and empty-valued keys are dropped so kind=null cannot mint a different id from an omitted kind.",
+      "required": ["tool"],
+      "properties": {
+        "tool": {"type": "string"},
+        "query": {"type": "string"},
+        "scope": {
+          "type": "object",
+          "description": "Arguments that NARROWED what was searched. 'Not found' means nothing without the scope it was not found in.",
+          "additionalProperties": true
+        },
+        "mode": {
+          "type": "object",
+          "description": "Arguments and observed conditions that changed WHICH operation ran (ranking mode, channels, thresholds, whether the implicit fuzzy pass fired). A literal search and a regex search of one string are different operations and must not collide on one id.",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "scope": {
+      "type": "object",
+      "description": "A read-only view of effective_search.scope, kept beside it so a reader does not have to reconstruct it. NOT a separate identity input — everything in it is already inside effective_search.",
+      "additionalProperties": true
+    },
+    "snapshot": {
+      "type": "object",
+      "description": "What this receipt was measured against. Phase 2 BINDS these; every field already shipped (subject_state.capture, FreshnessProbe.repo_freshness v1.108.180, index_coverage_meta v1.108.176, verdict.working_tree v1.108.181).",
+      "properties": {
+        "index_generation": {"type": ["string", "null"]},
+        "indexed_revision": {"type": ["string", "null"]},
+        "live_revision": {"type": ["string", "null"]},
+        "freshness": {
+          "enum": ["fresh", "stale", "unknown", "not_tracked"],
+          "description": "Four-state, never a boolean: 'I could not find out' has its own value. channels.index also carries 'rebuilding' and 'partial', which are corpus conditions rather than freshness values; they stay in channels and are named in limitations rather than collapsing into a freshness word."
+        },
+        "working_tree": {
+          "enum": ["clean", "dirty_in_scope", "dirty_outside_scope", "unknown", "not_applicable"],
+          "description": "Measured only for a zero-result scan, so a positive receipt reports 'unknown' — which is what it is, not 'clean'."
+        },
+        "coverage_fingerprint": {
+          "type": ["string", "null"],
+          "description": "OPAQUE digest of the coverage block. Deliberately not a corpus manifest: source-universe identity, per-file parse outcomes and parser capability fingerprints are Phase 5 (#385). What it buys today is that two otherwise-identical scans over corpora with different coverage cannot share an evidence id."
+        },
+        "scorer_version": {"type": "integer", "minimum": 1},
+        "conditions": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "not_tracked",
+              "freshness_unknown",
+              "stale",
+              "rebuilding",
+              "partial",
+              "no_coverage_contract",
+              "semantic_unavailable",
+              "replayed_from_stale_cache",
+              "moved_during_scan",
+              "incomplete_inputs",
+              "omitted_matches"
+            ]
+          },
+          "description": "Sorted tokens for the conditions this response was produced under. Inside the identity payload on purpose, twice over: a subject measured under different conditions gets a different evidence id (which is what 'different snapshot, different id' has to mean when the conditions are what changed), and every entry in `limitations` is derived from a token here, so two receipts sharing an id necessarily carry the same body. Without that, a cached replay whose verdict gained `revalidated` would produce one id with two different bodies, and the fail-closed collision check would delete a receipt an agent was already holding."
+        }
+      },
+      "additionalProperties": false
+    },
+    "channels": {
+      "type": "object",
+      "description": "The verdict channel block this receipt was minted from, verbatim. Same vocabulary as retrieval-verdict.schema.json.",
+      "additionalProperties": true
+    },
+    "coverage": {
+      "type": ["object", "null"],
+      "description": "The coverage contract at scan time, or null when the index predates coverage recording. Null means coverage UNKNOWN, never 'nothing was excluded'.",
+      "additionalProperties": true
+    },
+    "integrity": {
+      "type": "object",
+      "description": "What, if anything, this receipt can attest about bytes rather than identity.",
+      "properties": {
+        "hash_source": {
+          "enum": ["index_content_hash", "served_bytes"],
+          "description": "index_content_hash = the hash the index stored for the full body. served_bytes = hashed from the body this response actually carried."
+        },
+        "served_bytes_sha256": {"type": ["string", "null"]},
+        "content_hash_matches_served_bytes": {"type": "boolean"},
+        "scanned": {
+          "type": "object",
+          "description": "Absence receipts: the scan counts backing the claim.",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "capabilities": {
+      "type": "object",
+      "description": "What this receipt can support, made legible so Phase 4 can match a claim's declared requirements against it. Phase 2 does not judge them. proves_absence is ADVISORY: finalization re-derives it from the linked scan record via handoff.absence_refusal, so there is exactly one implementation of the refusal rules and a receipt read hours later cannot disagree with the gate that issued it.",
+      "properties": {
+        "proves_symbol_identity": {"type": "boolean"},
+        "proves_body_bytes": {"type": "boolean"},
+        "proves_absence": {"type": "boolean"},
+        "completeness": {"type": "string"},
+        "freshness_semantics": {"type": "string"},
+        "coverage_semantics": {"type": "string"},
+        "integrity_semantics": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "limitations": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "What this receipt CANNOT prove. The field that makes a weak receipt usable rather than discardable: a receipt that knows its own limits is worth more than one that omits them."
+    },
+    "absence_ref": {
+      "type": "string",
+      "pattern": "^absent:[0-9a-f]{12}$",
+      "description": "Absence receipts: the Phase 3 token (v1.108.166) naming the recorded scan this receipt points at. The link is what keeps handoff.absence_refusal the single implementation of the refusal rules, and it is why a Phase 3 ref a shipped agent is already holding keeps working."
+    },
+    "resource_uri": {
+      "type": "string",
+      "pattern": "^munch://evidence/sha256:[0-9a-f]{64}$"
+    }
+  },
+  "additionalProperties": false
+}

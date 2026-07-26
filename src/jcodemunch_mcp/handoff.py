@@ -259,6 +259,25 @@ def note_absence(tool: str, repo, query, verdict, arguments=None, truncated=Fals
     return (None, refusal) if refusal else (ref, None)
 
 
+def absence_ref_for(tool: str, repo, query, arguments=None) -> str:
+    """The ref ``note_absence`` records a scan under, derived the same way.
+
+    Exposed for the evidence-receipt producers (#377 phase 2): an absence
+    receipt LINKS to the recorded scan instead of re-deriving whether that scan
+    proves anything, so ``absence_refusal`` stays the single implementation of
+    the refusal rules. Deriving the ref twice from the same projection is what
+    keeps the two in step.
+    """
+    scope = {}
+    for key in _SCOPE_ARGS:
+        val = (arguments or {}).get(key)
+        if val not in (None, "", [], {}):
+            scope[key] = val
+    repo_s = repo if isinstance(repo, str) else ""
+    q = query.strip() if isinstance(query, str) else ""
+    return _absence_ref(tool, repo_s, q, scope)
+
+
 def absence_record(ref: str) -> Optional[dict]:
     with _lock:
         rec = _absences.get(ref)
@@ -271,48 +290,122 @@ def clear_absences() -> None:
         _absences.clear()
 
 
-def _validate_evidence(refs, served_ids: Iterable[str]):
+#: Proof kinds whose subject IS a whole file, and which could therefore attest a
+#: file-level citation exactly. jcodemunch mints none today: every positive
+#: receipt it can produce is symbol-scoped, which is precisely why a file-level
+#: citation is broader than anything it retrieved. jdocmunch's document-level and
+#: jdatamunch's dataset-level equivalents are the suite-parity stage (§10), and
+#: this is the hook they attach to rather than a second rule written later.
+_FILE_LEVEL_PROOF_KINDS: frozenset = frozenset()
+
+
+def _receipts_cited(refs) -> bool:
+    """Whether any ref anywhere in this handoff is an evidence receipt.
+
+    Decided ONCE per finalization, not per claim: the input picks the contract,
+    and it would be worse than useless if a claim's refs were held to a stricter
+    subject rule than the global list in the same document.
+    """
+    from .evidence import receipts as _receipts
+
+    return any(_receipts.is_evidence_ref(r) for r in refs if isinstance(r, str))
+
+
+def _validate_evidence(refs, served_ids: Iterable[str], *, strict_subject: bool = False):
     """Attest each ref against the session retrieval record.
 
-    A ref is attested when it is exactly a served symbol id, or the file
-    component (before ``::``) of a served id — a file-level citation of
-    retrieved code. A ref carrying the absence prefix attests against the
-    recorded scan instead (#377 phase 3).
+    Three kinds of ref, three attestation routes:
 
-    Returns (ordered_unique_refs, unknown_refs, refused_absences). `unknown`
-    means the session never produced it; `refused` means it exists but cannot
-    prove what it is being cited for, which is a different failure and gets a
-    different message.
+    * a served **symbol id** — exact, and always has been;
+    * the **file component** of a served id — a file-level citation of retrieved
+      code, which is BROADER than what was retrieved and is the Phase 1 caveat;
+    * an **absence ref** (``absent:<sha>``, phase 3), which attests against the
+      recorded scan since by construction nothing was served;
+    * an **evidence receipt** (``munch://evidence/<id>`` or the bare id, phase
+      2), which attests exactly the subject the receipt binds: one symbol id,
+      one line range, one content hash, one snapshot.
+
+    ``strict_subject`` is the Phase 2 narrowing and the input picks it: when this
+    handoff cites at least one receipt, a file-level ref that is backed only by a
+    served SYMBOL from that file is refused as over-broad rather than silently
+    attested as though the file had been retrieved. A handoff citing no receipts
+    keeps the historical broadening exactly, so no shipped caller changes; what
+    it gains is that the finalization receipt now NAMES the broadened refs
+    instead of leaving a reader unable to tell the two citations apart.
+
+    Returns a dict: ``ordered`` (unique refs, caller order), ``unknown`` (the
+    session never produced it), ``refused`` (a real scan that cannot prove
+    absence), ``over_broad`` (a file-level citation held to the receipt
+    contract), ``broadened`` (file-level refs attested by broadening),
+    ``receipts`` (resolved receipt envelopes, in citation order), and
+    ``exact_symbols``. Each failure mode gets its own message upstream because
+    each one has a different fix.
     """
+    from .evidence import receipts as _receipts
+
     served = set(served_ids or ())
     served_files = {_norm_file(sid.split("::", 1)[0]) for sid in served}
     seen: set[str] = set()
-    ordered: list[str] = []
-    unknown: list[str] = []
-    refused: list[dict] = []
+    out = {
+        "ordered": [],
+        "unknown": [],
+        "refused": [],
+        "over_broad": [],
+        "broadened": [],
+        "receipts": [],
+        "exact_symbols": 0,
+    }
     for ref in refs:
         if not isinstance(ref, str) or not ref.strip():
-            unknown.append(repr(ref))
+            out["unknown"].append(repr(ref))
             continue
         ref = ref.strip()
         if ref in seen:
             continue
         seen.add(ref)
-        ordered.append(ref)
+        out["ordered"].append(ref)
         if ref.startswith(ABSENCE_REF_PREFIX):
-            # An absence ref attests against the recorded scan, not the served
-            # set — by construction nothing was served (#377 phase 3).
             record = absence_record(ref)
             if record is None:
-                unknown.append(ref)
+                out["unknown"].append(ref)
                 continue
             reason = absence_refusal(record)
             if reason:
-                refused.append({"ref": ref, "reason": reason})
+                out["refused"].append({"ref": ref, "reason": reason})
             continue
-        if ref not in served and _norm_file(ref) not in served_files:
-            unknown.append(ref)
-    return ordered, unknown, refused
+        if _receipts.is_evidence_ref(ref):
+            envelope, why = _receipts.lookup(ref)
+            if envelope is None:
+                out["unknown"].append(f"{ref} ({why})")
+                continue
+            out["receipts"].append({"ref": ref, "receipt": envelope})
+            if _receipts.is_absence_kind(envelope.get("proof_kind")):
+                # The receipt points at the recorded scan; `absence_refusal` is
+                # still the only implementation of the refusal rules, so a
+                # receipt cannot disagree with the gate that issued it.
+                linked = absence_record(envelope.get("absence_ref") or "")
+                reason = absence_refusal(linked) if linked else (
+                    "the scan behind this receipt is no longer on record, so "
+                    "whether it could prove absence cannot be re-established"
+                )
+                if reason:
+                    out["refused"].append({"ref": ref, "reason": reason})
+            continue
+        if ref in served:
+            out["exact_symbols"] += 1
+            continue
+        if _norm_file(ref) in served_files:
+            backing = sorted(
+                sid for sid in served if _norm_file(sid.split("::", 1)[0]) == _norm_file(ref)
+            )
+            entry = {"ref": ref, "backed_by": backing[:5], "backing_count": len(backing)}
+            if strict_subject:
+                out["over_broad"].append(entry)
+            else:
+                out["broadened"].append(entry)
+            continue
+        out["unknown"].append(ref)
+    return out
 
 
 def _validate_claims(raw, si, seen_ids):
@@ -462,6 +555,48 @@ def _render_absence_detail(ref: str, indent: str) -> list:
     return lines
 
 
+def _render_receipt_detail(ref: str, indent: str) -> list:
+    """The receipt behind an evidence ref, rendered so a reader can audit it.
+
+    Renders ONLY for a receipt ref, which means it renders only for a handoff
+    that cited one. A handoff citing no receipts is byte-identical to what it
+    rendered before Phase 2 — the input picks the contract, in the body as well
+    as in the schema string.
+    """
+    from .evidence import receipts as _receipts
+
+    envelope, _why = _receipts.lookup(ref)
+    if not envelope:
+        return []
+    subject = envelope.get("subject") or {}
+    snapshot = envelope.get("snapshot") or {}
+    lines = [f"{indent}- receipt: {envelope.get('proof_kind')} ({envelope.get('schema')})"]
+    if subject.get("symbol_id"):
+        lines.append(f"{indent}- subject: `{subject['symbol_id']}`")
+    elif subject.get("query") is not None:
+        lines.append(f"{indent}- subject: absence of {subject['query']!r}")
+    if subject.get("start_line") is not None:
+        end = subject.get("end_line")
+        span = f"{subject['start_line']}-{end}" if end is not None else f"{subject['start_line']}+"
+        lines.append(f"{indent}- lines: {subject.get('file', '?')}:{span}")
+    if subject.get("content_sha256"):
+        lines.append(f"{indent}- content sha256: {subject['content_sha256'][:12]}…")
+    lines.append(
+        f"{indent}- snapshot: generation {snapshot.get('index_generation') or 'unknown'}, "
+        f"freshness {snapshot.get('freshness')}, working tree "
+        f"{snapshot.get('working_tree')}, scorer {snapshot.get('scorer_version')}"
+    )
+    if snapshot.get("indexed_revision"):
+        live = snapshot.get("live_revision") or "unknown"
+        lines.append(
+            f"{indent}- revisions: indexed {str(snapshot['indexed_revision'])[:12]}, "
+            f"live {str(live)[:12]}"
+        )
+    for limitation in envelope.get("limitations") or []:
+        lines.append(f"{indent}- limitation: {limitation}")
+    return lines
+
+
 def render_handoff(
     repo: str,
     task: str,
@@ -503,6 +638,7 @@ def render_handoff(
             for ref in claim["refs"]:
                 lines.append(f"  - `{ref}`")
                 lines += _render_absence_detail(ref, "    ")
+                lines += _render_receipt_detail(ref, "    ")
             lines.append("")
     lines += [
         "## Evidence",
@@ -515,6 +651,7 @@ def render_handoff(
         lines.append(f"- `{ref}`")
         if ref not in detailed:
             lines += _render_absence_detail(ref, "  ")
+            lines += _render_receipt_detail(ref, "  ")
     lines.append("")
     for name, ctype, content in appendices:
         lines += [f"## Appendix: {name}", "", f"_Content type: {ctype}_", "", content, ""]
@@ -553,20 +690,54 @@ def finalize_handoff(
     served = list(served_ids or ())
     claim_count = sum(len(claims) for _, _, claims in sec)
 
+    # The input picks the contract (#377 phase 2). Decided ONCE, over every ref
+    # in the document, before a single one is attested: a claim's refs and the
+    # global list must be held to the same subject rule, or a reader could not
+    # tell which contract a given citation was judged under.
+    _all_raw = list(evidence_refs if isinstance(evidence_refs, list) else [])
+    for _, _, _claims in sec:
+        for _claim in _claims:
+            _all_raw.extend(_claim["raw_refs"] if isinstance(_claim["raw_refs"], list) else [])
+    strict_subject = _receipts_cited(_all_raw)
+
     # Attest each claim's refs on their own, so an unknown ref names the claim
     # that cited it instead of vanishing into one global failure list (#377).
     invalid_claims = []
     refused_claims = []
+    over_broad_claims = []
     for _, _, claims in sec:
         for claim in claims:
-            claim_refs, claim_unknown, claim_refused = _validate_evidence(
-                claim["raw_refs"], served
+            att = _validate_evidence(
+                claim["raw_refs"], served, strict_subject=strict_subject
             )
-            claim["refs"] = claim_refs
-            if claim_unknown:
-                invalid_claims.append({"claim_id": claim["id"], "unknown_refs": claim_unknown})
-            if claim_refused:
-                refused_claims.append({"claim_id": claim["id"], "refused": claim_refused})
+            claim["refs"] = att["ordered"]
+            if att["unknown"]:
+                invalid_claims.append({"claim_id": claim["id"], "unknown_refs": att["unknown"]})
+            if att["refused"]:
+                refused_claims.append({"claim_id": claim["id"], "refused": att["refused"]})
+            if att["over_broad"]:
+                over_broad_claims.append(
+                    {"claim_id": claim["id"], "over_broad_refs": att["over_broad"]}
+                )
+    if over_broad_claims:
+        # The Phase 1 caveat, closed. A served symbol does not attest a
+        # file-level claim: one unrelated symbol from that file was the only
+        # thing retrieved, and the server is the only party in the exchange that
+        # knows the difference.
+        return {
+            "error": (
+                "evidence subject too broad: the following claims cite a whole "
+                "file, but only individual symbols from it were retrieved"
+            ),
+            "over_broad_claims": over_broad_claims,
+            "hint": (
+                "This handoff cites evidence receipts, so every reference is held "
+                "to the subject its evidence actually proves. Cite the symbol id, "
+                "or the munch://evidence/<id> receipt for it, instead of the file "
+                "path. A file-level citation would need a file-level proof, which "
+                "jcodemunch does not mint."
+            ),
+        }
     if refused_claims:
         # Distinct from an unknown ref: the scan is real, it just cannot prove
         # absence. Saying so by name is the point of the contract (#377).
@@ -610,7 +781,25 @@ def finalize_handoff(
         }
     # The canonical index is the union, caller order first: every claim ref is
     # discoverable from the global list, which keeps v1 consumers whole.
-    refs, unknown, refused = _validate_evidence(list(evidence_refs) + claim_refs_flat, served)
+    att = _validate_evidence(
+        list(evidence_refs) + claim_refs_flat, served, strict_subject=strict_subject
+    )
+    refs, unknown, refused = att["ordered"], att["unknown"], att["refused"]
+    if att["over_broad"]:
+        return {
+            "error": (
+                "evidence subject too broad: a cited reference names a whole file, "
+                "but only individual symbols from it were retrieved"
+            ),
+            "over_broad": att["over_broad"],
+            "hint": (
+                "This handoff cites evidence receipts, so every reference is held "
+                "to the subject its evidence actually proves. Cite the symbol id, "
+                "or the munch://evidence/<id> receipt for it, instead of the file "
+                "path. A file-level citation would need a file-level proof, which "
+                "jcodemunch does not mint."
+            ),
+        }
     if refused:
         return {
             "error": (
@@ -661,9 +850,46 @@ def finalize_handoff(
     if claim_count:
         # Omitted entirely on a v1 handoff, so v1 receipts stay unchanged.
         receipt["claims_attested"] = claim_count
+    # An absence RECEIPT is an attested absence scan too — it points at the same
+    # recorded scan the bare `absent:` token does, and a reader counting absence
+    # proofs would otherwise undercount every receipt-citing handoff.
     absence_count = sum(1 for r in refs if r.startswith(ABSENCE_REF_PREFIX))
+    for entry in att["receipts"]:
+        from .evidence import receipts as _receipts_mod
+
+        if _receipts_mod.is_absence_kind((entry["receipt"] or {}).get("proof_kind")):
+            absence_count += 1
     if absence_count:
         receipt["absence_attested"] = absence_count
+    if att["receipts"]:
+        # Omitted entirely when no receipt was cited, so a v1/v2 receipt from
+        # before Phase 2 is unchanged.
+        receipt["receipts_attested"] = len(att["receipts"])
+    if att["receipts"] or att["broadened"]:
+        # What a reader could not previously tell apart, stated as a count.
+        # `exact` = attested against a receipt's bound subject (symbol id, line
+        # range, content hash, snapshot). `broadened` = a file-level citation
+        # attested only because a symbol from that file was served — the Phase 1
+        # caveat, now visible instead of indistinguishable.
+        receipt["evidence_precision"] = {
+            "exact": len(att["receipts"]),
+            "symbol_exact": att["exact_symbols"],
+            "broadened": len(att["broadened"]),
+        }
+    if att["broadened"]:
+        receipt["broadened_refs"] = [
+            {
+                "ref": entry["ref"],
+                "backed_by": entry["backed_by"],
+                "backing_count": entry["backing_count"],
+                "note": (
+                    "file-level citation: only individual symbols from this file "
+                    "were retrieved this session, so this reference is broader "
+                    "than the evidence behind it"
+                ),
+            }
+            for entry in att["broadened"]
+        ]
     with _lock:
         _handoffs[handoff_id] = {"body": body, "receipt": receipt}
     return dict(receipt)

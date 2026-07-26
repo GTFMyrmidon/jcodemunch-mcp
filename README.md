@@ -404,6 +404,14 @@ The server exposes one MCP resource, `munch://runtime/identity` — a read-only 
 
 A multi-step repository audit can end with one authoritative, server-attested result instead of a client-specific Stop hook. The assistant authors the analysis; `finalize_handoff` takes those sections plus `evidence_refs`, validates every reference against what this session **actually retrieved** (symbol ids or file paths served by `search_symbols` / `get_ranked_context` — unknown refs fail closed with `isError`), deterministically assembles one canonical Markdown handoff (`jcodemunch.handoff/v1`), and returns a compact receipt: `{handoff_id, resource_uri, sha256, length, canonical: true}`. The immutable body is served by the `munch://handoff/<id>` resource — repeated reads are byte-identical. Session-scoped, in-memory, never writes to your repository; appendices appear exactly once; no character limit. `canonical: true` is advisory metadata for clients that support rendering an authoritative MCP resource directly. The server assembles and attests — it never authors conclusions.
 
+## Evidence receipts (`receipt: true` + `munch://evidence/<id>`)
+
+Attesting that a reference was *retrieved this session* is not the same as narrowing *what it proves*. Citing a whole file used to be attested when one unrelated symbol from it was the only thing retrieved, and nothing in the finalized handoff told the two citations apart.
+
+Pass `receipt: true` to `search_symbols`, `get_symbol_source`, `get_ranked_context` or `search_text` and the response carries a receipt **id** in `_meta.receipts`. The receipt itself (`jcodemunch.evidence/v1`) is read from `munch://evidence/<id>` on demand, so opting in costs a handful of bytes. It binds one canonical **subject** — symbol id, file, line range, `content_sha256` — to one **snapshot** (index generation, indexed and live revisions, four-state freshness, working-tree state, coverage digest, scorer pin) and to the **operation that actually ran**, and derives its identity from exactly those three: a different snapshot is a different receipt. A `limitations` list states what the receipt cannot prove — a row served without a body carries an identity, not its bytes.
+
+Cite `munch://evidence/<id>` in a handoff and `finalize_handoff` attests exactly that subject; a file-level reference backed only by a served symbol from that file is then refused as over-broad. A handoff citing no receipts behaves and renders exactly as before, and its receipt now names any broadened reference (`evidence_precision`, `broadened_refs`) instead of leaving a reader unable to tell. Only reviewed producers can mint, so a tool that has not been through that review returns no receipt rather than a weak one. Session-scoped and in memory, like the handoff store. Default `false` is byte-for-byte today's response. No new tool is added.
+
 ---
 
 ## Start fast
