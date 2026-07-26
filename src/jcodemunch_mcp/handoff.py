@@ -137,6 +137,14 @@ def absence_refusal(record: Optional[dict]) -> Optional[str]:
             "the index did not cover the whole tree at scan time, so the target "
             "may sit in a file that never entered the corpus"
         )
+    _moved = record.get("moved_during_scan") or {}
+    if _moved.get("reason"):
+        # Named before the generic state rule: the scan itself was fine, and
+        # what disqualifies it is that the subject did not hold still for it.
+        return (
+            f"the subject moved while the scan ran ({_moved['reason']}), so the scan "
+            "describes neither the state it started against nor the one it finished in"
+        )
     _reval = record.get("revalidated") or {}
     if _reval.get("stale_cache"):
         # Named before the generic state rule: this scan really did reach
@@ -219,6 +227,7 @@ def note_absence(tool: str, repo, query, verdict, arguments=None, truncated=Fals
         "omitted": verdict.get("omitted"),
         "incomplete": verdict.get("incomplete"),
         "revalidated": verdict.get("revalidated"),
+        "moved_during_scan": verdict.get("moved_during_scan"),
         "truncated": bool(truncated),
         "scorer": verdict.get("scorer"),
     }

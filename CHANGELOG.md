@@ -2,6 +2,49 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.179] - 2026-07-26 - the subject has to hold still for the scan
+
+### Fixed
+
+- **A scan could start against one state and finish against another, and still
+  prove absence.** Item 6 of the
+  [#377](https://github.com/jgravelle/jcodemunch-mcp/issues/377) review by
+  @mightydanp. `search_symbols`, `search_text` and `get_ranked_context` now
+  capture the subject's identity before retrieval and compare it after: a
+  concurrent edit, a watcher reindex, an incremental save, a published
+  generation or a long scan crossing a rebuild all mean the scan describes
+  neither the state it started against nor the one it finished in. A zero-result
+  scan in that position is `degraded`, with `verdict.moved_during_scan` naming
+  what moved.
+- **`get_ranked_context`'s no-candidate path carried no verdict at all.** It
+  returned "No implementation found ... Do not claim this feature exists" in
+  prose, with no freshness, no coverage, no scan counts and none of the absence
+  gates, because it returned before `build_verdict` was ever called. It now
+  builds the same verdict every other retrieval answer gets, so a genuine
+  no-candidate result is citable and a scan over a stale, partial, rebuilding or
+  moving subject is refused.
+
+### Notes
+
+- **The check is scoped to a zero-result scan, and that is what makes it
+  affordable.** A scan that returned rows read them out of a generation that
+  really held them, and the freshness channels already disclose that the tree
+  moved underneath. The after-reading therefore bypasses the TTL-cached HEAD
+  lookup and pays for a real `git rev-parse`: without that, a before/after
+  comparison inside the cache window compares one reading with itself.
+- Disclosed on every state, refused only for the absence claim, expressed as a
+  downgrade so `handoff.absence_refusal` does the refusing. Its message names
+  the movement rather than falling through to "the verdict was degraded".
+- `subject_state.changed` now takes the *when* of the comparison, so the cached
+  replay (v1.108.178) and the live scan produce sentences a reader can tell
+  apart: "after this scan was cached" versus "while the scan was running".
+- Working-tree movement DURING a scan is still not checked: the before-reading
+  would have to pay for `git status` on every search to make that comparison
+  possible. Whole-scope working-tree state is item 5.
+- `moved_during_scan` published in `schemas/retrieval-verdict.schema.json`. New
+  `tests/test_v1_108_179.py` (19), all three tools covered by one parametrized
+  end-to-end case. No tool-count or INDEX_VERSION change.
+
 ## [1.108.178] - 2026-07-26 - a cached negative must prove it still describes the subject
 
 ### Fixed

@@ -738,6 +738,14 @@ def search_symbols(
             _hit_meta["cache_hit"] = True
             return _cached
 
+    # #377 item 6: identity BEFORE the scan, compared after it. A search can
+    # start against one state and finish after a concurrent edit, a watcher
+    # reindex or a published generation, and neither reading then describes
+    # what was searched. Cheap here (one stat plus a cached HEAD); the fresh
+    # HEAD read is paid only by a zero-result scan, in `moved_during_scan`.
+    from ..retrieval import subject_state as _subject_pre
+    _state_before = _subject_pre.capture(index)
+
     # Semantic: validate provider before doing any expensive work
     _semantic_provider: Optional[tuple[str, str]] = None
     if semantic or semantic_only:
@@ -1139,6 +1147,9 @@ def search_symbols(
         index_stale=_probe.repo_is_stale,
         index_changed=_index_changed_since_load(index),
         coverage=_index_coverage_meta(index),
+        moved_during_scan=_subject_pre.moved_during_scan(
+            _state_before, index, result_count=len(scored_results)
+        ),
     )
     negative_evidence = _vres["negative_evidence"]
     meta["verdict"] = _vres["verdict"]

@@ -289,6 +289,10 @@ def get_ranked_context(
     if not index:
         return index_status_to_tool_error(store.inspect_index(owner, name))
 
+    # #377 item 6: identity before the scan, compared after it.
+    from ..retrieval import subject_state as _subject
+    _state_before = _subject.capture(index)
+
     # BM25 corpus — cached on CodeIndex
     query_terms = _tokenize(query) or [query.lower()]
     # Guard: empty string in query_terms causes "" to match every filename
@@ -414,6 +418,35 @@ def get_ranked_context(
                 "total_tokens_saved": 0,
             },
         }
+        # This path asserts "Do not claim this feature exists" in prose, and
+        # until #377 item 6 it did so with none of the machinery that decides
+        # whether such a claim is allowed: no verdict, no freshness, no
+        # coverage, no gates. It gets the same verdict every other retrieval
+        # answer gets, so a genuine no-candidate result is citable and a scan
+        # over a stale, partial, rebuilding or moving subject is refused.
+        from ..retrieval.freshness import FreshnessProbe as _FreshnessProbe
+        from ..retrieval.verdict import build_verdict as _bv
+        from ..retrieval.verdict import index_changed_since_load as _icsl
+        from ..retrieval.verdict import index_coverage_meta as _icm
+        _p = _FreshnessProbe(
+            source_root=getattr(index, "source_root", "") or None,
+            indexed_at=getattr(index, "indexed_at", ""),
+            index_sha=getattr(index, "git_head", None),
+            file_mtimes=getattr(index, "file_mtimes", None),
+        )
+        result["_meta"]["verdict"] = _bv(
+            result_count=0,
+            scanned_symbols=len(candidates),
+            scanned_files=len(index.source_files),
+            query_terms=query_terms,
+            source_files=index.source_files,
+            index_stale=_p.repo_is_stale,
+            index_changed=_icsl(index),
+            coverage=_icm(index),
+            moved_during_scan=_subject.moved_during_scan(
+                _state_before, index, result_count=0
+            ),
+        )["verdict"]
         return result
 
     # Normalize and compute combined score
@@ -566,6 +599,9 @@ def get_ranked_context(
         index_stale=_probe.repo_is_stale,
         index_changed=_index_changed_since_load(index),
         coverage=_index_coverage_meta(index),
+        moved_during_scan=_subject.moved_during_scan(
+            _state_before, index, result_count=len(context_items)
+        ),
     )
     negative_evidence = _vres["negative_evidence"]
     result["_meta"]["verdict"] = _vres["verdict"]

@@ -101,6 +101,14 @@
       },
       "additionalProperties": false
     },
+    "moved_during_scan": {
+      "type": "object",
+      "description": "The subject changed between the start of this scan and its end (concurrent edit, watcher reindex, incremental save, published generation, or a long scan crossing a rebuild). Checked for a zero-result scan only; the state is then 'degraded', because a scan whose subject moved describes neither the state it started against nor the one it finished in.",
+      "properties": {
+        "reason": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
     "revalidated": {
       "type": "object",
       "description": "This response was replayed from the result cache and the subject it was measured against has since moved. Disclosed on every state; an 'absent' verdict is downgraded to 'degraded' and any evidence token minted on the earlier pass is stripped, because a cached negative cannot prove absence against a state it never saw.",

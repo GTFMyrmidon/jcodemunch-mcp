@@ -77,7 +77,7 @@ def working_tree_fingerprint(source_root: Optional[str]) -> Optional[str]:
     return fp
 
 
-def capture(index, *, include_tree: bool = False) -> dict:
+def capture(index, *, include_tree: bool = False, fresh_head: bool = False) -> dict:
     """Live state of the subject this index describes. Never raises."""
     state: dict = {}
     try:
@@ -94,9 +94,18 @@ def capture(index, *, include_tree: bool = False) -> dict:
         live = None
         if source_root:
             try:
-                from .freshness import _git_head
+                if fresh_head:
+                    # #377 item 6: the HEAD lookup is cached with a short TTL, so
+                    # a before/after comparison inside that window compares one
+                    # reading with itself. A negative is the one answer worth
+                    # paying the subprocess to close that window for.
+                    from .freshness import _git_head_uncached
 
-                live = _git_head(Path(source_root))
+                    live = _git_head_uncached(Path(source_root))
+                else:
+                    from .freshness import _git_head
+
+                    live = _git_head(Path(source_root))
             except Exception:
                 live = None
         state["live_sha"] = live
@@ -107,7 +116,14 @@ def capture(index, *, include_tree: bool = False) -> dict:
     return state
 
 
-def changed(before: Optional[dict], after: Optional[dict]) -> Optional[str]:
+#: When the two readings were taken, phrased for the sentence each reason ends up in.
+WHEN_CACHED = "after this scan was cached"
+WHEN_SCANNING = "while the scan was running"
+
+
+def changed(
+    before: Optional[dict], after: Optional[dict], *, when: str = WHEN_CACHED
+) -> Optional[str]:
     """Why *after* no longer describes the same subject as *before*.
 
     Returns None when nothing observable moved. An unknown value on either
@@ -118,23 +134,42 @@ def changed(before: Optional[dict], after: Optional[dict]) -> Optional[str]:
     if not before or not after:
         return None
     if before.get("generation") != after.get("generation"):
-        return "the index was rebuilt after this scan was cached"
+        return f"the index was rebuilt {when}"
     b_db, a_db = before.get("db_mtime_ns"), after.get("db_mtime_ns")
     if b_db is not None and a_db is not None and b_db != a_db:
-        return "the index was rewritten after this scan was cached"
+        return f"the index was rewritten {when}"
     b_sha, a_sha = before.get("live_sha"), after.get("live_sha")
     if b_sha and a_sha and b_sha != a_sha:
         return (
-            "the checkout moved to a different commit after this scan was cached, "
-            f"so the scan describes {b_sha[:12]} and the question is about {a_sha[:12]}"
+            f"the checkout moved to a different commit {when}, so the scan describes "
+            f"{b_sha[:12]} and the question is about {a_sha[:12]}"
         )
     b_tree, a_tree = before.get("tree"), after.get("tree")
     if b_tree and a_tree and b_tree != a_tree:
         return (
-            "the working tree changed after this scan was cached, so the target may "
-            "sit in an edit the scan never saw"
+            f"the working tree changed {when}, so the target may sit in an edit the "
+            "scan never saw"
         )
     return None
+
+
+def moved_during_scan(before: Optional[dict], index, *, result_count: int) -> Optional[str]:
+    """Did the subject move between the start of this scan and now (#377 item 6)?
+
+    A search can start against one state and finish after the source or the
+    index has changed: a concurrent edit, a watcher reindex, an incremental
+    save, a new generation published, or simply a long scan crossing a rebuild.
+    A citable current-state negative requires the two readings to match.
+
+    Checked only for a zero-result scan. A scan that RETURNED rows read them
+    out of a generation that really held them, and the freshness channels
+    already disclose that the tree moved underneath. It is the claim that
+    nothing exists which cannot survive the subject changing mid-read, and
+    restricting the check there is what makes the fresh HEAD read affordable.
+    """
+    if result_count != 0 or not before:
+        return None
+    return changed(before, capture(index, fresh_head=True), when=WHEN_SCANNING)
 
 
 def revalidate_verdict(verdict: Optional[dict], reason: str) -> None:

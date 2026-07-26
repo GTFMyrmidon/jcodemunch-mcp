@@ -114,6 +114,12 @@ def search_text(
         )
         files = [f for f in files if pat_re.match(f)]
 
+    # #377 item 6: identity before the scan, compared after it. search_text
+    # walks files one by one, so it is the tool most likely to still be reading
+    # when a watcher reindex or a checkout lands underneath it.
+    from ..retrieval import subject_state as _subject
+    _state_before = _subject.capture(index)
+
     content_dir = store._content_dir(owner, name)
     results = []
     result_count = 0
@@ -243,6 +249,9 @@ def search_text(
         index_changed=_index_changed_since_load(index),
         index_stale=_probe.repo_is_stale,
         incomplete=_incomplete,
+        moved_during_scan=_subject.moved_during_scan(
+            _state_before, index, result_count=result_count
+        ),
     )
     _meta = {
         "timing_ms": round(elapsed, 1),
