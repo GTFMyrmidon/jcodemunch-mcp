@@ -2,11 +2,14 @@
 
 import heapq
 import json
+import logging
 import math
 import re
 import time
 from fnmatch import fnmatch
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from ..storage import IndexStore, record_savings, estimate_savings, cost_avoided
 from ..parser.imports import resolve_specifier
@@ -68,8 +71,21 @@ _result_cache: OrderedDict = OrderedDict()
 _result_cache_lock = threading.Lock()
 
 
+def _result_cache_state(key: tuple) -> Optional[dict]:
+    """Subject state recorded when this entry was cached (#377 item 3)."""
+    with _result_cache_lock:
+        state = (_result_cache.get(key) or {}).get("_subject_state")
+        return dict(state) if isinstance(state, dict) else None
+
+
 def _result_cache_get(key: tuple) -> Optional[dict]:
-    """Return cached result for key, or None on miss. Returns a shallow copy."""
+    """Return cached result for key, or None on miss. Returns a copy.
+
+    The result is copied down to the verdict, not just to ``_meta``: the
+    dispatcher writes ``evidence_ref`` into ``_meta.verdict`` after the tool
+    returns, and with a shared nested dict that write landed in the cached
+    entry and was replayed to every later hit (#377 item 3).
+    """
     with _result_cache_lock:
         if key in _result_cache:
             _result_cache.move_to_end(key)  # LRU refresh
@@ -79,8 +95,12 @@ def _result_cache_get(key: tuple) -> Optional[dict]:
             # Shallow copy top-level + _meta to prevent caller mutations
             result = dict(cached)
             result.pop("_hit_count", None)  # don't leak internal field
+            result.pop("_subject_state", None)
             if "_meta" in result:
                 result["_meta"] = dict(result["_meta"])
+                _v = result["_meta"].get("verdict")
+                if isinstance(_v, dict):
+                    result["_meta"]["verdict"] = dict(_v)
             return result
     return None
 
@@ -107,8 +127,22 @@ def _get_cache_max() -> int:
         return _RESULT_CACHE_MAX
 
 
-def _result_cache_put(key: tuple, value: dict) -> None:
-    """Store result in LRU cache, evicting oldest if full."""
+def _result_cache_put(key: tuple, value: dict, state: Optional[dict] = None) -> None:
+    """Store result in LRU cache, evicting oldest if full.
+
+    ``state`` is the subject state the scan measured (#377 item 3). It rides
+    with the entry so a later hit can prove the answer still describes the same
+    subject rather than assuming a reindex is the only thing that can change it.
+    """
+    if state is not None:
+        # Copy down to the verdict so the dispatcher's post-return writes (the
+        # absence evidence_ref) cannot land in the stored entry.
+        value = dict(value)
+        value["_subject_state"] = state
+        if isinstance(value.get("_meta"), dict):
+            value["_meta"] = dict(value["_meta"])
+            if isinstance(value["_meta"].get("verdict"), dict):
+                value["_meta"]["verdict"] = dict(value["_meta"]["verdict"])
     with _result_cache_lock:
         if key in _result_cache:
             _result_cache.move_to_end(key)
@@ -669,6 +703,21 @@ def search_symbols(
         )
         _cached = _result_cache_get(_cache_key)
         if _cached is not None:
+            _cached_state = _result_cache_state(_cache_key)
+            # #377 item 3: a cached NEGATIVE must prove it still describes the
+            # current subject before it stays citable. A cached positive may
+            # keep serving with disclosure, so only an absence-shaped verdict
+            # pays for the working-tree probe.
+            try:
+                from ..retrieval import subject_state as _subject
+                _cv = (_cached.get("_meta") or {}).get("verdict")
+                _is_negative = isinstance(_cv, dict) and _cv.get("state") == "absent"
+                _now_state = _subject.capture(index, include_tree=_is_negative)
+                _why = _subject.changed(_cached_state, _now_state)
+                if _why:
+                    _subject.revalidate_verdict(_cv, _why)
+            except Exception:
+                logger.debug("Cached-result revalidation failed", exc_info=True)
             # Cache hit — return immediately with fresh timing.
             # Synthesize _meta if the cached result lacks it (#331): a cached
             # entry without _meta must not raise KeyError here, because the
@@ -1133,7 +1182,18 @@ def search_symbols(
 
     # Feature 5: Cache the result if cacheable
     if _cacheable and _cache_key is not None:
-        _result_cache_put(_cache_key, result)
+        # #377 item 3: record what this answer was measured against. The
+        # working tree is captured only for an absence, the one answer a later
+        # edit can falsify while the index and its generation sit still.
+        from ..retrieval import subject_state as _subject
+        _result_cache_put(
+            _cache_key,
+            result,
+            _subject.capture(
+                index,
+                include_tree=(meta.get("verdict") or {}).get("state") == "absent",
+            ),
+        )
 
     return result
 
@@ -1714,6 +1774,16 @@ def _search_symbols_fusion(
 
     _attach_index_truncation(result.get("_meta"), index)
     if cacheable and cache_key is not None:
-        _result_cache_put(cache_key, result)
+        from ..retrieval import subject_state as _subject
+        _result_cache_put(
+            cache_key,
+            result,
+            _subject.capture(
+                index,
+                include_tree=((result.get("_meta") or {}).get("verdict") or {}).get(
+                    "state"
+                ) == "absent",
+            ),
+        )
 
     return result

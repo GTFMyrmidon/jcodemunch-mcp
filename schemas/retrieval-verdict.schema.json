@@ -101,6 +101,15 @@
       },
       "additionalProperties": false
     },
+    "revalidated": {
+      "type": "object",
+      "description": "This response was replayed from the result cache and the subject it was measured against has since moved. Disclosed on every state; an 'absent' verdict is downgraded to 'degraded' and any evidence token minted on the earlier pass is stripped, because a cached negative cannot prove absence against a state it never saw.",
+      "properties": {
+        "stale_cache": {"type": "boolean"},
+        "reason": {"type": "string", "description": "What moved: index rebuilt, index rewritten, checkout moved to a different commit, or working tree changed."}
+      },
+      "additionalProperties": false
+    },
     "incomplete": {
       "type": "object",
       "description": "The scan did not cover its own eligible inputs. Disclosed on every state; when the result is empty the state is 'degraded', because a scan that did not run over its inputs cannot prove absence.",

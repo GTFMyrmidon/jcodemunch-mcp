@@ -2,6 +2,51 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.178] - 2026-07-26 - a cached negative must prove it still describes the subject
+
+### Fixed
+
+- **A cached absence could be replayed over a tree that no longer existed.**
+  Item 3 of the [#377](https://github.com/jgravelle/jcodemunch-mcp/issues/377)
+  review by @mightydanp. The `search_symbols` result cache keys on the index's
+  `indexed_at`, so it invalidates on a REINDEX and on nothing else. A query that
+  was absent against snapshot A cached its `fresh` / `absent` verdict; the source
+  then changed without the index being rebuilt; the same query hit the cache; and
+  the old verdict was replayed, minting an absence proof against a state nobody
+  had scanned.
+- New `retrieval/subject_state.py` captures what the answer depends on at
+  cache-write time (index generation, .db mtime, live git HEAD, and for an
+  absence the working-tree fingerprint) and re-checks it at cache-read time.
+  When something moved, `verdict.revalidated` is disclosed, an `absent` state is
+  downgraded to `degraded`, and any evidence token minted on the earlier pass is
+  stripped, because it was issued against the state that just failed to hold.
+- **The dispatcher's write leaked into the cache.** `_result_cache_get` copied
+  the result and its `_meta` but not the nested `verdict`, so the `evidence_ref`
+  the dispatcher attached AFTER the tool returned landed in the stored entry and
+  was replayed to every later hit. The copy now reaches the verdict, and the
+  stored entry is written pristine.
+
+### Notes
+
+- **Only a negative pays for the expensive signal.** `git status` runs only when
+  the cached verdict is `absent` — the one answer a working-tree edit can falsify
+  while the index and its generation sit still. A cached positive costs a few
+  stats, and its results were really in the index at that generation, so it keeps
+  serving with disclosure. That split is the reviewer's, and it is right.
+- **Unknown is never reported as changed.** A non-git checkout knows none of
+  this and did not change either; treating unknown as moved would refuse every
+  absence on such a repo. Same reasoning as the tri-state `coverage.complete`.
+- The refusal names what moved (rebuilt, rewritten, checkout moved with both
+  short SHAs, working tree changed) rather than falling through to the generic
+  "the verdict was degraded".
+- Verified on a real checkout, not only on fixtures: the same absent query is
+  replayed unchanged when nothing moves, and downgrades with
+  `revalidated.stale_cache` the moment an untracked file appears.
+- Working-tree state here is scoped to the cached-negative path. Whole-scope
+  working-tree semantics for a LIVE absence is item 5 and is not in this release.
+- `revalidated` published in `schemas/retrieval-verdict.schema.json`. New
+  `tests/test_v1_108_178.py` (20). No tool-count or INDEX_VERSION change.
+
 ## [1.108.177] - 2026-07-26 - an omitted match is not an absent match
 
 ### Fixed

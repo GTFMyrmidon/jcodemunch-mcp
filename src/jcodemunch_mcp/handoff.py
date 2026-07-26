@@ -137,6 +137,15 @@ def absence_refusal(record: Optional[dict]) -> Optional[str]:
             "the index did not cover the whole tree at scan time, so the target "
             "may sit in a file that never entered the corpus"
         )
+    _reval = record.get("revalidated") or {}
+    if _reval.get("stale_cache"):
+        # Named before the generic state rule: this scan really did reach
+        # `absent`, and what disqualifies it is that the subject moved after it
+        # was cached, which "the verdict was degraded" does not convey.
+        return (
+            f"this result was replayed from cache and {_reval.get('reason')}, so it "
+            "describes a state that no longer holds"
+        )
     _omitted = record.get("omitted") or {}
     if _omitted.get("returned") == 0 and (_omitted.get("matches_found") or 0) > 0:
         # Named before the generic state rule for the same reason as the
@@ -209,6 +218,7 @@ def note_absence(tool: str, repo, query, verdict, arguments=None, truncated=Fals
         "coverage": verdict.get("coverage"),
         "omitted": verdict.get("omitted"),
         "incomplete": verdict.get("incomplete"),
+        "revalidated": verdict.get("revalidated"),
         "truncated": bool(truncated),
         "scorer": verdict.get("scorer"),
     }
