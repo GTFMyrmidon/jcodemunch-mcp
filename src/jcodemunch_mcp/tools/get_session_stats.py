@@ -20,4 +20,18 @@ def get_session_stats(storage_path: Optional[str] = None) -> dict:
 
     result = _get_session_stats(base_path=storage_path)
     result["savings_provenance"] = measured_provenance()
+
+    # How many other jcodemunch processes share this index store (jcm#375
+    # follow-up). A user found 25+ live instances against one store, mostly
+    # stdio servers their client never reaped, holding ~17 GB between them, and
+    # had no way to see it. Read-only, PID-liveness filtered, and wrapped so a
+    # registry problem can never fail a stats call.
+    try:
+        from ..storage.process_registry import sprawl_report
+
+        result["processes"] = sprawl_report(storage_path)
+    except Exception:  # pragma: no cover - diagnostics must never break stats
+        import logging
+
+        logging.getLogger(__name__).debug("sprawl report failed", exc_info=True)
     return result

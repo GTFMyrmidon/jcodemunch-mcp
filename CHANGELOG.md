@@ -2,6 +2,64 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.172] - 2026-07-25 - idle index-cache TTL (opt-in) + process presence registry
+
+### Added
+
+- **`get_session_stats` now reports how many jCodeMunch processes share this
+  index store.** Follow-up to
+  [#375](https://github.com/jgravelle/jcodemunch-mcp/issues/375), where a user
+  found **25+ live instances** on one box against a single ~140MB store, ages to
+  1d15h, mostly stdio servers their MCP client never reaped at session end.
+  Reaping the day-plus-old ones freed **~17 GB of RAM**. Nobody could see it.
+
+  We cannot reap another program's children. New `storage/process_registry.py`
+  makes the sprawl visible instead: each server writes one small
+  `~/.code-index/_processes/<pid>.json` (pid, client, transport, version, start
+  time — no repos, paths, or queries) and removes it on exit. Readers filter by
+  PID liveness and prune what they find dead, so a hard kill leaves nothing
+  behind and there is no daemon keeping the registry honest. Surfaced as a
+  `processes` block; a hint naming the memory lever appears only past 5 live
+  processes, so a normal setup stays quiet. Wrapped so a registry failure can
+  never fail a stats call. Disclosed in the README background-behavior section.
+
+- **`JCODEMUNCH_INDEX_CACHE_TTL`: opt-in idle eviction for the in-memory index
+  cache.** A hydrated `CodeIndex` is large and was released only under LRU
+  pressure (`_CACHE_MAX_SIZE = 32`), never on idle, so an abandoned process sat
+  on every index it had touched. The same fact appeared in #370 as one worker at
+  ~16 GiB.
+
+  ⚠ **Disabled by default, and it must stay that way.** Cold hydration of that
+  665k-symbol index was measured at 7.5 to 11.4 minutes, so a TTL that evicts
+  during a quiet spell hands the next query that bill. Defaulting it on would
+  fix the leaking box by breaking the large-index one. Unset, `0`, negative, or
+  unparseable all mean disabled, which is byte-identical to previous behavior.
+  Swept on access rather than by a timer thread: a leaked process makes no
+  calls, so it needs no timer to stay small.
+
+### Fixed
+
+- **`_is_pid_alive` reported dead Windows processes as alive.** Uncovered while
+  testing the registry. A successful `OpenProcess` does not mean the process is
+  running: while any handle to it remains open the PID stays queryable after
+  exit, and the parent that spawned it normally holds exactly such a handle. So
+  a killed child read as alive.
+
+  This is a shared primitive. `process_locks.inspect` treats a dead holder's
+  lock as stale and ignorable, so a crashed server's lock file could look
+  permanently held. Now checks `GetExitCodeProcess` for `STILL_ACTIVE`, and
+  falls back to the old answer if the call fails rather than declaring a
+  possibly-live process dead. Also sets the `argtypes`/`restype` that were
+  missing: `OpenProcess` returns a pointer-sized HANDLE and ctypes defaults the
+  return type to `c_int`, truncating it on 64-bit — the same trap already
+  documented for `GetProcessTimes`. On POSIX, a zombie now reads as dead via
+  `/proc/<pid>/stat` (best effort; reap state is only visible for our own
+  children).
+
+New `tests/test_v1_108_172.py` (21), including a real spawn-and-kill check that
+fails against the pre-fix liveness logic. NO schema, tool-count, or
+INDEX_VERSION change.
+
 ## [1.108.171] - 2026-07-25 - provider discovery no longer scans in quadratic time
 
 ### Fixed

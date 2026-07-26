@@ -9640,6 +9640,27 @@ def main(argv: Optional[list[str]] = None):
                 )
                 watcher_enabled = False
 
+        # Presence registry (jcm#375 follow-up): record that this server process
+        # exists so `get_session_stats` can report how many jcodemunch servers
+        # share this index store. A client that never reaps stdio servers at
+        # session end accumulates them silently (25+ were found on one box,
+        # holding ~17 GB between them). We cannot reap another program's
+        # children; we can stop the sprawl being invisible. Registered here,
+        # above both serve branches, so every transport is covered once. Best
+        # effort, and never allowed to block startup.
+        try:
+            from .storage.process_registry import (
+                register as _register_process,
+                unregister as _unregister_process,
+            )
+            _register_process(
+                args.transport, __version__, os.environ.get("CODE_INDEX_PATH")
+            )
+            import atexit
+            atexit.register(_unregister_process)
+        except Exception:
+            logger.debug("process registry: register failed", exc_info=True)
+
         if watcher_enabled:
             # Watcher params: CLI flag > config > default
             cfg_paths = config_module.get("watch_paths", [])

@@ -151,27 +151,67 @@ class LockHolder:
         return d
 
 
+_STILL_ACTIVE = 259
+
+
 def _is_pid_alive(pid: int) -> bool:
-    """Return True if a process with the given PID is running."""
+    """Return True if a process with the given PID is running.
+
+    ⚠ Windows: a successful ``OpenProcess`` does NOT mean the process is alive.
+    While any handle to it remains open, the PID stays queryable after exit, and
+    the parent that spawned it normally holds exactly such a handle. So a
+    crashed server read as alive, which made its lock file look permanently held
+    (``inspect`` treats a dead holder as stale and ignorable) and inflated the
+    process-registry sprawl count with processes whose memory was already freed.
+    ``GetExitCodeProcess`` is the authoritative check: anything other than
+    ``STILL_ACTIVE`` means it has exited.
+
+    ⚠ ``argtypes``/``restype`` are REQUIRED, not decoration. ``OpenProcess``
+    returns a pointer-sized HANDLE and ctypes defaults the return type to
+    ``c_int``, which truncates it on 64-bit — the same trap already documented
+    for ``GetProcessTimes`` in ``runtime_identity``. A truncated handle is then
+    closed by ``CloseHandle``, which is at best a no-op on the wrong value.
+    """
     if sys.platform == "win32":
         import ctypes
+        from ctypes import wintypes
 
         kernel32 = ctypes.windll.kernel32
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+
         PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
         handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-        if handle == 0:
+        if not handle:
             return False
         try:
+            code = wintypes.DWORD()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                # Cannot determine: fall back to "the handle opened", the old
+                # behavior, rather than declaring a possibly-live process dead.
+                return True
+            return code.value == _STILL_ACTIVE
+        finally:
             kernel32.CloseHandle(handle)
-            return True
-        except OSError:
-            return False
     else:
         try:
             os.kill(pid, 0)
-            return True
         except (OSError, ProcessLookupError):
             return False
+        # A zombie answers signal 0 but holds no memory. Reap-state is only
+        # visible for our own children, so this is best effort by design.
+        try:
+            with open(f"/proc/{pid}/stat", "rb") as fh:
+                fields = fh.read().rsplit(b")", 1)[-1].split()
+            if fields and fields[0] == b"Z":
+                return False
+        except (OSError, IndexError):
+            pass
+        return True
 
 
 def inspect(scope: str, target: str, storage_path: Optional[str] = None) -> Optional[LockHolder]:

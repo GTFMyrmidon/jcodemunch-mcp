@@ -284,20 +284,69 @@ def _safe_json_load_list(raw: str) -> list[str]:
 class _CacheEntry(NamedTuple):
     mtime_ns: int
     code_index: "CodeIndex"
+    last_used: float
 
 
 _index_cache: OrderedDict[tuple[str, str, str], _CacheEntry] = OrderedDict()
 _cache_lock = threading.Lock()
 _CACHE_MAX_SIZE = 32
 
+# Idle eviction, OPT-IN and DISABLED by default (jcm#375 follow-up).
+#
+# A hydrated CodeIndex is large and, until now, was released only under LRU
+# pressure. Two independent reports are the same fact: a 665k-symbol index put a
+# worker at ~16 GiB (#370), and 20 abandoned stdio servers on one box held ~17 GB
+# between them, because the client that spawned them never reaped them at session
+# end. We cannot reap another program's children, but we can stop an idle process
+# from sitting on indexes nobody is asking for.
+#
+# ⚠ This MUST NOT default on. Cold hydration of that 665k-symbol index was
+# measured at 7.5 to 11.4 minutes (#370). A TTL that evicts during a quiet spell
+# hands the next query that bill. Defaulting it on would fix the leaking box by
+# breaking the large-index one. Operators whose client leaks servers opt in;
+# everyone else is byte-identical to before.
+_CACHE_TTL_ENV = "JCODEMUNCH_INDEX_CACHE_TTL"
+
+
+def _cache_ttl_seconds() -> float:
+    """Idle TTL in seconds. 0 or unparseable means disabled (the default)."""
+    raw = os.environ.get(_CACHE_TTL_ENV, "")
+    if not raw:
+        return 0.0
+    try:
+        ttl = float(raw)
+    except (TypeError, ValueError):
+        return 0.0
+    return ttl if ttl > 0 else 0.0
+
+
+def _evict_idle_locked(ttl: float, now: float) -> int:
+    """Drop entries untouched for longer than ttl. Caller holds _cache_lock.
+
+    Swept on access rather than by a timer thread: a leaked process makes no
+    calls, so it needs no timer to stay small, and adding a thread to every
+    server to solve a problem caused by too many servers would be perverse.
+    The memory is released on the next call from ANY caller in the process.
+    """
+    if ttl <= 0:
+        return 0
+    stale = [k for k, e in _index_cache.items() if (now - e.last_used) > ttl]
+    for key in stale:
+        _index_cache.pop(key, None)
+    return len(stale)
+
 
 def _cache_get(owner: str, name: str, mtime_ns: int, branch: str = "") -> Optional["CodeIndex"]:
     """Return cached CodeIndex if fresh, else None."""
     key = (owner, name, branch)
+    now = time.monotonic()
     with _cache_lock:
+        _evict_idle_locked(_cache_ttl_seconds(), now)
         entry = _index_cache.get(key)
         if entry is not None and entry.mtime_ns == mtime_ns:
             _index_cache.move_to_end(key)  # LRU touch
+            # Refresh idle timestamp so an actively used index is never evicted.
+            _index_cache[key] = entry._replace(last_used=now)
             return entry.code_index
     return None
 
@@ -305,8 +354,10 @@ def _cache_get(owner: str, name: str, mtime_ns: int, branch: str = "") -> Option
 def _cache_put(owner: str, name: str, mtime_ns: int, code_index: "CodeIndex", branch: str = "") -> None:
     """Store a CodeIndex in the cache, evicting LRU if full."""
     key = (owner, name, branch)
+    now = time.monotonic()
     with _cache_lock:
-        _index_cache[key] = _CacheEntry(mtime_ns, code_index)
+        _evict_idle_locked(_cache_ttl_seconds(), now)
+        _index_cache[key] = _CacheEntry(mtime_ns, code_index, now)
         _index_cache.move_to_end(key)
         while len(_index_cache) > _CACHE_MAX_SIZE:
             _index_cache.popitem(last=False)
