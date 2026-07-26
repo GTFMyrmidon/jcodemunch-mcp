@@ -22,6 +22,7 @@ from mcp.types import Tool, ToolAnnotations, TextContent, Resource, Prompt, Prom
 from . import __version__
 from . import config as config_module
 from . import runtime_identity
+from .tools import _arg_contract
 # Tool modules are imported lazily inside each call_tool() dispatch branch.
 # This defers loading heavy dependencies (tree-sitter, httpx, pathspec) until
 # the first actual call to a tool that needs them, reducing cold-start latency
@@ -328,6 +329,28 @@ def _raw_catalog_tools() -> list:
     if _RAW_CATALOG is None:
         _build_tools_list()  # populates _RAW_CATALOG as a side effect
     return _RAW_CATALOG or []
+
+
+_DECLARED_ARG_KEYS: "Optional[dict]" = None
+
+
+def _declared_arg_keys(name: str):
+    """Declared inputSchema property names for a tool, or None if unknown.
+
+    Built once from the same catalog `list_tools` publishes, so the contract can
+    never drift from what the agent was shown. None (not an empty set) when the
+    tool or its schema is missing: an absent declaration is not evidence that a
+    caller's key is wrong.
+    """
+    global _DECLARED_ARG_KEYS
+    if _DECLARED_ARG_KEYS is None:
+        built = {}
+        for t in _raw_catalog_tools():
+            props = (t.inputSchema or {}).get("properties")
+            if isinstance(props, dict) and props:
+                built[t.name] = frozenset(props)
+        _DECLARED_ARG_KEYS = built
+    return _DECLARED_ARG_KEYS.get(name)
 
 
 def _catalog_rows() -> "list[dict]":
@@ -6352,6 +6375,22 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent] | CallToolR
                 _requested_format = "json"
         except Exception:
             logger.debug("Steering attach failed", exc_info=True)
+
+        # Argument contract (v1.108.175): every tool reads its arguments
+        # key-by-key, so a misspelled parameter is dropped in silence and the
+        # call that runs is not the call that was asked for. Disclose the
+        # ignored keys on every state, and downgrade `absent` to `degraded` so
+        # the absence-refusal rule below does the refusing — MUST run before the
+        # absence-evidence block for that to hold.
+        try:
+            _ignored = _arg_contract.unrecognized_keys(
+                arguments, _declared_arg_keys(name)
+            )
+            if _ignored:
+                _arg_contract.apply_argument_contract(result, _ignored)
+                logger.debug("Ignored unknown arguments for %s: %s", name, _ignored)
+        except Exception:
+            logger.debug("Argument-contract check failed", exc_info=True)
 
         # Absence evidence (#377 phase 3): record every absence-shaped verdict
         # so a handoff claim can cite the SCAN when nothing was served, and

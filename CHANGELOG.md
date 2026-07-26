@@ -2,6 +2,51 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.175] - 2026-07-25 - an ignored argument cannot prove absence
+
+### Fixed
+
+- **A misspelled parameter no longer produces a citable absence proof.** Found
+  live while auditing
+  [#375](https://github.com/jgravelle/jcodemunch-mcp/issues/375): a `search_text`
+  call passed `regex=true`, but the parameter is `is_regex`. Every tool reads its
+  arguments key-by-key (`arguments.get("is_regex", False)`), so the flag was
+  dropped in silence, the regex SOURCE TEXT was searched as a literal substring,
+  nothing matched, and the response reached `state: "absent"` with the note
+  "treat this as strong evidence the target is not present" plus a citable
+  `evidence_ref` — over a corpus that plainly contained the target. Reproduced
+  and pinned: with the gate disabled the same call still mints
+  `absent:2a1a6b8520c3`.
+- The dispatcher now compares each call's arguments against the tool's published
+  `inputSchema` and, when keys were discarded, attaches
+  `_meta.ignored_arguments` and downgrades an `absent` verdict to `degraded`
+  with a note naming the offending keys.
+
+### Notes
+
+- **Disclose on every state, refuse only the absence CLAIM** — the same shape as
+  the `rebuilding` gate in 1.108.168. Results an `ok` scan returned were really
+  in the index and are still the best available answer; only the claim that
+  nothing exists is unfounded. Because the refusal is expressed as a downgrade,
+  `handoff.absence_refusal` does the refusing and there is no second rule to keep
+  in sync.
+- **Deliberately never rejects the call.** Under the 1.x zero-surprise contract
+  an unknown key has always been accepted, so a client that has been sending a
+  harmless extra for a year must not start erroring, and a hard reject would turn
+  a recoverable mistake into a dead call. Disclosure is strictly additive.
+- **An unknown schema accuses nobody.** When a tool's declaration cannot be read
+  the check returns nothing rather than guessing, so it can never manufacture a
+  warning about a legitimate key.
+- New `UNIVERSAL_META_JSON` in `encoding/schema_driven.py`: structured `_meta`
+  keys every encoder preserves whether or not its own schema listed them. A
+  per-schema allowlist is right for tool payloads and wrong for CONTRACT keys —
+  the encoder drops the key, the response still looks complete, and the field
+  that said "don't trust this" is the one that vanishes. That is how the verdict
+  contract went invisible in 1.108.169; adding a key to 45 tuples only
+  guarantees the 46th encoder forgets it.
+- New `tests/test_v1_108_175.py` (21). No schema, tool-count, or INDEX_VERSION
+  change.
+
 ## [1.108.174] - 2026-07-25 - an empty index says so
 
 ### Added
