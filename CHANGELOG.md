@@ -2,6 +2,54 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.173] - 2026-07-25 - exact-match honesty: a fuzzy near-miss stops looking like a hit
+
+### Fixed
+
+- **`search_symbols` reported token-overlap guesses as confident matches.**
+  Raised in correspondence on
+  [#375](https://github.com/jgravelle/jcodemunch-mcp/issues/375): a user searched
+  the exact token `runPromiseFulfillmentCheck`, a function committed that day and
+  not yet indexed. Instead of "no exact match" they got ten ranked hits on the
+  substring "fulfillment" (order fulfilment, shipping routing, PHP helpers)
+  formatted exactly like real hits. In their words, that turns a missing index
+  into confident misinformation.
+
+  Reproduced against this repo: `extractMountsFulfillmentCheck` returned
+  `_extract_mounts`, `TestExpressRouterMount` and `_JS_MOUNT` under
+  `state: "ok"` with the note **"Confident matches returned."** The verdict was
+  actively vouching for guesses.
+
+  BM25 tokenization is the cause and is not itself wrong: the query splits into
+  run/promise/fulfillment/check, so token overlap scores. Correct for prose,
+  misleading for an identifier.
+
+  `search_symbols` now attaches `_meta.exact_match`
+  (`{queried, found, exact, prefix, note}`) when the query is a single
+  source-shaped identifier, and **downgrades an `ok` verdict to
+  `low_confidence`** when nothing exact or prefix-matching came back. Results are
+  labelled, not suppressed: they are still the best available guesses.
+
+  Deliberately NOT `absent`. Results were returned, and under the absence
+  contract only `absent` proves absence, so `low_confidence` cannot be cited as
+  evidence the symbol does not exist.
+
+  Scope is deliberately narrow. Only a single identifier-shaped token qualifies
+  (camel, snake, qualified, dunder), reusing the `query_shape` classifier from
+  v1.108.137. Prose, multi-word queries, filenames, and **bare lowercase words**
+  are untouched and byte-identical: without an interior case change or an
+  underscore there is nothing separating "I am naming a symbol" from "I am
+  describing a topic", and guessing wrong would stamp a false negative on an
+  ordinary keyword search.
+
+  ⚠ `exact_match` is added to `_META_JSON` in the `search_symbols` encoder. A
+  structured `_meta` value left off that allowlist is **silently dropped** by
+  MUNCH compaction, which is exactly how the whole verdict contract went
+  invisible in v1.108.169; a test pins the round-trip.
+
+New `tests/test_v1_108_173.py` (24). NO schema, tool-count, or INDEX_VERSION
+change.
+
 ## [1.108.172] - 2026-07-25 - idle index-cache TTL (opt-in) + process presence registry
 
 ### Added

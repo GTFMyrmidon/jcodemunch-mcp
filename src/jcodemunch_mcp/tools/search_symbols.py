@@ -1092,6 +1092,26 @@ def search_symbols(
     )
     negative_evidence = _vres["negative_evidence"]
     meta["verdict"] = _vres["verdict"]
+
+    # Exact-match honesty (v1.108.173). An identifier-shaped query that returns
+    # only token-overlap neighbours previously came back as state "ok" with the
+    # note "Confident matches returned", so a fuzzy near-miss was
+    # indistinguishable from a hit. Attach the finding, and downgrade the
+    # verdict so the note stops vouching for results that are ranked guesses.
+    #
+    # Deliberately NOT `absent`: results WERE returned, and under the absence
+    # contract only `absent` proves absence. `low_confidence` is the honest
+    # state and cannot be cited as evidence the symbol does not exist.
+    from ..retrieval.query_shape import exact_match_report as _exact_match_report
+    _exact = _exact_match_report(query, scored_results)
+    if _exact is not None:
+        meta["exact_match"] = _exact
+        if not _exact["found"] and scored_results:
+            _v = meta["verdict"]
+            if _v.get("state") == "ok":
+                _v["state"] = "low_confidence"
+                _v["note"] = _exact["note"]
+
     _attach_index_truncation(meta, index)
 
     # Feature 1: Add negative_evidence if present

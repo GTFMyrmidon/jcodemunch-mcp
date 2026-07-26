@@ -87,3 +87,84 @@ def _classify(tok: str) -> str | None:
     if _CAMEL_RE.match(tok) and _INTERIOR_CASE_RE.search(tok):
         return "camel"
     return None
+
+
+# --- Exact-match honesty (v1.108.173) --------------------------------------
+#
+# A user searched the exact token `runPromiseFulfillmentCheck`, a function
+# committed that day and not yet indexed, and got ten ranked hits on the
+# substring "fulfillment" (order fulfilment, shipping routing, PHP helpers)
+# formatted exactly like real hits. Reproduced here against this repo:
+# `extractMountsFulfillmentCheck` returns `_extract_mounts`, `_JS_MOUNT` and
+# friends under `state: "ok"` with the note "Confident matches returned."
+#
+# BM25 tokenization is why. `runPromiseFulfillmentCheck` splits into
+# run/promise/fulfillment/check, so anything sharing one fragment scores. That
+# is correct for prose and actively misleading for an identifier: a fuzzy
+# near-miss becomes indistinguishable from a hit, which turns a missing index
+# into confident misinformation.
+#
+# The fix is to say so, not to suppress the results. They are still the best
+# available guesses; they are just not what was asked for.
+
+def is_identifier_query(query: str) -> bool:
+    """True when the whole query is one source-shaped identifier.
+
+    Deliberately strict: a single token that classifies as qualified, camel, or
+    snake. Prose, multi-word queries and bare lowercase words all return False,
+    so their behavior is byte-identical.
+
+    Note a bare lowercase word like ``fulfillment`` is NOT an identifier query
+    even though it could name a symbol. Without an interior case change or an
+    underscore there is nothing to distinguish "I am naming a symbol" from "I am
+    describing a topic", and guessing wrong would attach a false-negative label
+    to an ordinary keyword search.
+    """
+    stripped = query.strip()
+    if not stripped or len(stripped.split()) != 1:
+        return False
+    return bool(source_shaped_tokens(stripped))
+
+
+def exact_match_report(query: str, results: list[dict]) -> dict | None:
+    """Classify how well `results` answer an identifier-shaped `query`.
+
+    Returns None for non-identifier queries so nothing is attached and no
+    tokens are spent on the common prose case.
+
+    Matching mirrors `_identity_score` in search_symbols: exact on name or id,
+    then a name prefix. Case-insensitive, because a caller retyping a symbol
+    from memory gets the case wrong more often than they get the spelling wrong.
+    """
+    if not is_identifier_query(query):
+        return None
+
+    needle = query.strip().lower()
+    # For a qualified query (`Store.load`), the leaf is what a symbol `name`
+    # holds; the full path is what an `id` holds.
+    leaf = needle.rsplit("::", 1)[-1].rsplit(".", 1)[-1]
+
+    exact, prefix = [], []
+    for row in results:
+        name = str(row.get("name", "")).lower()
+        sym_id = str(row.get("id", "")).lower()
+        if needle in (name, sym_id) or (leaf and name == leaf):
+            exact.append(row)
+        elif name.startswith(needle) or (leaf and name.startswith(leaf)):
+            prefix.append(row)
+
+    found = bool(exact) or bool(prefix)
+    report = {
+        "queried": query.strip(),
+        "found": found,
+        "exact": len(exact),
+        "prefix": len(prefix),
+    }
+    if not found and results:
+        report["note"] = (
+            f"No symbol named '{query.strip()}' is in this index. The results "
+            f"below share tokens with the query and are ranked guesses, not "
+            f"matches. If you expected this symbol to exist, the index may "
+            f"predate it: re-index before concluding it does not."
+        )
+    return report
