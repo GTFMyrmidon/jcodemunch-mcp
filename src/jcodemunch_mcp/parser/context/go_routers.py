@@ -29,19 +29,27 @@ _GO_FRAMEWORKS = {
 }
 
 # Pattern: r.GET("/path", handler) or r.Post("/path", handler)
+# ⚠ Do NOT reintroduce a leading ``(?:\w+)`` before the ``\.``. It is uncaptured
+# and asserts nothing the ``.`` does not already imply, but it makes the scan
+# QUADRATIC: at every offset inside an unbroken word run the engine matches the
+# run greedily, fails on the ``.``, then backtracks a character at a time. One
+# minified chunk or base64 blob in a single source file is enough. Measured on a
+# lone ``\w`` run: 8k chars 0.45s, 32k 7.5s, 128k over 120s. That is jcm#375,
+# where provider discovery burned 4 minutes at 100% CPU before file indexing even
+# began. Without the prefix the same scans are ~0.00006s at 128k.
 _GO_ROUTE = re.compile(
-    r'(?:\w+)\s*\.\s*(?P<method>GET|Get|POST|Post|PUT|Put|PATCH|Patch|DELETE|Delete|HEAD|Head|OPTIONS|Options|Any)\s*\(\s*'
+    r'\.\s*(?P<method>GET|Get|POST|Post|PUT|Put|PATCH|Patch|DELETE|Delete|HEAD|Head|OPTIONS|Options|Any)\s*\(\s*'
     r'"(?P<path>[^"]+)"',
 )
 
 # Pattern: r.Use(middleware) or r.Middleware(middleware)
 _GO_MIDDLEWARE = re.compile(
-    r'(?:\w+)\s*\.\s*(?:Use|Middleware)\s*\(\s*(?P<handler>[^)]+)\)',
+    r'\.\s*(?:Use|Middleware)\s*\(\s*(?P<handler>[^)]+)\)',
 )
 
 # Pattern: r.Group("/prefix")
 _GO_GROUP = re.compile(
-    r'(?:\w+)\s*\.\s*Group\s*\(\s*"(?P<prefix>[^"]+)"',
+    r'\.\s*Group\s*\(\s*"(?P<prefix>[^"]+)"',
 )
 
 

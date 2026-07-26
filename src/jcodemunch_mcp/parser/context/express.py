@@ -29,20 +29,28 @@ _JS_FRAMEWORKS = {
 }
 
 # Pattern: app.get("/path", handler) or router.post("/path", mw, handler)
+# ⚠ Do NOT reintroduce a leading ``(?:\w+)`` before the ``\.``. It is uncaptured
+# and asserts nothing the ``.`` does not already imply, but it makes the scan
+# QUADRATIC: at every offset inside an unbroken word run the engine matches the
+# run greedily, fails on the ``.``, then backtracks a character at a time. One
+# minified chunk or base64 blob in a single source file is enough. Measured on a
+# lone ``\w`` run: 8k chars 0.45s, 32k 7.5s, 128k over 120s. That is jcm#375,
+# where provider discovery burned 4 minutes at 100% CPU before file indexing even
+# began. Without the prefix the same scans are ~0.00006s at 128k.
 _JS_ROUTE = re.compile(
-    r"(?:\w+)\s*\.\s*(?P<method>get|post|put|patch|delete|all|head|options)\s*\(\s*"
+    r"\.\s*(?P<method>get|post|put|patch|delete|all|head|options)\s*\(\s*"
     r"[\"'](?P<path>[^\"']+)[\"']",
     re.IGNORECASE,
 )
 
 # Pattern: app.use(mw) or app.use("/prefix", mw)
 _JS_MIDDLEWARE = re.compile(
-    r"(?:\w+)\s*\.\s*use\s*\(\s*(?:[\"'](?P<path>[^\"']+)[\"'])?\s*,?\s*(?P<handler>\w+)",
+    r"\.\s*use\s*\(\s*(?:[\"'](?P<path>[^\"']+)[\"'])?\s*,?\s*(?P<handler>\w+)",
 )
 
 # Pattern: app.use("/api", usersRouter)
 _JS_MOUNT = re.compile(
-    r"(?:\w+)\s*\.\s*use\s*\(\s*[\"'](?P<prefix>[^\"']+)[\"']\s*,\s*(?P<router>\w+)\s*\)",
+    r"\.\s*use\s*\(\s*[\"'](?P<prefix>[^\"']+)[\"']\s*,\s*(?P<router>\w+)\s*\)",
 )
 
 

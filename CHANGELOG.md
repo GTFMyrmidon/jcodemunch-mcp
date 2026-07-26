@@ -2,6 +2,46 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.171] - 2026-07-25 - provider discovery no longer scans in quadratic time
+
+### Fixed
+
+- **A single large file could hang `index_folder` for minutes at 100% CPU, before
+  file indexing even started.** Reported on Ubuntu against a ~40-file subtree
+  ([#375](https://github.com/jgravelle/jcodemunch-mcp/issues/375)): the call ran
+  4m0s at ~99% CPU, emitted no progress and no log line, and did not complete.
+  With `context_providers` disabled the same index finished in **5.1s**.
+
+  A mid-stall `py-spy` dump pinned every sample inside
+  `ExpressProvider._extract_mounts`, reached through `discover_providers` ->
+  `_resolve_active_providers`. Provider discovery runs BEFORE the file walk, so
+  the whole index hung with nothing to show for it.
+
+  Cause: a leading uncaptured `(?:\w+)` before the `\.` in **six** patterns
+  across two providers (`_JS_ROUTE`, `_JS_MIDDLEWARE`, `_JS_MOUNT`, `_GO_ROUTE`,
+  `_GO_MIDDLEWARE`, `_GO_GROUP`). It asserts nothing the `.` does not already
+  imply, but it makes the scan **quadratic**: at every offset inside an unbroken
+  word run the engine matches the run greedily, fails on the `.`, then
+  backtracks a character at a time. One minified chunk or base64 blob in a
+  single source file is enough to trigger it.
+
+  Measured on a lone `\w` run, before -> after: 8k chars 0.45s -> 0.00001s,
+  32k 7.5s -> 0.00002s, 128k **over 120s** -> 0.00006s. Every provider regex in
+  the package now scans a 128k run in 0.0104s in total.
+
+  Extraction is unchanged: the dropped group was uncaptured, and the `.` still
+  requires a receiver. Dropping it is marginally more permissive (it now also
+  matches `getRouter().use(...)`), which is a correctness gain, not a loss.
+
+  New `tests/test_v1_108_171.py` (11). The scaling guard is **empirical, not a
+  pattern-text assertion** — a future provider can reintroduce the blowup with
+  different syntax and only timing catches that — plus a non-vacuity check, and
+  a named pin on the six so a careless revert fails with an obvious message
+  rather than a stopwatch. Verified non-vacuous: reintroducing the prefix on one
+  pattern turns the suite red in 11.6s across three tests.
+
+  NO schema, tool-count, or INDEX_VERSION change.
+
 ## [1.108.170] - 2026-07-25 - the file and symbol tools can see a rebuild too
 
 ### Fixed
