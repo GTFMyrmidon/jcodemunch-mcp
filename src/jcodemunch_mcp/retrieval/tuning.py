@@ -16,6 +16,11 @@ without enough events (default 50). Learning reads a recency window of
 the ledger (default 90 days) rather than the lifetime history, so old
 events can't anchor weights to a query distribution that no longer
 exists (``max_age_days=0`` restores the lifetime read).
+
+v1.108.186: rows whose ``semantic_used`` label is not evidence are excluded
+from both groups and disclosed as ``events_semantic_label_unknown`` — see
+``retrieval.ledger_trust``. Unknown is a third answer here, not a vote for
+``semantic_used=0``.
 """
 
 from __future__ import annotations
@@ -29,6 +34,7 @@ from threading import Lock
 from typing import Optional
 
 from ..storage import token_tracker as _tt
+from .ledger_trust import semantic_label_is_trustworthy as _semantic_label_is_trustworthy
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +183,14 @@ class WeightTuner:
 
         confidences_with_sem: list[float] = []
         confidences_without_sem: list[float] = []
+        # v1.108.186. A THIRD bucket, because the answer to "was semantic used on
+        # this row" can be "this row cannot say". Pre-fix `get_ranked_context_fusion`
+        # rows recorded `semantic_used=1` from a hardcoded argument while building no
+        # similarity channel, and the ledger keeps them for the whole recency window.
+        # They are not evidence that semantic was ON, and folding them into the OFF
+        # group would be the same error mirrored — so they are counted, disclosed,
+        # and excluded from both means.
+        unknown_semantic_label = 0
 
         # Schema (column index): 0 ts, 1 repo, 2 tool, 3 query_hash,
         # 4 query, 5 returned_ids, 6 top1, 7 top2, 8 confidence,
@@ -184,6 +198,9 @@ class WeightTuner:
         for row in events:
             conf = row[8]
             if conf is None:
+                continue
+            if not _semantic_label_is_trustworthy(row):
+                unknown_semantic_label += 1
                 continue
             sem_used = bool(row[9])
             (confidences_with_sem if sem_used else confidences_without_sem).append(float(conf))
@@ -196,6 +213,17 @@ class WeightTuner:
             "mean_confidence_semantic_on": _round(mean_sem_on),
             "mean_confidence_semantic_off": _round(mean_sem_off),
         }
+        if unknown_semantic_label:
+            # Disclosed on every proposal that had to drop rows, including the ones
+            # that then decline to move a weight — a silent exclusion reads as "the
+            # ledger simply had nothing to say".
+            signals["events_semantic_label_unknown"] = unknown_semantic_label
+            signals["semantic_label_unknown_note"] = (
+                "Rows recorded before v1.108.186 by get_ranked_context's fusion exit "
+                "carry semantic_used=1 from a hardcoded argument, not from a "
+                "similarity channel. They are excluded from both groups rather than "
+                "counted as semantic-off, and age out with the recency window."
+            )
 
         new_sem = None
         if mean_sem_on is not None and mean_sem_off is not None:

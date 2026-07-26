@@ -834,25 +834,26 @@ def _get_ranked_context_fusion(
         [{"score": item.get("fusion_score")} for item in context_items],
         is_stale=_probe.repo_is_stale,
     )
+    # v1.108.186. This was a hardcoded `semantic_used=True` while the channel list
+    # above builds lexical, identity and structural — never similarity — so every
+    # row this exit has ever written claimed a channel that did not run. Derived
+    # from the channels actually built rather than hardcoded False: if anyone adds a
+    # similarity channel here, the ledger follows without a second edit. Same shape
+    # as `search_symbols_fusion`, which records its real `similarity_used` flag.
+    _semantic_used = any(ch.name == "similarity" for ch in channels)
     _record_ranking_event(
         tool="get_ranked_context_fusion",
         repo=f"{owner}/{name}",
         query=query,
         returned_ids=[c.get("symbol_id", "") for c in context_items],
         confidence=fusion_result["_meta"].get("confidence"),
-        semantic_used=True,
+        semantic_used=_semantic_used,
         repo_is_stale=_probe.repo_is_stale,
     )
 
     # v1.108.185. The last exit in this tool without a verdict. The non-fusion
     # no-candidate return got one in v1.108.179 and the main path has had one since
     # v1.108.166; this branch was simply never revisited.
-    #
-    # ⚠ This exit builds NO similarity channel at all — lexical, identity and
-    # structural only — so `channels.semantic` stays `off`, which is the truth
-    # rather than the `semantic_used=True` the ranking ledger above records for it.
-    # Left alone here: that argument feeds weight tuning and changing it would move
-    # a learned parameter, which is not this change.
     from ..retrieval.verdict import retrieval_verdict_for_index as _rv
     _vres = _rv(
         index,
@@ -866,6 +867,10 @@ def _get_ranked_context_fusion(
         query_terms=query_terms,
         scope=scope,
         state_before=state_before,
+        # v1.108.186. Same derivation as the ledger row above, so the response and
+        # the ledger cannot disagree about the same call again — which is exactly
+        # what they did while this defaulted to `off` and the ledger said True.
+        semantic_channel="ok" if _semantic_used else "off",
     )
     fusion_result["_meta"]["verdict"] = _vres["verdict"]
     if _vres["negative_evidence"] is not None:

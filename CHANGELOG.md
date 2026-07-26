@@ -2,6 +2,91 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.186] - 2026-07-26 - the ledger stops claiming a channel that never ran
+
+### Fixed
+
+- ⚠ **`get_ranked_context`'s fusion exit recorded `semantic_used=True` on every
+  ranking-ledger row while building no similarity channel.** That exit builds
+  lexical, identity and structural — its own `_meta.channels` lists the three, and
+  since v1.108.185 its verdict reports `channels.semantic: "off"` — so the response
+  and the ledger disagreed about the same call, and the ledger was the one that was
+  wrong. Disclosed as deliberately deferred in v1.108.185 because the column feeds a
+  learned parameter; this is the follow-through.
+
+  The flag is now derived from the channels actually built
+  (`any(ch.name == "similarity" for ch in channels)`) rather than hardcoded to
+  `False`, so adding a similarity channel there picks it up with no second edit —
+  the same shape `search_symbols_fusion` already had. The verdict's
+  `semantic_channel` now comes off the same derivation, so the two cannot diverge
+  again.
+
+- ⚠ **Flipping the flag was necessary and not sufficient: the ledger is
+  append-only.** `WeightTuner` learns a per-repo `semantic_weight` by splitting rows
+  on that column and comparing mean confidence between the groups, so pre-fix rows
+  keep steering it for the whole 90-day recency window. **Reproduced before fixing:
+  30 honest lexical rows at 0.80 confidence plus 30 mislabelled fusion rows at 0.40
+  walked `semantic_weight` from 0.5 to 0.45, on a ledger whose honest labels decline
+  to move it at all.**
+
+  New `retrieval/ledger_trust.py` holds the one rule that says which labels are not
+  evidence, shared by all three consumers rather than copied into each. **The rows
+  are exactly identifiable with no heuristic:** they carry
+  `tool = "get_ranked_context_fusion"`, a value no other producer writes, so a
+  pre-fix row is precisely that tool with `semantic_used = 1` and a post-fix row is
+  the same tool with `0`. A tool-only rule would have discarded the fix's own honest
+  rows.
+
+- ⚠ **`suggest_corrections` was reporting a vocabulary gap on calls where identity
+  matching ran.** Regret's `vocabulary_gap` signal is the conjunction
+  `not identity_hit and semantic_used`, and that exit hardcoded the semantic flag
+  AND passed no ledger features at all — so `identity_hit` defaulted to 0 while the
+  identity channel was one of the three it built. Every confident fusion call was a
+  textbook match for "the agent's term doesn't match a symbol name", and those
+  clusters become config patches shown to the user. Untrusted rows are dropped from
+  that signal.
+
+### Changed
+
+- **The historical rows are excluded, disclosed, and neither rewritten nor counted
+  as semantic-off.** Three options were weighed. A one-time corrective `UPDATE` was
+  rejected on charter grounds, not convenience: the tuner has only ever written the
+  `tuning.jsonc` sidecar and `suggest_corrections` is read-only by charter, so
+  rewriting a user's telemetry rows is a charter change. Letting the 90-day window
+  age them out was also rejected — that is learning from a corpus we know is
+  mislabelled. **Unknown is a third answer, not a vote for `semantic_used=0`:**
+  folding those rows into the OFF group would be the same error mirrored, and it
+  would move the weight just as far. Every consumer that reads the column now
+  discloses the count — `events_semantic_label_unknown` on the tuner's signals and
+  on `analyze_regret`, `semantic_label_unknown` per repo in `analyze_perf --ledger`.
+
+- ⚠ **The exclusion expires, and a drift guard says when.** It is only honest while
+  that exit builds no similarity channel; if one is added, its `semantic_used=1`
+  rows become real evidence and the rule would start discarding good data. A test
+  fails if the exit grows a similarity channel while the rule is still
+  unconditional.
+
+### Notes
+
+- **Real blast radius is small and worth stating plainly.** The ledger is opt-in
+  (`perf_telemetry_enabled`, default `False`), so most installs hold no rows at all
+  and were never affected. Installs that enabled telemetry and used
+  `get_ranked_context(fusion=True)` have mislabelled rows, and for them the learned
+  weight and the correction suggestions were both reading a lie.
+- Compatibility is pinned rather than asserted: a pre-fix ledger stays readable and
+  unrewritten, and the new disclosure keys are absent — not zero — for a caller
+  whose ledger holds no mislabelled row.
+- New `tests/test_v1_108_186.py` (22), including the real-route ledger check, a
+  non-vacuity test for the derivation (patch a channel to be named `similarity` and
+  both the ledger and the verdict must follow), non-vacuity tests that show the same
+  ledger moving the weight and raising the cluster with the guard disabled, and the
+  drift guard. No tool-count change, no `INDEX_VERSION` change, no schema change.
+- Found on the way and deliberately NOT folded in: `get_ranked_context`'s fusion
+  exit passes no `extract_ledger_features` payload, so `top1_score`, `top2_score`
+  and `identity_hit` are defaults rather than measurements on every row it writes;
+  and `token_tracker._ensure_loaded(None)` on the first savings write repins the
+  perf db to `~/.code-index` even when a tool was given a `storage_path`.
+
 ## [1.108.185] - 2026-07-26 - fusion gets a verdict, and fusion can prove absence
 
 ### Fixed
