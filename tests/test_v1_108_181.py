@@ -68,7 +68,7 @@ def test_backslashes_are_normalised():
 
 # --- the five states ---------------------------------------------------------
 
-def _state(monkeypatch, dirty, *, scope=None, mtimes=None, root="/repo", freshness=None):
+def _tree_state_v181(monkeypatch, dirty, *, scope=None, mtimes=None, root="/repo", freshness=None):
     monkeypatch.setattr(
         subj, "_working_tree_reading", lambda r: ("fp", tuple(dirty)) if dirty is not None else None
     )
@@ -78,28 +78,28 @@ def _state(monkeypatch, dirty, *, scope=None, mtimes=None, root="/repo", freshne
 
 
 def test_a_subject_without_revision_control_is_not_applicable(monkeypatch):
-    s = _state(monkeypatch, ["a.py"], freshness="not_tracked")
+    s = _tree_state_v181(monkeypatch, ["a.py"], freshness="not_tracked")
     assert s == {"state": "not_applicable", "blocks": False}
 
 
 def test_an_unreadable_tree_is_unknown(monkeypatch):
-    assert _state(monkeypatch, None)["state"] == "unknown"
+    assert _tree_state_v181(monkeypatch, None)["state"] == "unknown"
 
 
 def test_nothing_uncommitted_is_clean(monkeypatch):
-    s = _state(monkeypatch, [])
+    s = _tree_state_v181(monkeypatch, [])
     assert s["state"] == "clean" and s["blocks"] is False
 
 
 def test_work_outside_the_scope_does_not_invalidate_a_narrow_proof(monkeypatch):
-    s = _state(monkeypatch, ["docs/x.md"], scope="src/*.py")
+    s = _tree_state_v181(monkeypatch, ["docs/x.md"], scope="src/*.py")
     assert s["state"] == "dirty_outside_scope"
     assert s["blocks"] is False
     assert s["files_dirty"] == 1
 
 
 def test_work_inside_the_scope_that_the_index_never_saw_blocks(monkeypatch):
-    s = _state(monkeypatch, ["src/new.py"], scope="src/*.py", mtimes={})
+    s = _tree_state_v181(monkeypatch, ["src/new.py"], scope="src/*.py", mtimes={})
     assert s["state"] == "dirty_in_scope"
     assert s["files_not_in_index"] == 1
     assert s["blocks"] is True
@@ -112,7 +112,7 @@ def test_an_edit_the_index_has_already_read_does_not_block(tmp_path, monkeypatch
     f = tmp_path / "mod.py"
     f.write_text("x")
     mtimes = {"mod.py": f.stat().st_mtime_ns + 1_000_000_000}  # indexed after the edit
-    s = _state(monkeypatch, ["mod.py"], mtimes=mtimes, root=tmp_path)
+    s = _tree_state_v181(monkeypatch, ["mod.py"], mtimes=mtimes, root=tmp_path)
     assert s["state"] == "dirty_in_scope"
     assert s["files_not_in_index"] == 0
     assert s["blocks"] is False
@@ -123,13 +123,13 @@ def test_a_file_newer_on_disk_than_in_the_index_blocks(tmp_path, monkeypatch):
     f = tmp_path / "mod.py"
     f.write_text("x")
     mtimes = {"mod.py": f.stat().st_mtime_ns - 1_000_000_000}  # indexed before the edit
-    s = _state(monkeypatch, ["mod.py"], mtimes=mtimes, root=tmp_path)
+    s = _tree_state_v181(monkeypatch, ["mod.py"], mtimes=mtimes, root=tmp_path)
     assert s["blocks"] is True
 
 
 def test_a_deletion_under_the_index_blocks(tmp_path, monkeypatch):
     mtimes = {"gone.py": 1}
-    s = _state(monkeypatch, ["gone.py"], mtimes=mtimes, root=tmp_path)
+    s = _tree_state_v181(monkeypatch, ["gone.py"], mtimes=mtimes, root=tmp_path)
     assert s["files_not_in_index"] == 1
 
 
