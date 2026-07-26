@@ -83,7 +83,29 @@ def index_coverage_meta(index) -> Optional[dict]:
         out["excluded"] = skips
     if cov.get("no_symbols_count"):
         out["no_symbols_files"] = cov["no_symbols_count"]
+    # v1.108.176 (#375 sub-problem C). `complete` is tri-state on purpose:
+    # True / False / None-for-unknown. Older indexes have no `files_accepted`
+    # and report None, which must never be read as True — an index that cannot
+    # account for itself is not thereby complete.
+    if "complete" in cov:
+        out["complete"] = cov["complete"]
+    if cov.get("files_accepted") is not None:
+        out["files_accepted"] = cov["files_accepted"]
+    if cov.get("dropped_after_discovery"):
+        out["dropped_after_discovery"] = cov["dropped_after_discovery"]
+    if cov.get("unaccounted"):
+        out["unaccounted"] = cov["unaccounted"]
     return out
+
+
+def coverage_is_incomplete(coverage: Optional[dict]) -> bool:
+    """True only when coverage PROVES files are missing from the corpus.
+
+    Unknown coverage (`complete is None`, or no block at all) is not
+    incompleteness: it is the absence of a measurement, and treating it as a
+    defect would fire on every index built before this contract existed.
+    """
+    return bool(coverage) and coverage.get("complete") is False
 
 
 def _attach_coverage(verdict: dict, coverage: Optional[dict]) -> None:
@@ -204,6 +226,19 @@ def build_verdict(
         # still returns them (they were really in the index) and only discloses
         # the rebuild via channels.index below.
         state = STATE_DEGRADED
+    elif result_count == 0 and coverage_is_incomplete(coverage):
+        # #375 sub-problem C. Freshness answers "is the index BEHIND the tree in
+        # time" (SHA vs HEAD) and was being read as "does the index COVER the
+        # tree". A corpus that dropped files at index time sits at the same SHA
+        # as the checkout, so it reported `fresh` while whole files were missing
+        # — a user watched that combination hand back confident zero-results for
+        # ~1,975 unindexed files and moved their code lookup to another tool.
+        #
+        # A file that never entered the corpus cannot be proven absent from it,
+        # so the same degraded gate as the stale/truncated/rebuilding cases
+        # applies and the absence-refusal rule falls out of the existing "only
+        # `absent` proves absence" check with nothing new to keep in sync.
+        state = STATE_DEGRADED
     elif result_count == 0:
         state = STATE_ABSENT
     elif below_threshold:
@@ -225,11 +260,20 @@ def build_verdict(
         "channels": {
             "lexical": "ok",
             "semantic": semantic_channel,
-            # "rebuilding" is disclosed on EVERY state, not just the degraded
-            # one above: a caller reading an `ok` result still deserves to know
-            # the index moved under it. Only the absence CLAIM is refused.
+            # Disclosed on EVERY state, not just the degraded one above: a
+            # caller reading an `ok` result still deserves to know the index
+            # moved under it, or does not cover the tree. Only the absence CLAIM
+            # is refused.
+            #
+            # Order is by how badly each condition undermines the answer:
+            # a rebuild in flight beats a known gap beats mere lag. "partial"
+            # exists because `fresh` was answering the wrong question — it means
+            # "not behind in time", never "covers everything" (#375).
             "index": (
-                "rebuilding" if index_changed else ("stale" if index_stale else "fresh")
+                "rebuilding" if index_changed
+                else "partial" if coverage_is_incomplete(coverage)
+                else "stale" if index_stale
+                else "fresh"
             ),
         },
         "scorer": SCORER_VERSION,

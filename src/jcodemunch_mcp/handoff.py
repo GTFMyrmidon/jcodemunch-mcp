@@ -114,6 +114,15 @@ def absence_refusal(record: Optional[dict]) -> Optional[str]:
             "the index was being rewritten during the scan, so the target may sit "
             "in rows written after the scan passed them"
         )
+    if channels.get("index") == "partial":
+        # Checked before the generic state rule so the reason names the cause:
+        # a zero-result scan over a corpus with known gaps already downgrades to
+        # 'degraded', so the generic branch would refuse it correctly but
+        # unhelpfully (#375 sub-problem C).
+        return (
+            "the index did not cover the whole tree at scan time, so the target "
+            "may sit in a file that never entered the corpus"
+        )
     if state != "absent":
         return (
             f"the scan's verdict was '{state}', and only 'absent' can prove absence "

@@ -2,6 +2,64 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.176] - 2026-07-26 - a partial index stops reporting itself fresh
+
+### Fixed
+
+- **#375 sub-problem C: freshness answered the wrong question.** The reported
+  symptom: *"it has learned about 7,659 of 9,634 code files. But it still
+  reports itself as up to date. So 'I never learned that file' and 'that file
+  doesn't exist' look identical to every agent."* That ambiguity is why a paying
+  user moved their default code lookup to another tool.
+- The check was not broken; it was answering a different question. Freshness
+  compares index SHA against git HEAD, which asks *is the index BEHIND the tree
+  in time* — and was being read as *does the index COVER the tree*. A corpus
+  that dropped files at index time sits at the SAME SHA as the checkout, so it
+  truthfully reported `fresh` while whole files were missing.
+- Underneath it, `index_folder`'s second pass dropped files with **three
+  uncounted `continue`s** (`validate_path` failure, `relative_to` failure,
+  no-language). The corpus could end up smaller than the walk reported with
+  nothing anywhere recording the difference.
+
+### Added
+
+- Post-discovery drops are now counted by reason (`outside_root`,
+  `no_language`, `stat_failed`) and persisted with the coverage contract.
+- The coverage contract records `files_accepted` (what the walk handed
+  downstream) alongside `files_indexed` (what survived), plus `unaccounted` for
+  any remainder no named reason explains.
+- New `channels.index: "partial"`, disclosed on every state.
+
+### Notes
+
+- **`complete` is tri-state on purpose: true / false / null-for-unknown.** An
+  index predating this accounting reports null, and null must never be read as
+  true — an index that cannot account for itself is not thereby complete. Every
+  pre-upgrade index therefore behaves byte-identically until it is re-indexed.
+- **Disclose on every state, refuse only the absence CLAIM.** A zero-result over
+  a corpus with known gaps degrades, because a file that never entered the
+  corpus cannot be proven absent from it. Hits are still real hits. Because the
+  refusal is expressed as a downgrade, `handoff.absence_refusal` does the
+  refusing and there is no second rule to keep in sync — the same shape as the
+  stale, truncated and rebuilding gates.
+- Channel precedence is by how badly each condition undermines the answer:
+  `rebuilding` > `partial` > `stale` > `fresh`.
+- **A partial walk over a wider index reports unknown, not incomplete.** v1.96
+  subdir-merge and branch-delta modes walk a prefix while the index carries the
+  rest, so reconciliation does not describe that shape and must not fire a false
+  incomplete.
+- ⚠ **The published `retrieval-verdict` schema closes `channels` AND the
+  `coverage` block, so both had to be extended or every mid-gap response would
+  fail our own contract** (`test_provenance.py` validates live responses). That
+  is the v1.108.168 trap; it fired again here on the coverage block and was
+  caught by validating the projected shape, not the raw persisted one.
+- Measured against this repo before shipping, to be sure the signal is not
+  noise: 672 accepted, 672 indexed, `complete: true`. No false positives.
+- New `tests/test_v1_108_176.py` (20), non-vacuity proven: with the gate
+  disabled a corpus with two provably-missing files still returns `absent` +
+  `fresh` and mints `absent:cda93cdd5447`.
+- No tool-count or INDEX_VERSION change.
+
 ## [1.108.175] - 2026-07-25 - an ignored argument cannot prove absence
 
 ### Fixed

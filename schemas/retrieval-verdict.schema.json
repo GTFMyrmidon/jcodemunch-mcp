@@ -69,7 +69,8 @@
           "enum": [
             "fresh",
             "stale",
-            "rebuilding"
+            "rebuilding",
+            "partial"
           ]
         }
       },
@@ -142,6 +143,25 @@
           "type": "integer",
           "minimum": 0,
           "description": "Files indexed but yielding zero symbols (parser gaps included)."
+        },
+        "complete": {
+          "type": ["boolean", "null"],
+          "description": "Did every file the walk accepted reach the index? Tri-state: true = reconciled exactly; false = files are provably missing; null = unknown (index predates this accounting, or a partial walk over a wider index). null must never be read as true."
+        },
+        "files_accepted": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Files the discovery walk handed downstream. Compare against files_indexed to see what the corpus lost after discovery."
+        },
+        "dropped_after_discovery": {
+          "type": "object",
+          "additionalProperties": {"type": "integer"},
+          "description": "Named drops between discovery and save (outside_root, no_language, stat_failed) — files the walk said belonged in the corpus that are not in it."
+        },
+        "unaccounted": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Files missing from the corpus that no named reason explains. Nonzero means the index cannot account for itself."
         }
       },
       "additionalProperties": false
