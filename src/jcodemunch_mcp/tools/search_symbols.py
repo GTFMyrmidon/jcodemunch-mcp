@@ -870,6 +870,8 @@ def search_symbols(
             start=start,
             cache_key=_cache_key,
             cacheable=_cacheable,
+            # #377 item 6 reaches this exit too (v1.108.185).
+            state_before=_state_before,
         )
 
     # Narrow candidates using inverted index: only score symbols that
@@ -1613,6 +1615,7 @@ def _search_symbols_fusion(
     start: float,
     cache_key,
     cacheable: bool,
+    state_before: Optional[dict] = None,
 ) -> dict:
     """Fusion search path: multi-signal WRR ranking."""
     from ..retrieval.signal_fusion import (
@@ -1637,12 +1640,35 @@ def _search_symbols_fusion(
         candidates = index.symbols
 
     if not candidates:
+        # v1.108.185. A FOURTH exit in this tool, and the one with the least
+        # standing to stay silent: the filters selected nothing, so not a byte was
+        # read. Previously this returned a bare empty result with no verdict at
+        # all, which reads exactly like "we looked everywhere and it is not there"
+        # (#377 hardening item 9).
         elapsed = (time.perf_counter() - start) * 1000
-        return {
-            "result_count": 0,
-            "results": [],
-            "_meta": {"timing_ms": round(elapsed, 1), "total_symbols": len(index.symbols)},
+        _empty_meta: dict = {
+            "timing_ms": round(elapsed, 1),
+            "total_symbols": len(index.symbols),
+            "fusion": True,
+            "search_mode": "fusion",
         }
+        from ..retrieval.verdict import retrieval_verdict_for_index as _rv
+        _empty_meta["verdict"] = _rv(
+            index,
+            result_count=0,
+            query_terms=query_terms,
+            scope=file_pattern,
+            state_before=state_before,
+            incomplete={
+                "reason": "empty_scope",
+                "files_eligible": 0,
+                "note": (
+                    "No indexed symbol matched this scope, so nothing was scanned. "
+                    "An empty eligible set proves nothing about the corpus."
+                ),
+            },
+        )["verdict"]
+        return {"result_count": 0, "results": [], "_meta": _empty_meta}
 
     # Load config weights
     weights, smoothing = load_fusion_weights()
@@ -1685,7 +1711,13 @@ def _search_symbols_fusion(
     try:
         from ..storage.embedding_store import EmbeddingStore
         emb_store = EmbeddingStore(store._sqlite._db_path(owner, name))
-        all_embeddings = emb_store.get_all()
+        # v1.108.185: read-only, because the plain read wrote. `_connect` runs a
+        # WAL pragma and a CREATE-TABLE script on every connection, so probing for
+        # embeddings here moved the .db mtime mid-scan and made this exit report
+        # `rebuilding` + `moved_during_scan` on the first fusion search of any
+        # process — which downgraded the verdict and put `absent` out of reach for
+        # an entirely self-inflicted reason.
+        all_embeddings = emb_store.get_all_readonly()
         if all_embeddings:
             from .embed_repo import _detect_provider, embed_texts
             provider = _detect_provider()
@@ -1788,6 +1820,7 @@ def _search_symbols_fusion(
         "total_tokens_saved": total_saved,
         **cost_avoided(tokens_saved, total_saved),
         "fusion": True,
+        "search_mode": "fusion",
         "channels": [ch.name for ch in channels],
     }
     if token_budget is not None:
@@ -1841,6 +1874,54 @@ def _search_symbols_fusion(
         repo_is_stale=_probe.repo_is_stale,
         **_feat,
     )
+
+    # v1.108.185. This exit emitted no verdict and no negative evidence at all, so
+    # a zero-result fusion search came back as a bare empty response: nothing
+    # false, and nothing honest either. The same token_budget packing that broke
+    # the lexical path in v1.108.177 and the semantic path in v1.108.184 lives here
+    # too, so an empty response could be pure packing.
+    #
+    # ⚠ Unlike the semantic exit, fusion CAN prove absence, and the reason is the
+    # channel construction rather than a judgement call. `build_lexical_channel`
+    # and `build_identity_channel` each score EVERY eligible candidate with no cap,
+    # and `fuse` keeps every symbol appearing in ANY channel — so a zero fused set
+    # means every candidate scored zero on both BM25 and identity, which is the
+    # same corpus fact the lexical path's absence rests on. The similarity channel
+    # can only ADD symbols to the fused set, never remove one, so its absence
+    # weakens the RANKING and cannot manufacture a false absence. That asymmetry is
+    # exactly what the semantic exit lacked, and it is why there is no
+    # `absence_unprovable` here.
+    from ..retrieval.verdict import retrieval_verdict_for_index as _rv
+    _vres = _rv(
+        index,
+        result_count=len(scored_results),
+        # Pre-cap AND pre-packing: `fused[:effective_limit]` drops matches before
+        # the packer ever sees them, and both drops are the caller's to know about.
+        matches_before_packing=len(fused),
+        scanned_symbols=len(candidates),
+        scanned_files=len(seen_files) if seen_files else len(index.source_files),
+        best_score=_conf_scores[0] if _conf_scores else None,
+        query_terms=query_terms,
+        scope=file_pattern,
+        state_before=state_before,
+        semantic_channel="ok" if similarity_used else "off",
+    )
+    meta["verdict"] = _vres["verdict"]
+    if _vres["negative_evidence"] is not None:
+        # Parity with this tool's other exits: the same question must not get a
+        # differently-honest answer depending on which ranking mode ran.
+        result["negative_evidence"] = _vres["negative_evidence"]
+        _q = query[:80]
+        if _vres["negative_evidence"]["verdict"] == "no_implementation_found":
+            result["⚠ warning"] = (
+                f"No implementation found for '{_q}'. Do not claim this feature exists."
+            )
+        else:
+            result["⚠ warning"] = (
+                f"Low-confidence matches for '{_q}' "
+                f"(best score: {_vres['negative_evidence']['best_match_score']}). "
+                f"Verify before claiming this feature exists."
+            )
 
     _attach_index_truncation(result.get("_meta"), index)
     if cacheable and cache_key is not None:

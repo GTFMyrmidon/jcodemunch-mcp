@@ -340,6 +340,8 @@ def get_ranked_context(
             scope=scope,
             compress=compress,
             start=start,
+            # #377 item 6 reaches this exit too (v1.108.185).
+            state_before=_state_before,
         )
 
     # Normalize PageRank to [0,1] for score combination
@@ -657,6 +659,7 @@ def _get_ranked_context_fusion(
     scope,
     start: float,
     compress: bool = False,
+    state_before: Optional[dict] = None,
 ) -> dict:
     """Fusion-based ranked context: WRR across channels, greedy budget packing."""
     from ..retrieval.signal_fusion import (
@@ -678,6 +681,12 @@ def _get_ranked_context_fusion(
         ]
 
     if not candidates:
+        # v1.108.185. The scope selected nothing, so not a byte was read — and
+        # this returned a bare empty result, which reads like a completed search
+        # that found nothing (#377 hardening item 9). Same shape as the
+        # no-candidate early return the non-fusion path got a verdict for in
+        # v1.108.179; this is the exit that was missed.
+        from ..retrieval.verdict import retrieval_verdict_for_index as _rv
         elapsed = (time.perf_counter() - start) * 1000
         return {
             "context_items": [],
@@ -685,7 +694,29 @@ def _get_ranked_context_fusion(
             "budget_tokens": token_budget,
             "items_included": 0,
             "items_considered": 0,
-            "_meta": {"timing_ms": round(elapsed, 1), "tokens_saved": 0, "total_tokens_saved": 0},
+            "_meta": {
+                "timing_ms": round(elapsed, 1),
+                "tokens_saved": 0,
+                "total_tokens_saved": 0,
+                "fusion": True,
+                "search_mode": "fusion",
+                "verdict": _rv(
+                    index,
+                    result_count=0,
+                    query_terms=query_terms,
+                    scope=scope,
+                    state_before=state_before,
+                    incomplete={
+                        "reason": "empty_scope",
+                        "files_eligible": 0,
+                        "note": (
+                            "No indexed symbol matched this scope, so nothing was "
+                            "scanned. An empty eligible set proves nothing about "
+                            "the corpus."
+                        ),
+                    },
+                )["verdict"],
+            },
         }
 
     # Centrality for BM25 tiebreaker
@@ -778,6 +809,7 @@ def _get_ranked_context_fusion(
             "total_tokens_saved": total_saved,
             **_cost_avoided(tokens_saved, total_saved),
             "fusion": True,
+            "search_mode": "fusion",
             "channels": [ch.name for ch in channels],
         },
     }
@@ -811,4 +843,42 @@ def _get_ranked_context_fusion(
         semantic_used=True,
         repo_is_stale=_probe.repo_is_stale,
     )
+
+    # v1.108.185. The last exit in this tool without a verdict. The non-fusion
+    # no-candidate return got one in v1.108.179 and the main path has had one since
+    # v1.108.166; this branch was simply never revisited.
+    #
+    # ⚠ This exit builds NO similarity channel at all — lexical, identity and
+    # structural only — so `channels.semantic` stays `off`, which is the truth
+    # rather than the `semantic_used=True` the ranking ledger above records for it.
+    # Left alone here: that argument feeds weight tuning and changing it would move
+    # a learned parameter, which is not this change.
+    from ..retrieval.verdict import retrieval_verdict_for_index as _rv
+    _vres = _rv(
+        index,
+        result_count=len(context_items),
+        # A candidate set that could not be packed into the budget is not a
+        # no-match (#377 hardening item 8), and `_pack_budget` can empty it.
+        matches_before_packing=len(fused),
+        scanned_symbols=len(candidates),
+        scanned_files=len(set(s.get("file", "") for s in candidates)),
+        best_score=max((fr.score for fr in fused), default=None),
+        query_terms=query_terms,
+        scope=scope,
+        state_before=state_before,
+    )
+    fusion_result["_meta"]["verdict"] = _vres["verdict"]
+    if _vres["negative_evidence"] is not None:
+        fusion_result["negative_evidence"] = _vres["negative_evidence"]
+        if _vres["negative_evidence"]["verdict"] == "no_implementation_found":
+            fusion_result["⚠ warning"] = (
+                f"No implementation found for '{query[:80]}'. "
+                f"Do not claim this feature exists."
+            )
+        else:
+            fusion_result["⚠ warning"] = (
+                f"Low-confidence matches for '{query[:80]}' "
+                f"(best score: {_vres['negative_evidence']['best_match_score']}). "
+                f"Verify before claiming this feature exists."
+            )
     return fusion_result

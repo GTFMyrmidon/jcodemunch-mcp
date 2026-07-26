@@ -156,12 +156,23 @@ def build_structural_channel(
 ) -> ChannelResult:
     """Rank symbols by PageRank of their containing file.
 
-    If ``candidate_ids`` is given, only those symbols participate.
+    If ``candidate_ids`` is given, only those symbols participate. ``None`` means
+    "no restriction"; an EMPTY set means "restrict to nothing" and returns nothing.
+
+    ⚠ Those two were the same thing until v1.108.185, and the difference is not
+    cosmetic. The callers pass ``set(lexical.ranked_ids) | set(identity.ranked_ids)``,
+    so a query matching nothing produced an empty candidate set — which was falsy,
+    skipped the filter, and let EVERY symbol with nonzero PageRank into the
+    channel. A no-match query therefore came back with the whole repository ranked
+    by centrality, and because fusion had no verdict nobody saw it: measured live,
+    `fusion=True` on a nonsense query returned rows with "Confident matches
+    returned". It also made `absent` unreachable on both fusion paths, so the
+    absence contract could not have applied to them however carefully it was wired.
     """
     scored: list[tuple[float, str]] = []
     for sym in symbols:
         sid = sym["id"]
-        if candidate_ids and sid not in candidate_ids:
+        if candidate_ids is not None and sid not in candidate_ids:
             continue
         pr = pagerank_scores.get(sym.get("file", ""), 0.0)
         if pr > 0:

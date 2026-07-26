@@ -709,40 +709,22 @@ class TestProducerRegistration:
             assert "cosine" in declared, mode
         assert "BM25 over the inverted index" in producer.completeness_for(None)
 
-    def test_the_fusion_exit_of_search_symbols_carries_no_verdict_to_mint_from(self):
-        source = (
-            _R183_ROOT / "src" / "jcodemunch_mcp" / "tools" / "search_symbols.py"
-        ).read_text(encoding="utf-8")
-        fusion = source.split("def _search_symbols_fusion")[1]
-        assert 'meta["verdict"] =' not in fusion
-        assert "build_verdict" not in fusion
+    def test_both_fusion_exits_declare_their_own_completeness(self):
+        """These two tests used to assert the fusion exits had no verdict, so they
+        could not mint. v1.108.185 gave both one — and both failed, the same way the
+        semantic pin failed at .184. The modes were reviewed and now declare their
+        own completeness. That is twice the gate has caught its own author.
 
-    def test_the_fusion_exit_of_get_ranked_context_carries_no_verdict_to_mint_from(self):
-        source = (
-            _R183_ROOT / "src" / "jcodemunch_mcp" / "tools" / "get_ranked_context.py"
-        ).read_text(encoding="utf-8")
-        fusion = source.split("def _get_ranked_context_fusion")[1]
-        assert "build_verdict" not in fusion
-        assert '"verdict"] =' not in fusion
-
-    def test_a_fusion_result_is_refused_even_if_it_gains_a_verdict(self):
-        """Belt and braces: each mode is reviewed, never inheriting by accident."""
-        fusion_shaped = {
-            "results": [{"id": "a.py::f#function", "file": "a.py", "line": 1}],
-            "_meta": {
-                "fusion": True,
-                "verdict": {
-                    "state": "ok",
-                    "scanned": {"symbols": 1, "files": 1},
-                    "channels": {"index": "fresh"},
-                    "note": "n",
-                },
-            },
-        }
-        assert (
-            _r183_producers.mint("search_symbols", {"query": "x"}, fusion_shaped, "local/x")
-            is None
-        )
+        The two reviews reached OPPOSITE conclusions, which is why modes get
+        reviewed rather than having a rule ported onto them: a semantic zero result
+        cannot prove absence, a fusion zero result can.
+        """
+        for tool in ("search_symbols", "get_ranked_context"):
+            producer = _r183_producers.PRODUCERS[tool]
+            declared = producer.completeness_for("fusion")
+            assert declared != producer.completeness, tool
+            assert "Weighted Reciprocal Rank" in declared, tool
+            assert "corpus fact" in declared, tool
 
     def test_an_errored_result_mints_nothing(self):
         assert (

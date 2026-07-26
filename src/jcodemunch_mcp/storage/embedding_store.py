@@ -176,6 +176,62 @@ class EmbeddingStore:
             logger.debug("EmbeddingStore.get_all failed", exc_info=True)
             return {}
 
+    def get_all_readonly(self) -> dict[str, list[float]]:
+        """Every stored embedding, WITHOUT touching the file (v1.108.185).
+
+        ``_connect`` runs ``PRAGMA journal_mode = WAL`` and a CREATE-TABLE script
+        on every connection, so even a pure read wrote to the database and bumped
+        its mtime. That is the same defect ``runtime/confidence.py`` was fixed for,
+        and on the fusion search path it had a sharper consequence than a wasted
+        cache entry:
+
+        ``_search_symbols_fusion`` probes for embeddings on every call, so the
+        first fusion search in a process moved the ``.db`` mtime mid-scan. That
+        made ``index_changed_since_load`` report ``channels.index: "rebuilding"``
+        and ``moved_during_scan`` fire, which downgraded the verdict to
+        ``degraded`` — so a genuine fusion absence could not reach ``absent`` at
+        all, for a reason that was entirely self-inflicted.
+
+        Returns an empty mapping when the file or the table is absent, which is
+        the honest answer to "are there embeddings for this repo" and is exactly
+        what the caller does with a failure anyway.
+
+        ⚠ ``immutable=1`` is load-bearing and ``mode=ro`` alone is NOT enough,
+        which cost an hour to establish: read-only in SQLite means "cannot modify
+        the DATABASE", not "cannot touch the filesystem". A plain ``mode=ro``
+        connection to a WAL-mode database still creates the ``-wal`` and ``-shm``
+        sidecars, and ``_db_mtime_ns`` takes the max over the ``.db`` and the
+        ``-wal`` — so the mtime moved anyway and the spurious `rebuilding` verdict
+        came back. Measured: sidecars went None -> present across one fusion search.
+
+        The trade-off ``immutable=1`` accepts, stated rather than hidden: vectors
+        sitting in an un-checkpointed WAL are not read, so the similarity channel
+        may be skipped when a watcher has just written embeddings. That can only
+        weaken the RANKING — the channel adds candidates and never removes any — so
+        it cannot manufacture a false absence, which is the opposite of what the
+        mtime bump did.
+        """
+        try:
+            conn = sqlite3.connect(
+                f"file:{self._db_path}?mode=ro&immutable=1",
+                uri=True,
+                isolation_level=None,
+            )
+        except Exception:
+            logger.debug("EmbeddingStore.get_all_readonly could not open %s",
+                         self._db_path, exc_info=True)
+            return {}
+        try:
+            rows = conn.execute(
+                "SELECT symbol_id, embedding FROM symbol_embeddings"
+            ).fetchall()
+            return {row[0]: _decode_embedding(row[1]) for row in rows}
+        except Exception:
+            logger.debug("EmbeddingStore.get_all_readonly failed", exc_info=True)
+            return {}
+        finally:
+            conn.close()
+
     def count(self) -> int:
         """Return the number of stored embeddings."""
         try:

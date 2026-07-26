@@ -454,6 +454,81 @@ def build_verdict(
     return {"verdict": verdict, "negative_evidence": negative_evidence}
 
 
+def retrieval_verdict_for_index(
+    index,
+    *,
+    result_count: int,
+    scanned_symbols: int = 0,
+    scanned_files: int = 0,
+    query_terms: Optional[Sequence[str]] = None,
+    best_score: Optional[float] = None,
+    threshold: Optional[float] = None,
+    matches_before_packing: Optional[int] = None,
+    scope: Optional[str] = None,
+    state_before: Optional[dict] = None,
+    semantic_channel: str = "off",
+    incomplete: Optional[dict] = None,
+    absence_unprovable: Optional[str] = None,
+) -> dict:
+    """Index-aware wrapper over :func:`build_verdict` (v1.108.185).
+
+    Every retrieval exit needs the same five index-derived signals — the freshness
+    probe, the rebuild check, the coverage contract, the movement comparison and
+    the scope-level working-tree state — and every exit was assembling them by
+    hand. That is how three exits ended up with no verdict at all: adding one
+    meant reproducing five call patterns correctly, so the cheap thing was to skip
+    it and hand-roll the answer instead.
+
+    Sibling of :func:`symbol_verdict_for_index` and :func:`file_verdict_for_index`,
+    which already do this for the file and symbol tools. Returns
+    ``{"verdict", "negative_evidence"}`` exactly as ``build_verdict`` does.
+
+    ``semantic_channel`` is stated by the caller rather than probed: an exit that
+    has already resolved a provider and run the channel knows more than a
+    re-detection would, and ``semantic_requested=True`` would make the verdict
+    re-probe and possibly contradict the exit that just used it.
+    """
+    from . import subject_state as _subject
+    from .freshness import FreshnessProbe
+
+    probe = FreshnessProbe(
+        source_root=getattr(index, "source_root", "") or None,
+        indexed_at=getattr(index, "indexed_at", ""),
+        index_sha=getattr(index, "git_head", None),
+        file_mtimes=getattr(index, "file_mtimes", None),
+    )
+    freshness = probe.repo_freshness
+    result = build_verdict(
+        result_count=result_count,
+        scanned_symbols=scanned_symbols,
+        scanned_files=scanned_files,
+        best_score=best_score,
+        threshold=threshold,
+        query_terms=query_terms,
+        source_files=getattr(index, "source_files", None),
+        semantic_requested=False,
+        index_stale=probe.repo_is_stale,
+        freshness=freshness,
+        index_changed=index_changed_since_load(index),
+        coverage=index_coverage_meta(index),
+        matches_before_packing=matches_before_packing,
+        incomplete=incomplete,
+        absence_unprovable=absence_unprovable,
+        moved_during_scan=_subject.moved_during_scan(
+            state_before, index, result_count=result_count
+        ),
+        # Measured for a zero-result scan only: probing the tree on every search
+        # would price a subprocess into the answers that do not need it.
+        working_tree=(
+            _subject.working_tree_state(index, scope=scope, freshness=freshness)
+            if result_count == 0 else None
+        ),
+    )
+    if semantic_channel != "off":
+        result["verdict"]["channels"]["semantic"] = semantic_channel
+    return result
+
+
 def suggest_paths(
     requested_path: Optional[str],
     source_files: Optional[Sequence[str]],

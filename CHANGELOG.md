@@ -2,6 +2,105 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.185] - 2026-07-26 - fusion gets a verdict, and fusion can prove absence
+
+### Fixed
+
+- **The last two exits without a verdict.** `_search_symbols_fusion` and
+  `_get_ranked_context_fusion` emitted no verdict and no negative evidence, so a
+  zero-result fusion search came back as a bare empty response: nothing false, and
+  nothing honest either. Both now build the same verdict as their tools' other
+  exits, so every gate applies — and both finally receive the pre-scan identity
+  capture (#377 item 6) that was taken on the shared path and never handed to the
+  branches that diverge.
+
+- ⚠ **`build_structural_channel` treated "restrict to nothing" as "no
+  restriction", and a no-match fusion query returned the whole repository.** The
+  guard was a falsy check (`if candidate_ids and ...`), while both callers pass
+  `set(lexical.ranked_ids) | set(identity.ranked_ids)`. A query matching nothing
+  produced an EMPTY set, which skipped the filter and let every symbol with
+  nonzero PageRank into the channel. Measured live: `fusion=True` on a nonsense
+  query returned ranked rows, and because fusion had no verdict nobody could see
+  that it was reporting centrality as relevance. It also made `absent` unreachable
+  on both fusion paths, so the absence contract could not have applied to them
+  however carefully it was wired. `None` and `set()` are now different things.
+
+- ⚠ **A read that wrote, and `mode=ro` was not enough to stop it.**
+  `EmbeddingStore._connect` runs `PRAGMA journal_mode = WAL` and a CREATE-TABLE
+  script on every connection, so the fusion exit's "does this repo have
+  embeddings" probe wrote to the database it was reading. That bumped
+  `_db_mtime_ns`, which made `index_changed_since_load` report
+  `channels.index: "rebuilding"` and `moved_during_scan` fire — so **the first
+  fusion search in any process downgraded to `degraded` and could not reach
+  `absent`**, entirely self-inflicted. Same defect `runtime/confidence.py` was
+  fixed for.
+
+  New `EmbeddingStore.get_all_readonly`. ⚠ **`mode=ro` alone does NOT fix this and
+  the first attempt shipped nothing:** read-only in SQLite means "cannot modify the
+  DATABASE", not "cannot touch the filesystem", and a plain read-only connection to
+  a WAL database still creates the `-wal` and `-shm` sidecars — measured going
+  None -> present across one fusion search — while `_db_mtime_ns` maxes over the
+  `.db` AND the `-wal`. `immutable=1` is the flag that guarantees no sidecar. The
+  trade-off it accepts is stated rather than hidden: vectors sitting in an
+  un-checkpointed WAL are not read, so the similarity channel may be skipped after
+  a watcher writes embeddings. That can only weaken the RANKING, because the
+  channel adds candidates and never removes any, which is the opposite of what the
+  mtime bump did.
+
+- Both fusion exits' no-candidate early returns now carry a verdict with
+  `incomplete: empty_scope` (#377 item 9). The filters selected nothing, so not a
+  byte was read, and a bare empty result reads exactly like a completed search that
+  found nothing.
+
+### Added
+
+- **`verdict.retrieval_verdict_for_index`**, the sibling of the existing
+  `symbol_verdict_for_index` and `file_verdict_for_index` wrappers. Three exits
+  shipped with no verdict at all, and the reason is worth naming: adding one meant
+  reproducing five call patterns by hand (freshness probe, rebuild check, coverage
+  contract, movement comparison, scope-level working-tree state), so the cheap
+  thing was to skip it and hand-roll the answer. The wrapper binds all five, and
+  is what the two fusion exits now call.
+
+- Both fusion exits emit `negative_evidence` and the warning string their tools'
+  other exits already emit, gated by every gate. Parity is the point: the same
+  question must not get a differently-honest answer depending on which ranking mode
+  ran.
+
+### Changed
+
+- **Fusion CAN prove absence, and the review reached the OPPOSITE conclusion to
+  1.108.184's.** That is why modes are reviewed rather than having a rule ported
+  onto them. `build_lexical_channel` and `build_identity_channel` each score every
+  eligible candidate with no cap, and `fuse` keeps every symbol appearing in ANY
+  channel, so an empty fused set means every candidate scored zero on both BM25 and
+  identity — the same corpus fact the lexical path's absence rests on. The
+  similarity channel can only ADD symbols, never remove one, so its absence weakens
+  the ranking and cannot manufacture a false absence. That asymmetry is exactly
+  what the semantic exit lacked, which is why it carries `absence_unprovable` and
+  fusion does not.
+
+- ⚠ **The receipt gate fired on its own author a second time.** Giving both fusion
+  exits a verdict made them mintable under `completeness` declarations written for
+  a different operation, and the pinning tests from 1.108.183 failed again. The
+  modes were reviewed and `completeness_by_mode["fusion"]` now declares what a
+  fusion receipt actually rests on, for both producers. `fusion` also joins both
+  producers' `mode_args`: a fused search and a lexical search of one string are
+  different operations and must not collide on one evidence id.
+
+### Notes
+
+- `get_ranked_context`'s fusion exit builds NO similarity channel at all, so its
+  `channels.semantic` is `off` — which is the truth, and differs from the
+  `semantic_used=True` its ranking-ledger call has always recorded. Left alone: that
+  argument feeds weight tuning, and moving a learned parameter is not this change.
+- New `tests/test_v1_108_185.py` (39), including the structural-backfill defect
+  pinned at unit and exit level, the sidecar regression pinned by filesystem
+  assertion, and a drift guard asserting every `search_mode` the code emits has a
+  declared completeness. **Every retrieval exit in the suite now carries a verdict**,
+  pinned structurally rather than by inspection. No tool-count change, no
+  `INDEX_VERSION` change, no schema change.
+
 ## [1.108.184] - 2026-07-26 - a ranking cannot prove absence
 
 ### Fixed

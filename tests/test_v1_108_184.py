@@ -481,9 +481,10 @@ class TestTheReceiptFollowsTheMode:
 
     def test_an_unreviewed_mode_falls_back_rather_than_inheriting_silently(self):
         """A mode absent from the table is a visible omission: it gets the default
-        and the test above pins what the default says."""
+        and the test above pins what the default says. `fusion` joined the table in
+        v1.108.185 when that exit gained a verdict."""
         producer = _r184_producers.PRODUCERS["search_symbols"]
-        assert set(producer.completeness_by_mode) == {"hybrid", "semantic_only"}
+        assert set(producer.completeness_by_mode) == {"hybrid", "semantic_only", "fusion"}
 
 
 class TestThePublishedSchema:
@@ -521,17 +522,19 @@ class TestThePublishedSchema:
 class TestWhatWasNotFixed:
     """Stated as tests so the boundary is checkable rather than remembered."""
 
-    def test_the_fusion_exits_still_carry_no_verdict(self):
-        """Deliberate: fusion emits no absence PROSE either, so it asserts nothing
-        false. Giving it a verdict means deciding whether a WRR ranking that
-        includes a lexical channel can prove absence, which is its own review."""
+    def test_the_semantic_exit_is_the_only_one_that_cannot_prove_absence(self):
+        """v1.108.185 fixed the fusion exits, and the review reached the OPPOSITE
+        conclusion: fusion's lexical and identity channels are complete passes, so
+        an empty fused set is a corpus fact and `absent` is reachable there. Only
+        a ranking that stands ALONE cannot prove absence."""
         source = (
             _R184_ROOT / "src" / "jcodemunch_mcp" / "tools" / "search_symbols.py"
         ).read_text(encoding="utf-8")
+        semantic = source.split("def _search_symbols_semantic")[1].split(
+            "def _search_symbols_fusion"
+        )[0]
         fusion = source.split("def _search_symbols_fusion")[1]
-        assert "build_verdict" not in fusion
-
-    def test_a_fusion_response_asserts_no_absence(self, _r184_indexed):
-        result = _r184_search(_r184_indexed, query="zzz_nothing_like_this", fusion=True)
-        assert "⚠ warning" not in result
-        assert result.get("negative_evidence") is None
+        # The keyword ARGUMENT, not the word: the fusion exit carries a comment
+        # explaining why it does not pass one, and that comment should stay.
+        assert "absence_unprovable=(" in semantic
+        assert "absence_unprovable=" not in fusion

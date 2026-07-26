@@ -20,19 +20,25 @@ structural rather than remembered:
 
 An exit that asserts absence without building a verdict therefore cannot mint —
 not because it is listed as an exception, but because it never produced the
-thing a receipt is derived from. Both fusion exits are live instances of that
-class: they emit no verdict, so they cannot mint, and ``test_v1_108_183.py``
-pins it.
+thing a receipt is derived from.
 
-The gate has since done its job once, which is worth recording. In v1.108.183
-``search_symbols``'s semantic exit could not mint because it emitted the legacy
-``negative_evidence`` block and no verdict at all. v1.108.184 gave it a real
-verdict — and that made it mintable under a ``completeness`` declaration reading
-"lexical BM25 over the inverted index", which is false for an embedding ranking.
-The pinning test failed, the mode got reviewed, and it now declares its own
-completeness through ``completeness_by_mode``. A capability that reads enforced
-and is not is the failure this whole phase exists to prevent, so the gate
-catching its own author is the design working, not a nuisance.
+**The gate has now fired twice on its own author, which is the record worth
+keeping.** In v1.108.183 three exits could not mint because they emitted no
+verdict: ``search_symbols``' semantic and fusion paths, and
+``get_ranked_context``'s fusion path. v1.108.184 gave the semantic one a verdict
+and v1.108.185 gave both fusion ones a verdict — and each time that made the exit
+mintable under a ``completeness`` declaration written for a different operation
+("lexical BM25 over the inverted index", false for an embedding ranking and
+imprecise for a four-channel fusion). Each time the pinning test failed, the mode
+got reviewed, and it now declares its own completeness through
+``completeness_by_mode``. A capability that reads enforced and is not is the
+failure this whole phase exists to prevent, so the gate catching its own author is
+the design working, not a nuisance.
+
+The two reviews reached OPPOSITE conclusions, which is the point of reviewing
+modes rather than porting a rule: a semantic zero result cannot prove absence
+(it rests on embedding geometry), while a fusion zero result can (its lexical and
+identity channels are complete passes, so an empty fused set is a corpus fact).
 
 The canonical projector is also the structural fix for the class of bug the
 hand-kept ``handoff._SCOPE_ARGS`` tuple keeps having (review item 12): a new
@@ -153,15 +159,25 @@ class Producer:
         return self.completeness
 
 
-def _not_fusion(result: dict) -> bool:
-    """Reject the fusion exits explicitly as well as structurally.
-
-    They already cannot mint (no verdict), but review item 20 asks for each mode
-    to be reviewed rather than to inherit capability by accident, and a future
-    fusion exit that gains a verdict must be re-reviewed before it mints instead
-    of silently qualifying.
-    """
-    return not (result.get("_meta") or {}).get("fusion")
+#: What a fusion exit's zero result rests on, reviewed for v1.108.185 and shared
+#: by both fusion producers because both build their channels the same way.
+#:
+#: Fusion CAN prove absence, and the reason is structural rather than a judgement
+#: call. ``build_lexical_channel`` and ``build_identity_channel`` each score EVERY
+#: eligible candidate with no cap, and ``fuse`` keeps every symbol that appears in
+#: ANY channel — so an empty fused set means every candidate scored zero on both
+#: BM25 and identity, which is the same corpus fact the lexical path's absence
+#: rests on. The similarity channel can only ADD symbols, never remove one, so its
+#: absence weakens the RANKING and cannot manufacture a false absence. That
+#: asymmetry is precisely what the semantic exit lacked in v1.108.184, which is why
+#: this mode gets no ``absence_unprovable`` and that one does.
+_FUSION_COMPLETENESS = (
+    "Weighted Reciprocal Rank over lexical BM25, identity, structural PageRank "
+    "and (when embeddings exist) similarity; the lexical and identity channels "
+    "each score every eligible candidate with no cap, so an empty fused set is "
+    "the same corpus fact a lexical absence rests on. Candidate-cap and packing "
+    "drops are disclosed as verdict.omitted"
+)
 
 
 PRODUCERS: dict[str, Producer] = {
@@ -216,6 +232,8 @@ PRODUCERS: dict[str, Producer] = {
             "semantic",
             "semantic_only",
             "semantic_weight",
+            # v1.108.185: a fused search is a different operation again.
+            "fusion",
         ),
         completeness=(
             "lexical BM25 over the inverted index, with the full symbol set as "
@@ -238,6 +256,8 @@ PRODUCERS: dict[str, Producer] = {
                 "lexical channel switched off; ranked by similarity, so this "
                 "receipt speaks for what was returned and never for what was not"
             ),
+            # Reviewed for v1.108.185, when both fusion exits gained a verdict.
+            "fusion": _FUSION_COMPLETENESS,
         },
         freshness="FreshnessProbe.repo_freshness, four-state (v1.108.180)",
         coverage="index_coverage_meta; complete is tri-state and null never reads as true",
@@ -246,25 +266,28 @@ PRODUCERS: dict[str, Producer] = {
             "which case the served bytes are hashed"
         ),
         rows_key="results",
-        accepts=_not_fusion,
     ),
     "get_ranked_context": Producer(
         tool="get_ranked_context",
         verdict_shape=SHAPE_RETRIEVAL,
         proof_kinds=frozenset({"symbol_definition", "symbol_lookup_absence"}),
         scope_args=("scope", "include_kinds"),
-        mode_args=("strategy", "token_budget", "compress"),
+        mode_args=("strategy", "token_budget", "compress", "fusion"),
         completeness=(
             "BM25 + PageRank over the candidate basis, with the candidate count "
             "disclosed as verdict.omitted; BOTH exits build the verdict since "
             "v1.108.179"
         ),
+        completeness_by_mode={
+            # Reviewed for v1.108.185. ⚠ This tool's fusion exit builds NO
+            # similarity channel at all — lexical, identity and structural only.
+            "fusion": _FUSION_COMPLETENESS,
+        },
         freshness="FreshnessProbe.repo_freshness, four-state (v1.108.180)",
         coverage="index_coverage_meta; complete is tri-state and null never reads as true",
         integrity="served body bytes are hashed; a compressed or pruned body is named as a slice",
         rows_key="context_items",
         id_field="symbol_id",
-        accepts=_not_fusion,
     ),
     "search_text": Producer(
         tool="search_text",
