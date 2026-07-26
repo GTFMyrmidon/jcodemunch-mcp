@@ -192,6 +192,8 @@ def build_verdict(
     index_changed: bool = False,
     timed_out: bool = False,
     coverage: Optional[dict] = None,
+    matches_before_packing: Optional[int] = None,
+    incomplete: Optional[dict] = None,
 ) -> dict:
     """Compute the unified verdict plus the legacy negative_evidence dict.
 
@@ -239,6 +241,21 @@ def build_verdict(
         # applies and the absence-refusal rule falls out of the existing "only
         # `absent` proves absence" check with nothing new to keep in sync.
         state = STATE_DEGRADED
+    elif result_count == 0 and incomplete:
+        # #377 hardening items 7 and 9. Inputs the scan was supposed to read but
+        # could not, or an eligible set that was empty before a byte was read:
+        # either way nothing here proves the target is not in the corpus. Same
+        # degraded gate, same single refusal rule.
+        state = STATE_DEGRADED
+    elif result_count == 0 and (matches_before_packing or 0) > 0:
+        # #377 hardening item 1. `result_count` is what the RESPONSE carried,
+        # and the response is packed after ranking: a token budget or a result
+        # cap can empty it while matches really were found. An empty response
+        # is not an empty search, so the scan cannot prove absence — same
+        # degraded gate as the stale/truncated/rebuilding/partial cases, so the
+        # refusal falls out of the existing "only `absent` proves absence"
+        # check with no second rule to keep in sync.
+        state = STATE_DEGRADED
     elif result_count == 0:
         state = STATE_ABSENT
     elif below_threshold:
@@ -281,11 +298,39 @@ def build_verdict(
     }
     if did_you_mean:
         verdict["did_you_mean"] = did_you_mean
+    # Disclosed on EVERY state, not just the refused one: a caller reading a
+    # short result list deserves to know matches were dropped to fit the
+    # response, whether or not an absence claim is involved.
+    if incomplete:
+        verdict["incomplete"] = dict(incomplete)
+        if state == STATE_DEGRADED and result_count == 0 and incomplete.get("note"):
+            verdict["note"] = incomplete["note"]
+    if matches_before_packing is not None and matches_before_packing > result_count:
+        verdict["omitted"] = {
+            "matches_found": int(matches_before_packing),
+            "returned": int(result_count),
+            "by_response_budget": int(matches_before_packing) - int(result_count),
+        }
+        if state == STATE_DEGRADED and result_count == 0:
+            verdict["note"] = (
+                f"{matches_before_packing} match(es) were found, but none fit the "
+                "response budget, so the response is empty and the search is not. "
+                "Absence is NOT proven; re-run with a larger token_budget or "
+                "max_results."
+            )
     _attach_coverage(verdict, coverage)
 
     # --- legacy negative_evidence: unchanged trigger + shape ---
     negative_evidence = None
-    if result_count == 0 or below_threshold:
+    _packed_empty = result_count == 0 and (
+        (matches_before_packing or 0) > 0 or bool(incomplete)
+    )
+    if _packed_empty:
+        # The legacy block would say "no_implementation_found", and
+        # search_symbols renders that as "Do not claim this feature exists" —
+        # a false statement when matches were found and dropped by the packer.
+        pass
+    elif result_count == 0 or below_threshold:
         negative_evidence = {
             "verdict": (
                 "no_implementation_found" if result_count == 0 else "low_confidence_matches"

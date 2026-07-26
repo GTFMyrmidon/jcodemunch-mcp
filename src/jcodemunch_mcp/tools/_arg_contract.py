@@ -33,7 +33,12 @@ from typing import Optional, Sequence
 # Keys the MCP layer itself may attach to an arguments object. `_meta` is
 # reserved by the protocol (progress tokens ride there), so it is never the
 # caller getting a parameter name wrong.
-PROTOCOL_KEYS = frozenset({"_meta"})
+#
+# `suppress_meta` and `_current_model` are read by the DISPATCHER rather than by
+# any tool, so no per-tool schema declares them. They are honored, not dropped —
+# calling them caller mistakes downgraded the verdict and silently cost a
+# well-formed call its absence evidence (found while shipping #377 item 10).
+PROTOCOL_KEYS = frozenset({"_meta", "suppress_meta", "_current_model"})
 
 
 def unrecognized_keys(

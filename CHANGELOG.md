@@ -2,6 +2,78 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.177] - 2026-07-26 - an omitted match is not an absent match
+
+### Fixed
+
+- **The token-budget packer could mint an absence proof over a corpus that
+  contained the target.** Raised as item 1 of the
+  [#377](https://github.com/jgravelle/jcodemunch-mcp/issues/377) post-ship
+  review by @mightydanp, and confirmed in the shipped code: `search_symbols`
+  saved `heap_count` before packing and then passed the POST-packing count into
+  `build_verdict`. Matching symbols that did not fit the remaining token budget
+  left `result_count == 0`, the verdict reached `absent`, and a citable
+  `evidence_ref` was issued. An empty response is not an empty search.
+- `build_verdict` gains `matches_before_packing`. When the response is empty and
+  matches were found, the state is `degraded` and the note says how many were
+  dropped. Disclosed on every state as `verdict.omitted` — a caller reading a
+  short result list deserves to know matches were omitted whether or not an
+  absence claim is involved. `search_symbols` reports the pre-packing heap;
+  `get_ranked_context` reports the candidate set (item 8: candidates that could
+  not be packed are not a no-match; the zero-candidate case returns earlier).
+- **`search_text` counted only the files it managed to open** (item 7). A file
+  whose safe content path could not be produced, or that raised `OSError`, was
+  skipped by a bare `continue` — so 3 unreadable files out of 10 read as a
+  complete sweep of 7. Now counted and reported as
+  `verdict.incomplete.reason = "unreadable_inputs"`.
+- **An empty scope proved absence** (item 9). A `file_pattern` matching zero
+  indexed files searched nothing and returned `absent`. Now
+  `verdict.incomplete.reason = "empty_scope"`.
+- **`search_text` never passed index freshness into its verdict**, so the stale
+  gate its sibling tools enforce could not fire on a `search_text` absence. It
+  now builds the same `FreshnessProbe` and reports `channels.index`.
+- **A display preference decided whether a scan was citable** (item 10).
+  `meta_fields` filtering ran BEFORE the absence-evidence block, so
+  `meta_fields: []` (the shipped default) deleted the verdict and the evidence
+  was never recorded, while the narrower `meta_fields: ["verdict"]` deleted
+  `index_truncated` and handed `note_absence` a truncated scan as untruncated —
+  minting exactly the ref the truncation gate exists to refuse. The argument
+  contract and the absence block now run against the complete internal result,
+  and what filtering removes is re-attached afterwards as
+  `_meta.absence_evidence` (the carrier shape jdocmunch and jdatamunch already
+  use). `absence_evidence` joins `UNIVERSAL_META_JSON` so it survives compact
+  encoding (item 11).
+- **`suppress_meta` was treated as a caller mistake.** It is read by the
+  dispatcher, so no per-tool schema declares it; v1.108.175 therefore counted it
+  as an ignored argument, downgraded the verdict, and cost a well-formed call its
+  absence evidence. Added to `PROTOCOL_KEYS` with `_current_model`. Found while
+  wiring item 10, not reported.
+
+### Changed
+
+- Evidence identity now includes the effective search operation (item 12):
+  `is_regex`, `decorator`, `semantic`, `semantic_only`, `semantic_weight`,
+  `fuzzy`, `fuzzy_threshold`, `fusion`, `sort_by`, `strategy` join `_SCOPE_ARGS`.
+  A literal substring search and a regex search of the same string are different
+  operations and must not collide on one absence id.
+
+### Notes
+
+- **Same shape as every gate before it: disclose on every state, refuse only the
+  absence CLAIM, and express the refusal as a downgrade** so
+  `handoff.absence_refusal` does the refusing and there is no second rule to keep
+  in sync. The refusals name their cause rather than falling through to the
+  generic "the verdict was degraded".
+- The legacy `negative_evidence` block is suppressed for a packed-empty or
+  incomplete scan. `search_symbols` renders it as "Do not claim this feature
+  exists", which is false when the matches were found and dropped by the packer.
+- **Zero blast radius for a producer that reports nothing:** `build_verdict`
+  without `matches_before_packing` is byte-identical to before, pinned by a test.
+- `omitted` and `incomplete` published in `schemas/retrieval-verdict.schema.json`.
+- New `tests/test_v1_108_177.py` (26), non-vacuity proven on the live path: the
+  same packed-empty scan reported the old way is `absent` and mints a ref.
+- No tool-count or INDEX_VERSION change.
+
 ## [1.108.176] - 2026-07-26 - a partial index stops reporting itself fresh
 
 ### Fixed

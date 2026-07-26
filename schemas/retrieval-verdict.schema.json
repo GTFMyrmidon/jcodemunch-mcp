@@ -91,6 +91,31 @@
       "minimum": 1,
       "description": "Version pin for the scoring heuristics behind state/best_score. Calibration claims (benchmarks/calibration/planted_queries.json) are pinned to this version; a scorer change without a re-measured artifact fails CI."
     },
+    "omitted": {
+      "type": "object",
+      "description": "Matches that existed before the response was packed but did not fit it. Disclosed on every state; when returned is 0 the state is 'degraded', because an empty response is not an empty search.",
+      "properties": {
+        "matches_found": {"type": "integer", "minimum": 0},
+        "returned": {"type": "integer", "minimum": 0},
+        "by_response_budget": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "incomplete": {
+      "type": "object",
+      "description": "The scan did not cover its own eligible inputs. Disclosed on every state; when the result is empty the state is 'degraded', because a scan that did not run over its inputs cannot prove absence.",
+      "properties": {
+        "reason": {
+          "enum": ["empty_scope", "unreadable_inputs"],
+          "description": "empty_scope = the scope selected zero eligible inputs, so nothing was searched. unreadable_inputs = eligible inputs the scan could not open."
+        },
+        "files_eligible": {"type": "integer", "minimum": 0},
+        "files_searched": {"type": "integer", "minimum": 0},
+        "files_unreadable": {"type": "integer", "minimum": 0},
+        "note": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
     "coverage": {
       "type": "object",
       "description": "Coverage contract backing an absence claim (attached on absent/degraded states only). Discloses what the corpus EXCLUDED at index time so a scan count cannot lie by omission. Absent block = coverage unknown (pre-upgrade index), never 'nothing was excluded'.",

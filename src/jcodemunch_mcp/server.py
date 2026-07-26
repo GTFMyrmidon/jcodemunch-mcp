@@ -6291,6 +6291,63 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent] | CallToolR
         except Exception:
             logger.debug("Agent selector scoring failed", exc_info=True)
 
+        # Argument contract (v1.108.175): every tool reads its arguments
+        # key-by-key, so a misspelled parameter is dropped in silence and the
+        # call that runs is not the call that was asked for. Disclose the
+        # ignored keys on every state, and downgrade `absent` to `degraded` so
+        # the absence-refusal rule below does the refusing — MUST run before the
+        # absence-evidence block for that to hold.
+        #
+        # #377 hardening item 10 moved this ahead of presentation filtering, so
+        # anything it attaches is re-attached below once filtering has run.
+        _ignored: list[str] = []
+        try:
+            _ignored = _arg_contract.unrecognized_keys(
+                arguments, _declared_arg_keys(name)
+            )
+            if _ignored:
+                _arg_contract.apply_argument_contract(result, _ignored)
+                logger.debug("Ignored unknown arguments for %s: %s", name, _ignored)
+        except Exception:
+            logger.debug("Argument-contract check failed", exc_info=True)
+
+        # Absence evidence (#377 phase 3): record every absence-shaped verdict
+        # so a handoff claim can cite the SCAN when nothing was served, and
+        # hand the caller the citable ref in-band. A ref is only surfaced when
+        # the scan can actually prove absence; otherwise the verdict says so,
+        # rather than offering a token that would be refused at finalization.
+        #
+        # #377 hardening item 10: this MUST run before presentation filtering.
+        # `meta_fields` is a display preference, and a display preference must
+        # never decide whether a scan counts as complete — filtering first meant
+        # `meta_fields: []` silently deleted the evidence, and the narrower
+        # `meta_fields: ["verdict"]` deleted `index_truncated` while keeping the
+        # verdict, so a TRUNCATED scan reached note_absence as untruncated and
+        # minted a citable ref the truncation gate exists to refuse.
+        _absence_carrier: dict | None = None
+        try:
+            if isinstance(result, dict):
+                _v = (result.get("_meta") or {}).get("verdict")
+                if isinstance(_v, dict):
+                    from . import handoff as _handoff_abs
+                    _ref, _why = _handoff_abs.note_absence(
+                        name,
+                        repo_arg,
+                        arguments.get("query"),
+                        _v,
+                        arguments=arguments,
+                        truncated=bool((result.get("_meta") or {}).get("index_truncated")),
+                    )
+                    if _ref:
+                        _v["evidence_ref"] = _ref
+                        _absence_carrier = {"ref": _ref, "citable": True}
+                    elif _why and _v.get("state") == "absent":
+                        _v["absence_citable"] = False
+                        _v["absence_blocked_by"] = _why
+                        _absence_carrier = {"citable": False, "blocked_by": _why}
+        except Exception:
+            logger.debug("Absence-evidence record failed", exc_info=True)
+
         if isinstance(result, dict):
             meta_fields = config_module.get("meta_fields")
             if meta_fields == [] or arguments.get("suppress_meta"):
@@ -6320,6 +6377,20 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent] | CallToolR
                             _item_filtered["powered_by"] = "jcodemunch-mcp by jgravelle · https://github.com/jgravelle/jcodemunch-mcp"
                         if _item_filtered:
                             _item["_meta"] = _item_filtered
+
+            # #377 hardening item 10: re-attach the contract keys when they did
+            # not survive filtering. Both blocks now run against the COMPLETE
+            # internal result — the point of the reorder — so what a display
+            # preference removes has to be put back deliberately rather than
+            # avoided by deciding safety after the fields were deleted. Same
+            # shape jdocmunch and jdatamunch already use, because their default
+            # config strips `_meta` outright. jcodemunch's default is
+            # `meta_fields: []`, so this is the normal path, not the edge case.
+            if _ignored and "ignored_arguments" not in (result.get("_meta") or {}):
+                result.setdefault("_meta", {})["ignored_arguments"] = _ignored
+            if _absence_carrier and "verdict" not in (result.get("_meta") or {}):
+                result.setdefault("_meta", {})["absence_evidence"] = _absence_carrier
+
         # Per-call pulse for downstream consumers (dashboards, monitors)
         _saved = result.get("_meta", {}).get("tokens_saved", 0) if isinstance(result, dict) else 0
         _write_pulse(name, tokens_saved=_saved, base_path=storage_path)
@@ -6375,48 +6446,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent] | CallToolR
                 _requested_format = "json"
         except Exception:
             logger.debug("Steering attach failed", exc_info=True)
-
-        # Argument contract (v1.108.175): every tool reads its arguments
-        # key-by-key, so a misspelled parameter is dropped in silence and the
-        # call that runs is not the call that was asked for. Disclose the
-        # ignored keys on every state, and downgrade `absent` to `degraded` so
-        # the absence-refusal rule below does the refusing — MUST run before the
-        # absence-evidence block for that to hold.
-        try:
-            _ignored = _arg_contract.unrecognized_keys(
-                arguments, _declared_arg_keys(name)
-            )
-            if _ignored:
-                _arg_contract.apply_argument_contract(result, _ignored)
-                logger.debug("Ignored unknown arguments for %s: %s", name, _ignored)
-        except Exception:
-            logger.debug("Argument-contract check failed", exc_info=True)
-
-        # Absence evidence (#377 phase 3): record every absence-shaped verdict
-        # so a handoff claim can cite the SCAN when nothing was served, and
-        # hand the caller the citable ref in-band. A ref is only surfaced when
-        # the scan can actually prove absence; otherwise the verdict says so,
-        # rather than offering a token that would be refused at finalization.
-        try:
-            if isinstance(result, dict):
-                _v = (result.get("_meta") or {}).get("verdict")
-                if isinstance(_v, dict):
-                    from . import handoff as _handoff_abs
-                    _ref, _why = _handoff_abs.note_absence(
-                        name,
-                        repo_arg,
-                        arguments.get("query"),
-                        _v,
-                        arguments=arguments,
-                        truncated=bool((result.get("_meta") or {}).get("index_truncated")),
-                    )
-                    if _ref:
-                        _v["evidence_ref"] = _ref
-                    elif _why and _v.get("state") == "absent":
-                        _v["absence_citable"] = False
-                        _v["absence_blocked_by"] = _why
-        except Exception:
-            logger.debug("Absence-evidence record failed", exc_info=True)
 
         # Response-level secret redaction — scrub leaked credentials
         # before they reach the LLM context window. Skipped for tools that

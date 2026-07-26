@@ -118,6 +118,8 @@ def search_text(
     results = []
     result_count = 0
     files_searched = 0
+    files_eligible = len(files)
+    files_unreadable = 0
     truncated = False
     timed_out = False
     raw_bytes = 0
@@ -131,13 +133,18 @@ def search_text(
         if _budget_deadline is not None and time.perf_counter() > _budget_deadline:
             timed_out = True
             break
+        # #377 hardening item 7: an eligible file the scan could not read is a
+        # gap in the scan, not a file that contained no match. Counted so a
+        # zero-result response cannot present a partial sweep as exhaustive.
         full_path = store._safe_content_path(content_dir, file_path)
         if not full_path:
+            files_unreadable += 1
             continue
         try:
             with open(full_path, "r", encoding="utf-8", errors="replace") as f:
                 lines = f.readlines()
         except OSError:
+            files_unreadable += 1
             continue
 
         files_searched += 1
@@ -193,6 +200,39 @@ def search_text(
     from ..retrieval.verdict import index_changed_since_load as _index_changed_since_load
     from ..retrieval.verdict import index_coverage_meta as _index_coverage_meta
     from ..retrieval.verdict import index_truncation_meta as _index_truncation_meta
+    # #377 hardening items 7 and 9: nothing here may present a scan that never
+    # ran, or ran over part of its inputs, as proof of absence.
+    _incomplete = None
+    if files_eligible == 0:
+        _incomplete = {
+            "reason": "empty_scope",
+            "files_eligible": 0,
+            "note": (
+                "No indexed file matched this scope, so nothing was searched. "
+                "An empty eligible set proves nothing about the corpus."
+            ),
+        }
+    elif files_unreadable:
+        _incomplete = {
+            "reason": "unreadable_inputs",
+            "files_eligible": files_eligible,
+            "files_searched": files_searched,
+            "files_unreadable": files_unreadable,
+            "note": (
+                f"{files_unreadable} of {files_eligible} eligible file(s) could not "
+                "be read, so this scan was partial and absence is NOT proven."
+            ),
+        }
+    # #377 hardening: search_text never passed freshness into the verdict, so a
+    # stale-index scan could reach `absent` and mint a citable ref without the
+    # stale gate its sibling tools enforce.
+    from ..retrieval.freshness import FreshnessProbe as _FreshnessProbe
+    _probe = _FreshnessProbe(
+        source_root=getattr(index, "source_root", "") or None,
+        indexed_at=getattr(index, "indexed_at", ""),
+        index_sha=getattr(index, "git_head", None),
+        file_mtimes=getattr(index, "file_mtimes", None),
+    )
     _vres = _build_verdict(
         result_count=result_count,
         scanned_files=files_searched,
@@ -201,6 +241,8 @@ def search_text(
         timed_out=timed_out,
         coverage=_index_coverage_meta(index),
         index_changed=_index_changed_since_load(index),
+        index_stale=_probe.repo_is_stale,
+        incomplete=_incomplete,
     )
     _meta = {
         "timing_ms": round(elapsed, 1),

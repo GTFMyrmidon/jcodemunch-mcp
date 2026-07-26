@@ -552,6 +552,10 @@ def get_ranked_context(
     from ..retrieval.verdict import index_coverage_meta as _index_coverage_meta
     _vres = _build_verdict(
         result_count=len(context_items),
+        # #377 hardening item 8: a candidate set that could not be packed into
+        # the context budget is not a no-match. The zero-candidate case returns
+        # earlier, so anything reaching here really did match something.
+        matches_before_packing=items_considered,
         scanned_symbols=items_considered,
         scanned_files=len(set(s.get("file", "") for _, _, _, s in scored)),
         best_score=max(max_bm25, _EXACT_SEED_VERDICT_SCORE) if exact_ids else max_bm25,

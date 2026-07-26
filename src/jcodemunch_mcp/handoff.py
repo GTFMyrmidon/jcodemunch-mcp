@@ -83,6 +83,20 @@ _SCOPE_ARGS = (
     "path_prefix",
     "include_kinds",
     "exclude_tests",
+    # #377 hardening item 12: the ref names the scan, so anything that changes
+    # WHICH operation ran belongs in its identity. A literal substring search
+    # and a regex search of the same string are different operations, and two
+    # different scans must not collide on one id.
+    "is_regex",
+    "decorator",
+    "semantic",
+    "semantic_only",
+    "semantic_weight",
+    "fuzzy",
+    "fuzzy_threshold",
+    "fusion",
+    "sort_by",
+    "strategy",
 )
 
 
@@ -122,6 +136,27 @@ def absence_refusal(record: Optional[dict]) -> Optional[str]:
         return (
             "the index did not cover the whole tree at scan time, so the target "
             "may sit in a file that never entered the corpus"
+        )
+    _omitted = record.get("omitted") or {}
+    if _omitted.get("returned") == 0 and (_omitted.get("matches_found") or 0) > 0:
+        # Named before the generic state rule for the same reason as the
+        # rebuilding and partial gates: the downgrade already refuses this scan,
+        # but "the verdict was degraded" does not tell the reader that matches
+        # were found and dropped by the packer.
+        return (
+            f"{_omitted['matches_found']} match(es) were found and omitted to fit the "
+            "response budget, so the empty response describes packing, not absence"
+        )
+    _incomplete = record.get("incomplete") or {}
+    if _incomplete.get("reason") == "empty_scope":
+        return (
+            "the scope selected no eligible input, so nothing was searched and "
+            "nothing can be proven absent from it"
+        )
+    if _incomplete.get("reason") == "unreadable_inputs":
+        return (
+            f"{_incomplete.get('files_unreadable')} eligible input(s) could not be "
+            "read, so the target may sit in a file this scan never opened"
         )
     if state != "absent":
         return (
@@ -172,6 +207,8 @@ def note_absence(tool: str, repo, query, verdict, arguments=None, truncated=Fals
         "scanned": verdict.get("scanned") or {},
         "channels": verdict.get("channels") or {},
         "coverage": verdict.get("coverage"),
+        "omitted": verdict.get("omitted"),
+        "incomplete": verdict.get("incomplete"),
         "truncated": bool(truncated),
         "scorer": verdict.get("scorer"),
     }

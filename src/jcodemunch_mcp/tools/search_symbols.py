@@ -1079,6 +1079,7 @@ def search_symbols(
     from ..retrieval.verdict import index_coverage_meta as _index_coverage_meta
     _vres = _build_verdict(
         result_count=len(scored_results),
+        matches_before_packing=heap_count,
         scanned_symbols=candidates_scored if candidates_scored > 0 else len(index.symbols),
         scanned_files=len(seen_files) if seen_files else len(index.source_files),
         best_score=max_bm25_score,
