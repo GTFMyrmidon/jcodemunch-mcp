@@ -94,9 +94,12 @@ def test_fast_path_providers_discovers_once_on_cache_miss(tmp_path, monkeypatch)
     calls = {"n": 0}
     real = _if.discover_providers
 
-    def counting(folder):
+    # **kwargs so this stays a call COUNTER, not a signature pin: v1.108.182
+    # added budget_seconds/skipped, and a stub that rejects them would fail
+    # here for a reason that has nothing to do with caching.
+    def counting(folder, **kwargs):
         calls["n"] += 1
-        return real(folder)
+        return real(folder, **kwargs)
 
     monkeypatch.setattr(_if, "discover_providers", counting)
     p1 = _if._fast_path_providers(tmp_path, True)

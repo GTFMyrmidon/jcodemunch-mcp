@@ -7,11 +7,51 @@ route providers: Flask, FastAPI, Express, Go routers, Django, Rails, etc.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 from .base import FileContext
+
+# Directories a source walk must never descend into. Dependency trees dwarf
+# first-party source — a mid-sized node_modules is six figures of files — so the
+# cost of touching them at all swamps the scan they precede.
+DEFAULT_SKIP_DIRS = frozenset({
+    "node_modules", "dist", "build", "vendor", "venv", ".venv", "target",
+    ".next", ".nuxt", ".git", ".svn", ".hg", "__pycache__", ".tox",
+    ".mypy_cache", ".pytest_cache", ".gradle", "bower_components",
+})
+
+
+def iter_source_files(
+    root: Path,
+    suffixes: frozenset[str] | set[str] | tuple[str, ...],
+    skip_dirs: frozenset[str] | set[str] = DEFAULT_SKIP_DIRS,
+) -> Iterator[tuple[Path, str]]:
+    """Yield ``(absolute_path, repo_relative_posix_path)`` for matching files.
+
+    Prunes ``skip_dirs`` AT THE WALK, which is the whole point: ``Path.glob``
+    and ``rglob`` descend into every directory and can only be filtered after
+    the fact, so a post-hoc ``if "node_modules" in path: continue`` still pays
+    to enumerate the entire dependency tree — measured at ~3.3s per 9,600
+    skipped files, repeated once per glob pattern. os.walk lets us drop the
+    subtree before it is entered.
+
+    Suffix matching is case-insensitive and each file is yielded once, however
+    many patterns would have matched it.
+    """
+    wanted = {s.lower() for s in suffixes}
+    root_str = str(root)
+    for dirpath, dirnames, filenames in os.walk(root_str):
+        dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+        for filename in filenames:
+            if os.path.splitext(filename)[1].lower() not in wanted:
+                continue
+            abs_path = Path(dirpath) / filename
+            rel = os.path.relpath(str(abs_path), root_str).replace(os.sep, "/")
+            yield abs_path, rel
 
 # Try to use tomllib for proper TOML parsing (Python 3.11+)
 if sys.version_info >= (3, 11):

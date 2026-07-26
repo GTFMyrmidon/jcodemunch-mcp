@@ -11,10 +11,12 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from ._route_utils import read_package_json, make_route_file_context
+from ._route_utils import iter_source_files, read_package_json, make_route_file_context
 from .base import ContextProvider, FileContext, register_provider
 
 logger = logging.getLogger(__name__)
+
+_JS_SUFFIXES = frozenset({".js", ".ts", ".mjs", ".jsx", ".tsx"})
 
 
 # ---------------------------------------------------------------------------
@@ -96,46 +98,55 @@ class ExpressProvider(ContextProvider):
         """Scan JS/TS files for routes and middleware."""
         self._folder = folder
         framework = self._framework or "express"
-        skip_dirs = ("node_modules/", "dist/", ".next/", ".nuxt/", "build/", "vendor/")
 
         route_count = 0
         file_count = 0
+        scanned = 0
+        abandoned = False
 
-        for pattern in ("**/*.js", "**/*.ts", "**/*.mjs", "**/*.jsx", "**/*.tsx"):
-            for file_path in folder.glob(pattern):
-                rel_path = str(file_path.relative_to(folder)).replace("\\", "/")
-                if any(skip in rel_path for skip in skip_dirs):
-                    continue
+        # One pruned walk, not five recursive globs. The previous form ran
+        # ``folder.glob("**/*.js")`` (and four siblings) and dropped
+        # node_modules by substring AFTER the walk had already enumerated it —
+        # five full descents through the dependency tree to index none of it.
+        for file_path, rel_path in iter_source_files(folder, _JS_SUFFIXES):
+            if self.budget_expired():
+                abandoned = True
+                break
+            try:
+                content = file_path.read_text("utf-8", errors="replace")
+            except Exception:
+                continue
+            scanned += 1
 
-                try:
-                    content = file_path.read_text("utf-8", errors="replace")
-                except Exception:
-                    continue
+            routes = self._extract_routes(content)
+            middleware = self._extract_middleware(content)
+            mounts = self._extract_mounts(content, rel_path)
 
-                routes = self._extract_routes(content)
-                middleware = self._extract_middleware(content)
-                mounts = self._extract_mounts(content, rel_path)
+            if routes or middleware:
+                if routes:
+                    ctx = make_route_file_context(framework, routes, kind="route")
+                    self._file_contexts[rel_path] = ctx
+                    route_count += len(routes)
+                elif middleware:
+                    ctx = make_route_file_context(framework, middleware, kind="middleware")
+                    self._file_contexts[rel_path] = ctx
 
-                if routes or middleware:
-                    if routes:
-                        ctx = make_route_file_context(framework, routes, kind="route")
-                        self._file_contexts[rel_path] = ctx
-                        route_count += len(routes)
-                    elif middleware:
-                        ctx = make_route_file_context(framework, middleware, kind="middleware")
-                        self._file_contexts[rel_path] = ctx
+                file_count += 1
 
-                    file_count += 1
+            # Add mount edges
+            for mount_info in mounts:
+                target_file = self._find_router_file(mount_info["router"], rel_path)
+                if target_file:
+                    self._extra_imports.setdefault(rel_path, []).append({
+                        "specifier": target_file,
+                        "names": [mount_info["router"]],
+                    })
 
-                # Add mount edges
-                for mount_info in mounts:
-                    target_file = self._find_router_file(mount_info["router"], rel_path)
-                    if target_file:
-                        self._extra_imports.setdefault(rel_path, []).append({
-                            "specifier": target_file,
-                            "names": [mount_info["router"]],
-                        })
-
+        if abandoned:
+            logger.warning(
+                "Express provider: budget expired after %d files; route context "
+                "for this repo is incomplete", scanned,
+            )
         logger.info(
             "Express provider: found %d routes in %d files (%s)",
             route_count, file_count, framework,

@@ -2,6 +2,51 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.182] - 2026-07-26 - a stall has a name and a ceiling
+
+### Fixed
+
+- **Provider discovery was unbounded, and it runs before a single file is
+  indexed.** [#375](https://github.com/jgravelle/jcodemunch-mcp/issues/375),
+  reopened by @dkiaulakis after a re-run at 1.108.176 measured no improvement on
+  the subtree that stalled at 1.108.169 — 268s versus 240s, both unfinished. The
+  1.108.171 regex fix removed one known cost centre. It could not remove the
+  SHAPE of the failure: `discover_providers` ran all fourteen providers'
+  `detect()` + `load()` inline with no ceiling and no attribution, so any
+  provider that ground took the whole index down with it and the caller saw
+  silence. Each provider now runs under a wall-clock budget
+  (`JCODEMUNCH_PROVIDER_BUDGET_SECONDS`, default 30s, `0` disables). An overrun
+  is skipped and NAMED — `providers_skipped` on the index result plus a warning
+  that states the consequence, that symbols are indexed but carry no context
+  from that provider and its import edges (route mounts, template renders) are
+  missing from the graph. A budget cannot make a slow provider fast; it makes
+  the gap survivable and attributable instead of an unbounded wait.
+- **Source walks paid for dependency trees they then discarded.**
+  `ExpressProvider.load` ran five recursive `Path.glob("**/*.js")`-shaped passes
+  and dropped `node_modules` by substring AFTER the walk had already enumerated
+  it — five full descents through a dependency tree to index none of it. Same
+  defect in `_scan_package_json_forced_paths`, which `rglob`'d for manifests and
+  filtered `node_modules` out afterwards. New `iter_source_files` prunes at the
+  walk. Measured on a 42-file project over a 9,600-file `node_modules`, warm and
+  alternating: **0.639s → 0.001s for the identical 41 files.**
+- **One pathological file could stall a whole index.** `parse_file` now runs
+  under a per-file wall-clock ceiling
+  (`JCODEMUNCH_PARSE_BUDGET_SECONDS`, default 20s, `0` disables) via
+  `parse_file_budgeted`. On overrun the file is skipped and named in the index
+  result's `warnings` instead of the run hanging with nothing to point at. The
+  watchdog is armed only for files at or above 128 KiB, so the common path
+  parses inline exactly as before.
+
+### Known limits, stated
+
+- A watchdog stops the CALLER waiting; it cannot stop the work. Python cannot
+  preempt a thread, and tree-sitter is C code, so an abandoned parse or provider
+  keeps consuming CPU until it finishes or notices its cooperative deadline.
+  These bounds make the index finish and the gap visible — they do not cap CPU.
+- `ContextProvider.budget_expired()` is the cooperative half, and it only helps
+  where a provider polls it. Wired into the Express walk; the other thirteen
+  providers still rely on the thread watchdog alone.
+
 ## [1.108.181] - 2026-07-26 - uncommitted work is represented, per scope
 
 ### Fixed

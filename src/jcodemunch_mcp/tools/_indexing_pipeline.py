@@ -1,6 +1,8 @@
 """Shared indexing pipeline used by index_folder, index_file, and index_repo."""
 
 import logging
+import os
+import threading
 from collections import defaultdict
 from typing import Optional
 
@@ -11,6 +13,73 @@ from ..parser.symbols import Symbol
 from ..summarizer import summarize_symbols, generate_file_summaries
 
 logger = logging.getLogger(__name__)
+
+# Per-file parse ceiling. One pathological file should cost one file, not the
+# whole index: without this, a grammar that degrades on some particular shape
+# (a minified bundle, a generated blob, a deeply nested literal) stalls the run
+# with no output and no name to blame.
+_DEFAULT_PARSE_BUDGET_SECONDS = 20.0
+
+# The watchdog costs a thread per file, so it is only armed for files large
+# enough to plausibly hit the ceiling. Below this, parsing runs inline exactly
+# as before — the common path is untouched, and a 2 KB file that somehow takes
+# 20s is a bug we want to see rather than paper over.
+_PARSE_WATCHDOG_MIN_BYTES = 131072
+
+
+class ParseBudgetExceeded(Exception):
+    """Raised when a single file's parse overruns its wall-clock budget."""
+
+
+def _parse_budget_seconds() -> float:
+    """Per-file parse budget; ``0`` or negative disables the ceiling."""
+    raw = os.environ.get("JCODEMUNCH_PARSE_BUDGET_SECONDS")
+    if raw is None:
+        return _DEFAULT_PARSE_BUDGET_SECONDS
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Ignoring non-numeric JCODEMUNCH_PARSE_BUDGET_SECONDS=%r; using %.1fs",
+            raw, _DEFAULT_PARSE_BUDGET_SECONDS,
+        )
+        return _DEFAULT_PARSE_BUDGET_SECONDS
+
+
+def parse_file_budgeted(content: str, rel_path: str, language: str, repo=None) -> list:
+    """``parse_file`` with a wall-clock ceiling on large files.
+
+    Raises ``ParseBudgetExceeded`` on overrun so the caller's existing
+    parse-error handling names the file in ``warnings`` and moves on. The
+    abandoned parse thread keeps running — tree-sitter is C code and cannot be
+    interrupted — so this bounds the INDEX, not the CPU. That is the trade:
+    one file's cost becomes bounded latency plus a named skip, instead of an
+    unbounded stall with nothing to point at.
+    """
+    budget = _parse_budget_seconds()
+    if budget <= 0 or len(content) < _PARSE_WATCHDOG_MIN_BYTES:
+        return parse_file(content, rel_path, language, repo=repo)
+
+    box: dict = {}
+
+    def _target() -> None:
+        try:
+            box["symbols"] = parse_file(content, rel_path, language, repo=repo)
+        except BaseException as exc:  # noqa: BLE001 — re-raised to the caller
+            box["exc"] = exc
+
+    worker = threading.Thread(target=_target, daemon=True)
+    worker.start()
+    worker.join(budget)
+    if worker.is_alive():
+        raise ParseBudgetExceeded(
+            f"parse exceeded the {budget:g}s budget ({len(content):,} chars, "
+            f"{language}); file skipped and its symbols are absent from this "
+            f"index. Raise JCODEMUNCH_PARSE_BUDGET_SECONDS to allow more time."
+        )
+    if "exc" in box:
+        raise box["exc"]
+    return box.get("symbols") or []
 
 
 def file_languages_for_paths(
@@ -103,7 +172,7 @@ def parse_immediate(
             continue
         file_language_map[rel_path] = language
         try:
-            symbols = parse_file(content, rel_path, language, repo=repo)
+            symbols = parse_file_budgeted(content, rel_path, language, repo=repo)
             if symbols:
                 new_symbols.extend(symbols)
             else:
@@ -224,7 +293,7 @@ def parse_and_prepare_incremental(
             continue
         file_language_map[rel_path] = language
         try:
-            symbols = parse_file(content, rel_path, language, repo=repo)
+            symbols = parse_file_budgeted(content, rel_path, language, repo=repo)
             if symbols:
                 new_symbols.extend(symbols)
             else:
@@ -349,7 +418,7 @@ def parse_and_prepare_full(
             continue
         file_language_map[path] = language
         try:
-            symbols = parse_file(content, path, language, repo=repo)
+            symbols = parse_file_budgeted(content, path, language, repo=repo)
             if symbols:
                 all_symbols.extend(symbols)
                 symbols_by_file[path].extend(symbols)

@@ -6,12 +6,39 @@ intentionally minimal — providers only need to implement detect/load/lookup.
 """
 
 import logging
+import os
+import threading
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
+
+# Wall-clock ceiling for one provider's detect()+load(). Provider discovery runs
+# BEFORE a single file is indexed, so a provider that grinds takes the whole
+# index down with it and the caller sees only silence (#375: 4 minutes at 100%
+# CPU inside one regex, then 90 minutes of nothing on a full repo). A budget
+# cannot make a slow provider fast; it makes it SKIPPABLE and NAMED, so one
+# pathological ecosystem degrades to "express skipped after 30s" instead of an
+# unbounded stall with no attribution.
+_DEFAULT_PROVIDER_BUDGET_SECONDS = 30.0
+
+
+def provider_budget_seconds() -> float:
+    """Per-provider wall-clock budget; ``0`` or negative disables the ceiling."""
+    raw = os.environ.get("JCODEMUNCH_PROVIDER_BUDGET_SECONDS")
+    if raw is None:
+        return _DEFAULT_PROVIDER_BUDGET_SECONDS
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Ignoring non-numeric JCODEMUNCH_PROVIDER_BUDGET_SECONDS=%r; using %.1fs",
+            raw, _DEFAULT_PROVIDER_BUDGET_SECONDS,
+        )
+        return _DEFAULT_PROVIDER_BUDGET_SECONDS
 
 
 @dataclass
@@ -78,6 +105,19 @@ class ContextProvider(ABC):
     metadata, and provide per-file context lookups. Providers are
     auto-discovered and run during indexing — no configuration needed.
     """
+
+    # Cooperative deadline, set by discover_providers before detect()/load().
+    # A provider that walks a tree should break out of its loop when this
+    # passes; see budget_expired(). The thread watchdog in _run_with_budget is
+    # the backstop for code that CANNOT check (a single long regex call), but a
+    # watchdog only stops the CALLER waiting — it cannot stop the work. Loops
+    # that poll this actually stop burning CPU, so poll it wherever you walk.
+    _deadline: Optional[float] = None
+
+    def budget_expired(self) -> bool:
+        """True once this provider has overrun its discovery budget."""
+        deadline = self._deadline
+        return deadline is not None and time.monotonic() >= deadline
 
     @property
     @abstractmethod
@@ -149,21 +189,108 @@ def register_provider(cls: type[ContextProvider]) -> type[ContextProvider]:
     return cls
 
 
-def discover_providers(folder_path: Path) -> list[ContextProvider]:
+def _run_with_budget(fn: Callable[[], None], seconds: float) -> tuple[bool, Optional[BaseException]]:
+    """Run ``fn`` on a daemon thread, returning ``(finished, exception)``.
+
+    ``finished`` is False when the budget elapsed first. The thread is NOT
+    killed — Python cannot preempt one — so an overrun provider may keep
+    running in the background until its cooperative deadline check fires or it
+    completes. What this guarantees is that the INDEX stops waiting on it, and
+    that the overrun is named. Callers must discard the provider's data on a
+    timeout: it is still being mutated by the abandoned thread.
+    """
+    box: dict[str, BaseException] = {}
+
+    def _target() -> None:
+        try:
+            fn()
+        except BaseException as exc:  # noqa: BLE001 — re-raised to the caller
+            box["exc"] = exc
+
+    worker = threading.Thread(target=_target, daemon=True)
+    worker.start()
+    worker.join(seconds)
+    if worker.is_alive():
+        return False, None
+    return True, box.get("exc")
+
+
+def discover_providers(
+    folder_path: Path,
+    budget_seconds: Optional[float] = None,
+    skipped: Optional[list] = None,
+) -> list[ContextProvider]:
     """Instantiate and detect all registered context providers.
 
-    Returns only providers whose ecosystem was detected in the folder.
+    Returns only providers whose ecosystem was detected in the folder AND that
+    finished detect()+load() inside their wall-clock budget. Pass ``skipped`` a
+    list to receive one ``{provider, reason, seconds, error}`` record per
+    provider that overran or raised, so the caller can disclose the gap instead
+    of silently indexing with less context than it advertises.
+
+    ``budget_seconds`` defaults to ``provider_budget_seconds()``; ``0`` or
+    negative runs providers inline with no ceiling (pre-1.108.182 behaviour).
     """
-    active = []
+    budget = provider_budget_seconds() if budget_seconds is None else budget_seconds
+    active: list[ContextProvider] = []
     for cls in _PROVIDER_CLASSES:
+        started = time.monotonic()
+        name = getattr(cls, "__name__", "provider")
         try:
             provider = cls()
-            if provider.detect(folder_path):
-                provider.load(folder_path)
-                logger.info("Context provider '%s' activated", provider.name)
-                active.append(provider)
+            name = provider.name or name
         except Exception as e:
-            logger.warning("Context provider '%s' failed: %s", cls.__name__, e)
+            logger.warning("Context provider '%s' failed to construct: %s", name, e)
+            if skipped is not None:
+                skipped.append({"provider": name, "reason": "error", "error": str(e)})
+            continue
+
+        outcome: dict[str, bool] = {}
+
+        def _detect_and_load(p: ContextProvider = provider, out: dict = outcome) -> None:
+            if p.detect(folder_path):
+                p.load(folder_path)
+                out["detected"] = True
+
+        if budget > 0:
+            provider._deadline = started + budget
+            finished, exc = _run_with_budget(_detect_and_load, budget)
+        else:
+            provider._deadline = None
+            try:
+                _detect_and_load()
+                finished, exc = True, None
+            except Exception as e:  # noqa: BLE001
+                finished, exc = True, e
+
+        elapsed = time.monotonic() - started
+        if not finished:
+            logger.warning(
+                "Context provider '%s' exceeded its %.1fs budget and was skipped; "
+                "this index carries no %s context. Raise or disable the ceiling with "
+                "JCODEMUNCH_PROVIDER_BUDGET_SECONDS.",
+                name, budget, name,
+            )
+            if skipped is not None:
+                skipped.append({
+                    "provider": name,
+                    "reason": "budget_exceeded",
+                    "seconds": round(elapsed, 3),
+                    "budget_seconds": budget,
+                })
+            continue
+        if exc is not None:
+            logger.warning("Context provider '%s' failed: %s", name, exc)
+            if skipped is not None:
+                skipped.append({
+                    "provider": name, "reason": "error",
+                    "seconds": round(elapsed, 3), "error": str(exc),
+                })
+            continue
+        if not outcome.get("detected"):
+            continue
+        logger.info("Context provider '%s' activated in %.2fs", name, elapsed)
+        active.append(provider)
     return active
 
 

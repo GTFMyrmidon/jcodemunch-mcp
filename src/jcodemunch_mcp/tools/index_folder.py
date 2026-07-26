@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 from .. import config as _config
 from ..parser import cached_parse_file as parse_file, LANGUAGE_EXTENSIONS, get_language_for_path
 from ..parser.context import discover_providers, enrich_symbols, collect_metadata, collect_extra_imports
+from ..parser.context._route_utils import iter_source_files
 from ..parser.context.framework_profiles import detect_framework, profile_to_meta
 from ..parser.imports import extract_imports, _alias_map_cache as _imap_cache, _LANGUAGE_EXTRACTORS as _IMPORT_EXTRACTORS
 from ..security import (
@@ -691,16 +692,50 @@ from .package_registry import extract_package_names as _extract_package_names
 _PROVIDER_CACHE: dict[str, list] = {}
 
 
+# Providers skipped on the most recent discovery, per folder. Discovery happens
+# deep inside the index run, far from the response builder, and a provider that
+# blew its budget is a KNOWN gap in the context this index carries — reporting
+# it is the difference between "indexed" and "indexed, minus express".
+_PROVIDER_SKIPS: dict[str, list] = {}
+
+
 def _resolve_active_providers(folder_path: Path, context_providers: bool) -> list:
     """Discover the active, config-gated context providers for a folder."""
     enabled = context_providers and _config.get(
         "context_providers", True, repo=str(folder_path)
     )
-    active = discover_providers(folder_path) if enabled else []
+    skipped: list = []
+    active = discover_providers(folder_path, skipped=skipped) if enabled else []
+    _PROVIDER_SKIPS[str(folder_path)] = skipped
     # Gate the SQL-dependent dbt provider when SQL is disabled for this repo.
     if active and not _config.is_language_enabled("sql", repo=str(folder_path)):
         active = [p for p in active if p.name != "dbt"]
     return active
+
+
+def _attach_provider_skips(result: dict, folder_path: Path) -> None:
+    """Surface budget-skipped / failed context providers on an index result."""
+    skips = _PROVIDER_SKIPS.get(str(folder_path)) or []
+    if not isinstance(result, dict) or not skips:
+        return
+    result["providers_skipped"] = skips
+    for skip in skips:
+        if skip.get("reason") == "budget_exceeded":
+            result.setdefault("warnings", []).append(
+                f"Context provider '{skip['provider']}' exceeded its "
+                f"{skip.get('budget_seconds')}s budget after "
+                f"{skip.get('seconds')}s and was skipped. Symbols are indexed but "
+                f"carry no {skip['provider']} context, and its import edges "
+                f"(route mounts, template renders) are missing from the graph. "
+                f"Raise JCODEMUNCH_PROVIDER_BUDGET_SECONDS to let it finish, or "
+                f"set context_providers=false to stop paying for it."
+            )
+        else:
+            result.setdefault("warnings", []).append(
+                f"Context provider '{skip['provider']}' failed: "
+                f"{skip.get('error')}. Symbols are indexed but carry no "
+                f"{skip['provider']} context."
+            )
 
 
 def _cache_active_providers(folder_path: Path, providers: list) -> None:
@@ -731,9 +766,15 @@ def _scan_package_json_forced_paths(folder_path: Path) -> set[str]:
     import json as _json
     forced: set[str] = set()
     try:
-        for pkg in folder_path.rglob("package.json"):
-            # Skip nested node_modules — only honour first-party manifests.
-            if "node_modules" in pkg.parts:
+        # Pruned walk, not rglob: rglob descends into node_modules and can only
+        # discard it afterwards, so the "skip nested node_modules" filter this
+        # replaces still paid to enumerate the whole dependency tree.
+        # Skip set is exactly node_modules, matching the filter this replaces —
+        # a manifest under dist/ or build/ still counts, as it always has.
+        for pkg, _rel in iter_source_files(
+            folder_path, {".json"}, skip_dirs=frozenset({"node_modules"})
+        ):
+            if pkg.name != "package.json":
                 continue
             try:
                 content = pkg.read_text(encoding="utf-8", errors="replace")
@@ -2103,6 +2144,7 @@ def index_folder(
                 # This ran a full discovery walk, so a still-truncated index
                 # stays loud even when nothing changed (#366).
                 _attach_cap_report(_no_change_result, _cap_status)
+                _attach_provider_skips(_no_change_result, folder_path)
                 return _no_change_result
 
             # Read changed + new files into memory
@@ -2243,6 +2285,7 @@ def index_folder(
             if warnings:
                 result["warnings"] = warnings
             _attach_cap_report(result, _cap_status)
+            _attach_provider_skips(result, folder_path)
             _maybe_apply_adaptive(folder_path, result)
             return result
 
@@ -2598,6 +2641,7 @@ def index_folder(
             result["warnings"] = warnings
 
         _attach_cap_report(result, _cap_status)
+        _attach_provider_skips(result, folder_path)
 
         _maybe_apply_adaptive(folder_path, result)
         return result
