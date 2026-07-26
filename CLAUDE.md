@@ -278,7 +278,12 @@ one of these "we don't take branded providers"** — MiniMax/GLM/OpenRouter are
 exactly this shape and already merged; the comment concedes that on the record.
 The bar is a user asking, same as platform installers. It correctly added
 atlascloud to `_PAID_CLOUD_PROVIDERS`, so the money-safety guard was respected.
-**Open issues (2026-07-25): #375 + #377 only, both jjg-filed; ZERO open PRs.**
+**Open issues (2026-07-26): #377, #383, #384 — all jjg-filed; ZERO open PRs.**
+#375 was closed once the stall was fixed, with its two unfixed sub-problems split
+out as trackers: **#383** (sub-problem A, no progress emission when the client omits
+`progressToken`) and **#384** (the double-index finding below). Neither has a chosen
+fix; #384 names a third option nobody has explored (register the folder for watching
+WITHOUT an initial index when the tool about to run will index it anyway).
 
 **#375 (index_folder silent 1800s+ on Linux) — investigated 2026-07-25, NOT fixed,
 awaiting a py-spy dump.** Of the four sub-problems: **B (zero `index_folder` log
@@ -301,6 +306,33 @@ would let the watch task's own initial index race the tool's index on the same
 silently removes auto-start-watching. Both wait on localisation.** The stall is
 still unexplained — one repro was a `.claude/` chunk, far too small for 1800s, so
 something BLOCKS rather than grinds.
+
+**Closed 2026-07-26: #382 "Old tree sitter dependency?" (@kecsap)** — asked why we
+pin `tree-sitter-language-pack>=0.7.0,<1.0.0` when "other code parser MCP tools
+happily use >= 1.0.0". Tested 1.13.3 against the full suite before answering;
+the pin STAYS, and the rationale now lives as a comment on the dep itself so this
+is not re-derived. ⚠ **The load-bearing reason: 1.x STOPPED BUNDLING GRAMMARS.**
+The wheel ships a single `_native.pyd` and an empty bindings dir; `get_parser`
+downloads the grammar from a remote manifest into `%LOCALAPPDATA%\tree-sitter-
+language-pack\v<ver>\libs` on first use (proven by watching that cache go 0 -> 67
+shared libs while walking our language list). **That is runtime network access plus
+executable-writes-to-disk in a tool that advertises itself as read-only and local,
+and it breaks airgapped installs outright** — i.e. exactly the class of undisclosed
+persistent/network behavior that caused the PyPI quarantine, so it could never ride
+a dependency-housekeeping commit anyway. Two smaller blockers: **`autohotkey`,
+`ejs`, `verse` do not exist in 1.x** (`DownloadError: not available for download`),
+so bumping silently drops three languages; and **the nim grammar was swapped for a
+different upstream** (`source_file/proc_declaration/identifier` ->
+`module/stmt/routine/symbol/ident`), so our nim extractor returns zero symbols.
+Suite on 1.13.3: **5812 passed, 12 skipped, 1 failed** (`test_nim_parsing`, and
+only that). ⚠ **There is NO API incompatibility to cite — we use exactly one symbol
+from this package, `get_parser`** — so do not argue the pin on API grounds; the
+blockers are all behavioral. ⚠ **Unrelated pre-existing pathology found while
+testing, NOT a 1.x regression and NOT filed: `get_parser("cobol").parse(b"x")`
+hangs indefinitely on BOTH 0.13.0 and 1.13.3.** A 1-byte input, no timeout.
+Unreachable today (we only feed it real `.cbl` files) but it invalidated the first
+version of the compatibility harness, so any future per-language sweep must resolve
+parsers WITHOUT parsing pathological input.
 
 **#381 (MCP Toplist badge) CLOSED by jjg** — 120 identical drive-by PRs from that
 author; the badge renders "Top 1% of 81,432", not the rank the PR body promised,

@@ -37,6 +37,19 @@ classifiers = [
 dependencies = [
     "mcp>=1.10.0,<2.0.0",
     "httpx>=0.27.0",
+    # Ceiling is deliberate, re-verified against 1.13.3 on 2026-07-26 (#382).
+    # 1.x stopped bundling grammars: the wheel ships one native module and
+    # get_parser DOWNLOADS the grammar into a user-level cache on first use
+    # (verified: empty cache -> 67 shared libs while walking our language list).
+    # That is undisclosed runtime network + executable-write behavior in a
+    # read-only local tool, and it breaks airgapped/offline installs.
+    # Also: autohotkey/ejs/verse do not exist in 1.x at all, and the nim grammar
+    # was swapped for a different upstream (source_file/proc_declaration ->
+    # module/stmt/routine), so our nim extractor yields zero symbols.
+    # Suite on 1.13.3: 5812 passed, 12 skipped, 1 failed (test_nim_parsing).
+    # We use exactly one symbol from this package (get_parser) -- the blockers
+    # are behavioral, not API. Revisit only with grammars vendored or the
+    # download made opt-in AND README-disclosed.
     "tree-sitter-language-pack>=0.7.0,<1.0.0",
     "pathspec>=0.12.0",
     "pyyaml>=6.0",
