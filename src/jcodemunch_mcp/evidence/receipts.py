@@ -46,6 +46,7 @@ unavoidable, and reporting the wrong reason would be worse than reporting none.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import logging
@@ -154,8 +155,19 @@ def build_envelope(
     capabilities: Optional[dict] = None,
     limitations: Optional[list] = None,
     absence_ref: Optional[str] = None,
+    absence_record: Optional[dict] = None,
 ) -> Optional[dict]:
-    """Assemble one receipt. Returns None on an undeclarable proof kind."""
+    """Assemble one receipt. Returns None on an undeclarable proof kind.
+
+    ``absence_record`` is a deep copy of the recorded scan this receipt was
+    minted from (#377 P3, v1.108.192). The ``absence_ref`` alone is NOT
+    snapshot-bound: its key is ``sha256(tool, repo, query, scope)[:12]`` with no
+    snapshot in it, so re-running the same query over a different tree
+    overwrites the record at the same key. A receipt that resolved through that
+    key would be validated against a scan it was never minted from. The ref is
+    still carried, for provenance and for the live-response path, but it is no
+    longer what the receipt STANDS on.
+    """
     if proof_kind not in PROOF_KINDS:
         logger.debug("Refusing to build a receipt for unknown proof kind %r", proof_kind)
         return None
@@ -182,6 +194,11 @@ def build_envelope(
     }
     if absence_ref:
         envelope["absence_ref"] = absence_ref
+    if absence_record is not None:
+        # Deep copy: the live record is a mutable dict in another module's map,
+        # and a shared nested `channels` dict would let a later scan reach into
+        # a minted receipt.
+        envelope["absence_record"] = copy.deepcopy(absence_record)
     return envelope
 
 

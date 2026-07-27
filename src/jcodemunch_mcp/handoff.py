@@ -393,14 +393,31 @@ def _validate_evidence(refs, served_ids: Iterable[str], *, strict_subject: bool 
                 continue
             out["receipts"].append({"ref": ref, "receipt": envelope})
             if _receipts.is_absence_kind(envelope.get("proof_kind")):
-                # The receipt points at the recorded scan; `absence_refusal` is
-                # still the only implementation of the refusal rules, so a
-                # receipt cannot disagree with the gate that issued it.
-                linked = absence_record(envelope.get("absence_ref") or "")
-                reason = absence_refusal(linked) if linked else (
-                    "the scan behind this receipt is no longer on record, so "
-                    "whether it could prove absence cannot be re-established"
-                )
+                # `absence_refusal` remains the ONLY implementation of the
+                # refusal rules, so a receipt cannot disagree with the gate that
+                # issued it. What changed in v1.108.192 (#377 P3) is what it is
+                # handed: the record FROZEN INTO the receipt at mint time, not
+                # whatever now sits at the mutable `absent:` key.
+                #
+                # That key is sha256(tool, repo, query, scope)[:12] with no
+                # snapshot in it, so re-running the same query over a different
+                # tree overwrites it. Resolving through it meant an immutable,
+                # snapshot-bound receipt could be validated against a scan it
+                # was never minted from, in either direction: a provable receipt
+                # refused because a later scan went stale, or a receipt riding a
+                # later scan's provability.
+                frozen = envelope.get("absence_record")
+                if frozen is None:
+                    # Pre-v1.108.192 receipt, or a producer that minted without
+                    # one. Fall back to the legacy record rather than refusing
+                    # outright, and say so when it is gone.
+                    frozen = absence_record(envelope.get("absence_ref") or "")
+                    reason = absence_refusal(frozen) if frozen else (
+                        "the scan behind this receipt is no longer on record, so "
+                        "whether it could prove absence cannot be re-established"
+                    )
+                else:
+                    reason = absence_refusal(frozen)
                 if reason:
                     out["refused"].append({"ref": ref, "reason": reason})
             continue
@@ -568,17 +585,23 @@ def _render_absence_detail(ref: str, indent: str) -> list:
     return lines
 
 
-def _render_receipt_detail(ref: str, indent: str) -> list:
+def _render_receipt_detail(ref: str, indent: str, resolved: Optional[dict] = None) -> list:
     """The receipt behind an evidence ref, rendered so a reader can audit it.
 
     Renders ONLY for a receipt ref, which means it renders only for a handoff
     that cited one. A handoff citing no receipts is byte-identical to what it
     rendered before Phase 2 — the input picks the contract, in the body as well
     as in the schema string.
-    """
-    from .evidence import receipts as _receipts
 
-    envelope, _why = _receipts.lookup(ref)
+    ``resolved`` is the ref -> envelope map that validation already built
+    (#377 P3, v1.108.192). This function used to perform its OWN
+    ``_receipts.lookup``, which made rendering a SECOND, independent read of a
+    BOUNDED store: a receipt evicted between attestation and rendering produced
+    a body with no receipt block, and a sha256 over that body, while the
+    attestation said the evidence was proved. Validation, rendering and hashing
+    now consume one resolution.
+    """
+    envelope = (resolved or {}).get(ref)
     if not envelope:
         return []
     subject = envelope.get("subject") or {}
@@ -618,8 +641,13 @@ def render_handoff(
     evidence_refs,
     appendices,
     schema: str = HANDOFF_SCHEMA,
+    resolved_receipts: Optional[dict] = None,
 ) -> str:
-    """Deterministic canonical Markdown. No timestamps, no randomness."""
+    """Deterministic canonical Markdown. No timestamps, no randomness.
+
+    ``resolved_receipts`` carries the envelopes validation already resolved, so
+    the rendered body cannot disagree with the attestation (#377 P3).
+    """
     lines = [
         f"# Handoff: {task}",
         "",
@@ -651,7 +679,7 @@ def render_handoff(
             for ref in claim["refs"]:
                 lines.append(f"  - `{ref}`")
                 lines += _render_absence_detail(ref, "    ")
-                lines += _render_receipt_detail(ref, "    ")
+                lines += _render_receipt_detail(ref, "    ", resolved_receipts)
             lines.append("")
     lines += [
         "## Evidence",
@@ -664,7 +692,7 @@ def render_handoff(
         lines.append(f"- `{ref}`")
         if ref not in detailed:
             lines += _render_absence_detail(ref, "  ")
-            lines += _render_receipt_detail(ref, "  ")
+            lines += _render_receipt_detail(ref, "  ", resolved_receipts)
     lines.append("")
     for name, ctype, content in appendices:
         lines += [f"## Appendix: {name}", "", f"_Content type: {ctype}_", "", content, ""]
@@ -842,7 +870,12 @@ def finalize_handoff(
     # The input picks the contract: no claims anywhere is still a v1 handoff,
     # and its body is byte-identical to what v1 rendered.
     schema = HANDOFF_SCHEMA_V2 if claim_count else HANDOFF_SCHEMA
-    body = render_handoff(repo.strip(), task.strip(), profile.strip(), sec, refs, apps, schema)
+    # One resolution, shared by validation, rendering and hashing (#377 P3).
+    resolved_receipts = {r["ref"]: r["receipt"] for r in att["receipts"]}
+    body = render_handoff(
+        repo.strip(), task.strip(), profile.strip(), sec, refs, apps, schema,
+        resolved_receipts=resolved_receipts,
+    )
     raw = body.encode("utf-8")
     sha256 = hashlib.sha256(raw).hexdigest()
     handoff_id = sha256[:16]

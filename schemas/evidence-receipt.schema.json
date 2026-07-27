@@ -183,7 +183,12 @@
     "absence_ref": {
       "type": "string",
       "pattern": "^absent:[0-9a-f]{12}$",
-      "description": "Absence receipts: the Phase 3 token (v1.108.166) naming the recorded scan this receipt points at. The link is what keeps handoff.absence_refusal the single implementation of the refusal rules, and it is why a Phase 3 ref a shipped agent is already holding keeps working."
+      "description": "Absence receipts: the Phase 3 token (v1.108.166) naming the recorded scan this receipt was minted from. Kept for provenance and so a Phase 3 ref a shipped agent is already holding keeps resolving. It is NOT what the receipt stands on: the key is sha256(tool, repo, query, scope)[:12] with no snapshot in it, so re-running the same query over a different tree overwrites the record it names. See absence_record."
+    },
+    "absence_record": {
+      "type": "object",
+      "description": "Absence receipts (v1.108.192, #377 P3): the recorded scan itself, deep-copied into the receipt at mint time so this receipt is snapshot-bound end to end. handoff.absence_refusal remains the single implementation of the refusal rules; what changed is that it is handed this frozen copy instead of whatever now sits at the mutable absence_ref key. Optional: receipts minted before v1.108.192 carry only absence_ref and still resolve through the legacy lookup.",
+      "additionalProperties": true
     },
     "resource_uri": {
       "type": "string",

@@ -738,10 +738,10 @@ def mint(
                 capabilities={
                     "proves_symbol_identity": False,
                     "proves_body_bytes": False,
-                    # Advisory only. Finalization re-derives this from the linked
-                    # scan record so there is exactly one implementation of the
-                    # refusal rules, and a receipt read hours later cannot
-                    # disagree with the gate.
+                    # Advisory only. Finalization re-derives this by running the
+                    # SAME refusal rules over the frozen record below, so there
+                    # is exactly one implementation of them and a receipt read
+                    # hours later cannot disagree with the gate.
                     "proves_absence": refusal is None,
                     "completeness": producer.completeness_for(search_mode),
                     "freshness_semantics": producer.freshness,
@@ -753,6 +753,10 @@ def mint(
                     + condition_limits
                 ),
                 absence_ref=absence_ref,
+                # v1.108.192 (#377 P3): freeze the scan INTO the receipt. The
+                # ref's key carries no snapshot, so a later scan of the same
+                # query overwrites the record it points at.
+                absence_record=record,
             )
             eid = receipts.record_receipt(envelope)
             if eid:

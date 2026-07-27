@@ -2,6 +2,92 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.192] - 2026-07-27 - #377 P3: one immutable snapshot, start to finish
+
+The two edges @mightydanp pinned adversarially on #377 after reviewing
+1.108.183-.188. Both are the same defect wearing different clothes: the pipeline
+read the evidence more than once and assumed the reads agreed.
+
+### Fixed
+
+- **An absence receipt no longer resolves through a mutable key.**
+  A receipt has a full snapshot-bound SHA-256 identity. Its linked absence
+  record did not: the `absent:<sha12>` key is
+  `sha256(tool, repo, query, scope)[:12]` with **no snapshot in it**, so
+  re-running the same query over a different tree overwrites the record at the
+  same key. Finalization followed `envelope.absence_ref` back to whatever sat
+  there at validation time, so an immutable receipt could be validated against a
+  scan it was never minted from.
+
+  Both directions were reachable and both now have a regression: a receipt
+  minted over a provable scan being **refused** because a later scan of the same
+  query went stale, and — the dangerous one — a receipt minted over a stale scan
+  being **attested** because a later scan was clean. Borrowed proof in one
+  direction, destroyed proof in the other.
+
+  The producer now freezes a deep copy of the scan into the envelope
+  (`absence_record`), and validation runs the refusal rules over that.
+  ⚠ **`absence_refusal` remains the ONLY implementation of those rules** — what
+  changed is the input it is handed, not the rules. A receipt still cannot
+  disagree with the gate that issued it.
+
+  ⚠ **Deep copy, not a reference.** The live record is a mutable dict in another
+  module's map; a shared nested `channels` dict would let a later scan reach
+  into a minted receipt. Pinned by a test.
+
+  ⚠ **Receipts minted before this release still resolve.** No frozen record
+  means fall back to the legacy lookup rather than refusing outright, so a
+  pre-1.108.192 receipt does not become uncitable.
+
+- **Validation, rendering and hashing consume one resolution.**
+  `_validate_evidence` resolved each envelope, then `_render_receipt_detail`
+  performed its **own** `receipts.lookup`. The store is bounded and LRU, so a
+  receipt evicted between the two produced a body with no receipt block, and a
+  `sha256` computed over that body, while the attestation said the evidence was
+  proved. The rendered artifact and its own receipt disagreed.
+
+  `render_handoff` now takes `resolved_receipts` — the map validation already
+  built — and `_render_receipt_detail` consumes it instead of re-resolving.
+
+  The regression asserts on the seam (`lookup(` must not appear in the render
+  path) as well as the symptom, so it keeps holding if the eviction policy
+  changes.
+
+### Changed
+
+- ⚠ **The published receipt schema gains an optional `absence_record`.**
+  `schemas/evidence-receipt.schema.json` sets `additionalProperties: false`, so
+  freezing the record into the envelope IS a schema change and is stated as one.
+  Additive and optional: a receipt minted before this release validates
+  unchanged, and `absence_ref` keeps its meaning as provenance. The schema
+  string stays `jcodemunch.evidence/v1` because nothing required changed and no
+  existing field changed meaning.
+
+- ⚠ **One shipped behaviour changed: editing the live `_absences` record can no
+  longer re-judge a receipt already minted from it.** A v1.108.183 test
+  expressed "this scan became unciteable" by mutating that record after the
+  mint, and it now fails by design. That technique was never valid, and its
+  invalidity is precisely the fix — the `absent:` key carries no snapshot, so an
+  in-place edit is indistinguishable from a different scan of the same query
+  overwriting it. The test's actual claim (a refused scan refuses its receipt
+  through the same rule, with no second implementation) is unchanged and is now
+  asserted at mint time, where it belonged; a new test pins the changed
+  semantics directly.
+
+  **This does NOT settle whether a receipt should expire because the tree moved
+  on after it was minted.** That is a different axis, it is the expiry taxonomy,
+  and it remains open under Phase 2 P3.
+
+### Tests
+
+- New `tests/test_v1_108_192.py` (10). Every fix verified non-vacuous by
+  reverting it: 3 failures on the absence half, 2 on the resolution half.
+- `tests/test_v1_108_183.py`: one test rewritten to mint-time refusal, one added
+  for the changed semantics.
+
+No tool-count or INDEX_VERSION change. Phase 2 P4/P5, Phase 4, and Phases 5-6
+(ROADMAP.md) are untouched.
+
 ## [1.108.191] - 2026-07-27 - the eager auto-watch path indexes once
 
 Found while porting @Bortlesboat's #388. Both arms of `_auto_watch_if_needed`

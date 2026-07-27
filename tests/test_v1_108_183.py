@@ -841,7 +841,50 @@ class TestAbsenceReceipts:
         assert final["receipts_attested"] == 1
 
     def test_a_refused_scan_refuses_its_receipt_through_the_same_rule(self, _r183_env):
-        """The downgrade does the refusing; there is no second rule to keep in sync."""
+        """The downgrade does the refusing; there is no second rule to keep in sync.
+
+        ⚠ Rewritten in v1.108.192 (#377 P3). This used to express "unciteable"
+        by MUTATING the live `_absences` record after the receipt was minted.
+        That technique is no longer valid, and its invalidity is the fix: the
+        `absent:` key carries no snapshot, so an in-place edit of the record it
+        names is indistinguishable from a different scan of the same query
+        overwriting it. A receipt that could be re-judged that way was never
+        snapshot-bound. The receipt now carries its own frozen copy.
+
+        The claim under test is unchanged and is now made at MINT time, which is
+        where it always belonged: a scan that could not prove absence produces a
+        receipt that is refused, by the same `absence_refusal` rule, with no
+        second implementation.
+        """
+        server, repo, _proj = _r183_env
+        # An ignored argument downgrades absent -> degraded at scan time, so the
+        # scan is recorded as refusable and the receipt freezes it that way.
+        body, _ = _r183_call(
+            server,
+            "search_symbols",
+            {
+                "repo": repo,
+                "query": "no_such_symbol_anywhere",
+                "regex": True,
+                "receipt": True,
+                "format": "json",
+            },
+        )
+        eid = _r183_receipt_ids(body)[0]
+        envelope = _r183_receipts.lookup(eid)[0]
+        assert _handoff_mod.absence_refusal(envelope["absence_record"]) is not None
+        final, is_error = _r183_finalize(server, repo, [f"munch://evidence/{eid}"], task="ref")
+        assert is_error is True
+        assert "refused" in final["error"]
+
+    def test_mutating_the_live_record_cannot_re_judge_a_minted_receipt(self, _r183_env):
+        """The behaviour change above, asserted directly rather than implied.
+
+        Post-mint staleness is a different axis and is NOT what this answers:
+        whether a receipt should EXPIRE because the tree moved on is the expiry
+        taxonomy, still open under #377 Phase 2 P3. What is settled here is that
+        an edit to a shared mutable key must not silently re-judge a receipt.
+        """
         server, repo, _proj = _r183_env
         body, _ = _r183_call(
             server,
@@ -850,14 +893,17 @@ class TestAbsenceReceipts:
         )
         eid = _r183_receipt_ids(body)[0]
         envelope = _r183_receipts.lookup(eid)[0]
-        # Make the recorded scan unciteable the way a stale index would.
+        assert _handoff_mod.absence_refusal(envelope["absence_record"]) is None
+
         record = _handoff_mod._absences[envelope["absence_ref"]]
         record["channels"] = dict(record["channels"], index="stale")
         assert _handoff_mod.absence_refusal(record) is not None
+
         final, is_error = _r183_finalize(server, repo, [f"munch://evidence/{eid}"], task="ref")
-        assert is_error is True
-        assert "refused" in final["error"]
-        assert "stale" in final["refused_absence"][0]["reason"]
+        assert is_error is False, (
+            "the live record was edited under a minted receipt and the receipt "
+            "followed it; that is the mutable-key defect #377 P3 closed"
+        )
 
     def test_a_refused_scan_marks_its_receipt_capabilities_honestly(self, _r183_env):
         server, repo, _proj = _r183_env
