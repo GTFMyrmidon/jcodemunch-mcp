@@ -234,6 +234,52 @@ async def _idle_timeout_watchdog(
 # Core watching
 # ---------------------------------------------------------------------------
 
+async def _initial_index(
+    *,
+    folder_path: str,
+    repo_id: str,
+    use_ai_summaries: bool,
+    storage_path: Optional[str],
+    extra_ignore_patterns: Optional[list[str]],
+    follow_symlinks: bool,
+    on_reindex: Optional[Callable[[], None]],
+    quiet: bool,
+    log_file_handle: Optional[IO],
+    build_hash_cache: Callable[[], None],
+) -> None:
+    """Run a watch task's initial incremental index and record its outcome.
+
+    Extracted from ``_watch_single`` in v1.108.189 so the skip path (#384)
+    is a branch around one call rather than a second copy of this body.
+    Caller is responsible for ``mark_reindex_start``.
+    """
+    try:
+        result = await asyncio.to_thread(
+            index_folder,
+            path=folder_path,
+            use_ai_summaries=use_ai_summaries,
+            storage_path=storage_path,
+            extra_ignore_patterns=extra_ignore_patterns,
+            follow_symlinks=follow_symlinks,
+            incremental=True,
+        )
+        if result.get("success"):
+            msg = result.get("message", f"{result.get('symbol_count', '?')} symbols")
+            _watcher_output(f"  Indexed {folder_path}: {msg} ({result.get('duration_seconds', '?')}s)", quiet=quiet, log_file_handle=log_file_handle)
+            # Build hash cache from the index we just created/updated
+            build_hash_cache()
+            mark_reindex_done(repo_id, result)
+            # Count initial index as activity (only if it actually did work)
+            if on_reindex is not None and result.get("message") != "No changes detected":
+                on_reindex()
+        else:
+            _watcher_output(f"  WARNING: initial index failed for {folder_path}: {result.get('error')}", quiet=quiet, log_file_handle=log_file_handle)
+            mark_reindex_failed(repo_id, result.get("error", "unknown error"))
+    except Exception as exc:
+        mark_reindex_failed(repo_id, str(exc))
+        raise
+
+
 async def _watch_single(
     folder_path: str,
     debounce_ms: int,
@@ -244,8 +290,15 @@ async def _watch_single(
     on_reindex: Optional[Callable[[], None]] = None,
     quiet: bool = False,
     log_file_handle: Optional[IO] = None,
+    skip_initial_index: bool = False,
 ) -> None:
-    """Watch a single folder and re-index on changes."""
+    """Watch a single folder and re-index on changes.
+
+    ``skip_initial_index`` suppresses the initial incremental index for the
+    one case where the caller has *already* indexed this exact folder (#384).
+    The hash cache is still built from the on-disk index, so change detection
+    is unaffected — only the redundant second full pass is skipped.
+    """
     _watcher_output(f"Watching {folder_path} (debounce={debounce_ms}ms)", quiet=quiet, log_file_handle=log_file_handle)
 
     # Compute repo identifier for memory hash cache and reindex state.
@@ -282,34 +335,41 @@ async def _watch_single(
         if idx and idx.file_hashes:
             _hash_cache.update(idx.file_hashes)
 
-    # Do an initial incremental index to ensure the index is current
-    _watcher_output(f"  Initial index for {folder_path}...", quiet=quiet, log_file_handle=log_file_handle)
-    mark_reindex_start(repo_id)
-    try:
-        result = await asyncio.to_thread(
-            index_folder,
-            path=folder_path,
+    # Do an initial incremental index to ensure the index is current.
+    # ...unless the caller just did it (#384). Indexing the same tree twice for
+    # one user-visible call is pure waste, and it was silent waste: this pass
+    # logs below WARNING and carries no progress reporter.
+    if skip_initial_index:
+        _watcher_output(
+            f"  Skipping initial index for {folder_path} (caller indexed it)",
+            quiet=quiet, log_file_handle=log_file_handle,
+        )
+        # The hash cache still has to be built, or every subsequent
+        # WatcherChange loses its old_hash passthrough.
+        _build_hash_cache()
+        # The index IS fresh, and get_watch_status has no other way to learn
+        # that. Recording who made it fresh keeps the claim checkable rather
+        # than presenting the caller's work as the watcher's own.
+        mark_reindex_done(repo_id, {
+            "success": True,
+            "message": "initial index skipped; folder was indexed by the caller",
+            "skipped_initial_index": True,
+        })
+    else:
+        _watcher_output(f"  Initial index for {folder_path}...", quiet=quiet, log_file_handle=log_file_handle)
+        mark_reindex_start(repo_id)
+        await _initial_index(
+            folder_path=folder_path,
+            repo_id=repo_id,
             use_ai_summaries=use_ai_summaries,
             storage_path=storage_path,
             extra_ignore_patterns=extra_ignore_patterns,
             follow_symlinks=follow_symlinks,
-            incremental=True,
+            on_reindex=on_reindex,
+            quiet=quiet,
+            log_file_handle=log_file_handle,
+            build_hash_cache=_build_hash_cache,
         )
-        if result.get("success"):
-            msg = result.get("message", f"{result.get('symbol_count', '?')} symbols")
-            _watcher_output(f"  Indexed {folder_path}: {msg} ({result.get('duration_seconds', '?')}s)", quiet=quiet, log_file_handle=log_file_handle)
-            # Build hash cache from the index we just created/updated
-            _build_hash_cache()
-            mark_reindex_done(repo_id, result)
-            # Count initial index as activity (only if it actually did work)
-            if on_reindex is not None and result.get("message") != "No changes detected":
-                on_reindex()
-        else:
-            _watcher_output(f"  WARNING: initial index failed for {folder_path}: {result.get('error')}", quiet=quiet, log_file_handle=log_file_handle)
-            mark_reindex_failed(repo_id, result.get("error", "unknown error"))
-    except Exception as exc:
-        mark_reindex_failed(repo_id, str(exc))
-        raise
 
     try:
         from watchfiles import awatch, Change
@@ -555,7 +615,7 @@ class WatcherManager:
         except Exception:
             logger.debug("Failed to record watcher task crash for %s", folder, exc_info=True)
 
-    def _start_watch_task(self, folder: str) -> asyncio.Task:
+    def _start_watch_task(self, folder: str, skip_initial_index: bool = False) -> asyncio.Task:
         task = asyncio.create_task(
             _watch_single(
                 folder_path=folder,
@@ -567,6 +627,7 @@ class WatcherManager:
                 on_reindex=self._on_reindex,
                 quiet=self._quiet,
                 log_file_handle=self._log_file_handle,
+                skip_initial_index=skip_initial_index,
             ),
             name=f"watch:{folder}",
         )
@@ -607,10 +668,14 @@ class WatcherManager:
 
     # ── Folder management ────────────────────────────────────────────────────
 
-    async def add_folder(self, folder: str) -> dict:
+    async def add_folder(self, folder: str, skip_initial_index: bool = False) -> dict:
         """Add a folder to watch, acquiring lock and starting watch task.
 
         Returns dict with 'status' and optionally 'task' or 'already_watched' key.
+
+        ``skip_initial_index=True`` starts the watch task WITHOUT its initial
+        index. Only pass it when the caller has just indexed this exact folder
+        (#384) — otherwise a folder can end up watched with a stale index.
         """
         folder = str(Path(folder).expanduser().resolve())
 
@@ -627,7 +692,7 @@ class WatcherManager:
         self._clear_standby(folder)
 
         try:
-            self._start_watch_task(folder)
+            self._start_watch_task(folder, skip_initial_index=skip_initial_index)
             _watcher_output(
                 f"WatcherManager: started watching {folder}",
                 quiet=self._quiet,

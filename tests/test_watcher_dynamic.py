@@ -251,13 +251,52 @@ class TestAutoWatchPathFromPathArg:
         monkeypatch.setattr(server, "_watcher_manager", mock_mgr)
         monkeypatch.setattr(server.config_module, "get", lambda k, d=False: True if k == "watch" else d)
 
-        await server._auto_watch_if_needed("index_folder", {"path": str(folder)}, str(tmp_path))
+        # index_folder indexes its own path argument, so registration is
+        # DEFERRED to after dispatch (#384) — the hook must do nothing now.
+        deferred = await server._auto_watch_if_needed(
+            "index_folder", {"path": str(folder)}, str(tmp_path)
+        )
 
-        # Should have called ensure_indexed and add_folder with the correct path
+        assert deferred == str(folder)
+        mock_mgr.ensure_indexed.assert_not_called()
+        mock_mgr.add_folder.assert_not_called()
+
+        # The post-dispatch half registers the watch WITHOUT a second index.
+        await server._auto_watch_after_tool(deferred)
+
+        mock_mgr.ensure_indexed.assert_not_called()
+        mock_mgr.add_folder.assert_called_once()
+        assert mock_mgr.add_folder.call_args[0][0] == str(folder)
+        assert mock_mgr.add_folder.call_args[1]["skip_initial_index"] is True
+
+    async def test_auto_watch_still_eager_for_non_indexing_tools(self, tmp_path, monkeypatch):
+        """A tool that does NOT index its own path keeps the pre-dispatch index.
+
+        The deferral is scoped to _AUTO_WATCH_DEFERRED. Everything else must
+        behave exactly as it did before v1.108.189, or a search would run
+        against an index nothing refreshed.
+        """
+        from jcodemunch_mcp import server
+
+        folder = _make_folder(tmp_path)
+
+        mock_mgr = AsyncMock(spec=WatcherManager)
+        mock_mgr.is_watched.return_value = False
+        mock_mgr.maybe_takeover = AsyncMock(return_value={"status": "lock_failed"})
+        mock_mgr.ensure_indexed = AsyncMock(return_value={"status": "indexed"})
+        mock_mgr.add_folder = AsyncMock(return_value={"status": "started"})
+
+        monkeypatch.setattr(server, "_watcher_manager", mock_mgr)
+        monkeypatch.setattr(server.config_module, "get", lambda k, d=False: True if k == "watch" else d)
+
+        deferred = await server._auto_watch_if_needed(
+            "get_file_outline", {"path": str(folder)}, str(tmp_path)
+        )
+
+        assert deferred is None
         mock_mgr.ensure_indexed.assert_called_once()
         mock_mgr.add_folder.assert_called_once()
-        call_args = mock_mgr.add_folder.call_args[0]
-        assert call_args[0] == str(folder)
+        assert "skip_initial_index" not in mock_mgr.add_folder.call_args[1]
 
 
 class TestAutoWatchPathFromRepoArg:

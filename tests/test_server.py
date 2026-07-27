@@ -3,7 +3,7 @@
 import pytest
 import json
 import threading
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, patch
 
 from jcodemunch_mcp.server import server, list_tools, call_tool, _coerce_arguments, _ensure_tool_schemas
 
@@ -131,13 +131,16 @@ async def test_call_tool_defaults_index_repo_incremental_true():
     with patch("jcodemunch_mcp.tools.index_repo.index_repo", new=AsyncMock(return_value={"success": True})) as mock_index_repo:
         await call_tool("index_repo", {"url": "owner/repo"})
 
+    # progress_cb is ANY because there is no progressToken in this harness, so
+    # v1.108.189 wires the heartbeat fallback rather than None (#383). Pinned
+    # explicitly below — this assertion is about the incremental default.
     mock_index_repo.assert_awaited_once_with(
         url="owner/repo",
         use_ai_summaries=True,
         storage_path=None,
         incremental=True,
         extra_ignore_patterns=None,
-        progress_cb=None,
+        progress_cb=ANY,
     )
 
 
@@ -156,8 +159,37 @@ async def test_call_tool_defaults_index_folder_incremental_true():
         incremental=True,
         paths=None,
         identity_mode="config",
-        progress_cb=None,
+        progress_cb=ANY,
     )
+
+
+@pytest.mark.asyncio
+async def test_call_tool_wires_heartbeat_when_client_sends_no_progress_token():
+    """#383 at the dispatcher, not just the reporter in isolation.
+
+    The unit tests prove HeartbeatReporter behaves; this proves call_tool
+    actually reaches for it. Without a progressToken the pre-v1.108.189
+    dispatcher passed progress_cb=None and the tool ran silent.
+    """
+    from jcodemunch_mcp.progress import HeartbeatReporter
+
+    with patch("jcodemunch_mcp.tools.index_folder.index_folder", return_value={"success": True}) as mock_index_folder:
+        await call_tool("index_folder", {"path": "/tmp/project"})
+
+    cb = mock_index_folder.call_args.kwargs["progress_cb"]
+    assert cb is not None, "a token-less client must still get a liveness signal"
+    assert isinstance(getattr(cb, "__self__", None), HeartbeatReporter)
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_not_wired_when_disabled(monkeypatch):
+    """Non-vacuity for the test above, and the documented opt-out."""
+    monkeypatch.setenv("JCODEMUNCH_HEARTBEAT_SECONDS", "0")
+
+    with patch("jcodemunch_mcp.tools.index_folder.index_folder", return_value={"success": True}) as mock_index_folder:
+        await call_tool("index_folder", {"path": "/tmp/project"})
+
+    assert mock_index_folder.call_args.kwargs["progress_cb"] is None
 
 
 @pytest.mark.asyncio

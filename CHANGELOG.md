@@ -2,6 +2,101 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.189] - 2026-07-27 - the two residual #375 sub-problems, closed
+
+Both were filed as *decisions not taken* rather than bugs not found. Neither was
+waiting on evidence; each was waiting on someone to pick between options with
+real downsides. Picked.
+
+### Fixed
+
+- **`index_folder` no longer indexes its own path twice under auto-watch (#384).**
+  `_AUTO_WATCH_EXCLUDED` lists the tools the pre-dispatch auto-watch hook must not
+  act on. `index_file` was in it; `index_folder` was not. So with `watch` enabled,
+  one `index_folder(path=X)` call ran `ensure_indexed(X)` — a complete index,
+  awaited inline — and then indexed X again. **One user-visible call, two full
+  passes over the same tree.** The first pass logs below `WARNING` and carries no
+  progress reporter, so it was silent waste, which is how it survived.
+
+  Fixed with the third option the issue named and nobody had explored:
+  `index_folder` is **deferred, not excluded**. The hook now returns the folder
+  instead of indexing it, and `_auto_watch_after_tool` registers the watch in the
+  dispatcher's `finally` — after the tool's own index is on disk. `add_folder`
+  and `_watch_single` take `skip_initial_index`, so the watch task starts without
+  repeating work that just completed.
+
+  ⚠ **Both obvious fixes were rejected, and the reasons are pinned by tests.**
+  Excluding `index_folder` outright is simple and race-free, but it silently
+  removes auto-start-watching from the most natural way a user would ask for a
+  folder to be watched — a behaviour removal under the 1.x zero-surprise
+  contract. Dropping only the redundant `ensure_indexed` while keeping
+  `add_folder` lets the watch task's own initial index race the tool's index on
+  the same `indexwrite` lock, and every acquire passes `wait_seconds=60.0`, so
+  the duplicate work would have been traded for minute-long waits. Deferring
+  avoids both: by the time the watch task starts there is nothing left to race.
+
+  The skip path still **builds the hash cache** (or every later `WatcherChange`
+  loses its `old_hash` passthrough) and still **records who made the index
+  fresh** — `mark_reindex_done(..., {"skipped_initial_index": True})` — because
+  `get_watch_status` has no other way to learn the index is current, and
+  presenting the caller's work as the watcher's own would be the same class of
+  dishonesty the rest of this arc is about.
+
+  ⚠ Scoped deliberately: `_AUTO_WATCH_DEFERRED` holds `index_folder` only. Every
+  other tool keeps the eager pre-dispatch index byte-for-byte, pinned by a test —
+  a search must not run against an index nothing refreshed.
+
+### Added
+
+- **An elapsed-time heartbeat when the client sends no `progressToken` (#383).**
+  `make_progress_notify` is a strict no-op without a token, and the MCP progress
+  spec makes that the client's opt-in — emitting unrequested notifications is a
+  protocol violation, so "notify anyway" was never available. Combined with the
+  default `log_level` of `WARNING`, a long run on a token-less client emitted
+  **nothing at all**, and an idle-timeout kill read as a crash.
+
+  New `HeartbeatReporter` puts the signal on a channel the client already sees:
+  the log. It duck-types `ProgressReporter`, so the dispatcher wires either one
+  identically and `drain_reporter` works on both.
+
+  Two deliberate choices:
+
+  - **`WARNING`, not `INFO`.** #375 sub-problem B closed as not-a-defect precisely
+    because the default level is `WARNING` and a healthy run is silent at it. A
+    heartbeat nobody sees fixes nothing.
+  - **Nothing before the first interval elapses.** A run that finishes inside
+    `JCODEMUNCH_HEARTBEAT_SECONDS` (default 30) says nothing at all, and a run
+    that never emitted a heartbeat emits no completion line either. The common
+    fast path is as quiet as it was; only a run that has already outlived normal
+    speaks, and at that point the silence *is* the reported bug.
+
+  The first line states *why* the usual indicator is missing, once, so it reads
+  as a substitute for a progress bar the client declined rather than as an error.
+  Garbage in `JCODEMUNCH_HEARTBEAT_SECONDS` falls back to the default rather than
+  disabling — a typo must not reintroduce the exact failure this fixes. `0`
+  disables.
+
+  ⚠ **Structurally incapable of becoming a protocol violation:** `HeartbeatReporter`
+  holds no notify channel and no session reference at all, its `close()` yields no
+  futures, and `make_progress_notify` still returns `None` without a token. All
+  three pinned by tests.
+
+### Changed
+
+- **Roadmap moved out of the issue tracker.** Phases 5 and 6 of the evidence arc
+  (#385, #386) are accepted design with no start date and an unmet dependency —
+  a plan, not a problem to fix or a feature being built. They now live in
+  `ROADMAP.md` with their close conditions verbatim and credit intact, and the
+  issues are closed pointing at it. Standing convention going forward: **an issue
+  opens when work starts or when a user is blocked.**
+
+### Tests
+
+- New `tests/test_v1_108_189.py` (29), plus 2 dispatcher-level heartbeat pins in `tests/test_server.py`. `tests/test_watcher_dynamic.py` updated for
+  the deferred contract, plus a new pin that non-indexing tools stay eager.
+
+No tool-count, INDEX_VERSION or schema change.
+
 ## [1.108.188] - 2026-07-26 - telemetry rows land in the store the caller named
 
 ### Fixed

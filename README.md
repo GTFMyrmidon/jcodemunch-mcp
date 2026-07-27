@@ -412,6 +412,8 @@ Pass `receipt: true` to `search_symbols`, `get_symbol_source`, `get_ranked_conte
 
 Cite `munch://evidence/<id>` in a handoff and `finalize_handoff` attests exactly that subject; a file-level reference backed only by a served symbol from that file is then refused as over-broad. A handoff citing no receipts behaves and renders exactly as before, and its receipt now names any broadened reference (`evidence_precision`, `broadened_refs`) instead of leaving a reader unable to tell. Only reviewed producers can mint, so a tool that has not been through that review returns no receipt rather than a weak one. Session-scoped and in memory, like the handoff store. Default `false` is byte-for-byte today's response. No new tool is added.
 
+Where this is going next — Phase 5 (corpus identity) and Phase 6 (typed path witnesses) — is written up in [ROADMAP.md](ROADMAP.md).
+
 ---
 
 ## Start fast

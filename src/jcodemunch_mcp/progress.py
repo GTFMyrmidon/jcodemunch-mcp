@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import threading
 import time
 from typing import Callable, Optional
@@ -53,6 +54,27 @@ PROGRESS_MIN_INTERVAL_S = 0.1
 # flush before the response goes out. Generous — pending sends normally
 # flush in single-digit milliseconds.
 PROGRESS_DRAIN_TIMEOUT_S = 2.0
+
+# Seconds of elapsed wall clock between heartbeat log lines on a client
+# that sent no progressToken (#383). 0 / negative disables.
+HEARTBEAT_INTERVAL_S = 30.0
+
+
+def _heartbeat_interval() -> float:
+    """Read the heartbeat interval from the environment.
+
+    Garbage parses to the default rather than disabling the heartbeat —
+    the failure this exists to fix is silence, so a typo must not
+    reintroduce it.
+    """
+    raw = os.environ.get("JCODEMUNCH_HEARTBEAT_SECONDS")
+    if raw is None or not raw.strip():
+        return HEARTBEAT_INTERVAL_S
+    try:
+        return float(raw)
+    except ValueError:
+        logger.debug("Bad JCODEMUNCH_HEARTBEAT_SECONDS=%r, using default", raw)
+        return HEARTBEAT_INTERVAL_S
 
 
 class ProgressReporter:
@@ -181,6 +203,137 @@ class ProgressReporter:
         if detail:
             parts.append(detail)
         return " ".join(parts)
+
+
+class HeartbeatReporter:
+    """Elapsed-time liveness lines for a client that sent no progressToken.
+
+    Why this exists (#383, split out of #375): ``make_progress_notify``
+    returns None unless the client opted in with a ``progressToken``, and
+    the MCP progress spec makes that the client's call — emitting
+    unrequested ``notifications/progress`` is a protocol violation, so
+    "notify anyway" was never on the table. The consequence was that a
+    long run on a token-less client emitted NOTHING, and a healthy index
+    was indistinguishable from a hung one right up until the client's
+    idle timeout killed it and the kill read as a crash.
+
+    So the signal moves to a channel the client already sees: the log.
+
+    Two deliberate choices:
+
+    * **WARNING, not INFO.** The default ``log_level`` is ``WARNING``
+      (``config.py``), which is why #375 sub-problem B closed as
+      not-a-defect — a healthy run is silent at the default level. A
+      heartbeat nobody sees fixes nothing.
+    * **Nothing before the first interval elapses.** A run that finishes
+      inside ``JCODEMUNCH_HEARTBEAT_SECONDS`` says nothing at all, so the
+      common fast path is byte-for-byte as quiet as it was. Only a run
+      that has already outlived the window anyone would call normal gets
+      a line, and at that point the silence IS the reported bug.
+
+    Duck-types ``ProgressReporter`` (``start``/``update``/``finish``/
+    ``close``) so the dispatcher wires either one identically and
+    ``drain_reporter`` works on both. ``close()`` returns no futures:
+    logging is synchronous, so nothing can trail the response.
+    """
+
+    __slots__ = (
+        "_label", "_lock", "_interval", "_clock", "_log",
+        "_t0", "_last_emit", "_emitted", "_finished", "_done", "_total",
+    )
+
+    def __init__(
+        self,
+        label: str,
+        *,
+        interval: Optional[float] = None,
+        clock: Callable[[], float] = time.monotonic,
+        log: Optional[Callable[..., None]] = None,
+    ) -> None:
+        self._label = label
+        self._lock = threading.Lock()
+        self._interval = _heartbeat_interval() if interval is None else interval
+        self._clock = clock
+        self._log = log if log is not None else logger.warning
+        self._t0 = self._clock()
+        self._last_emit = self._t0
+        self._emitted = 0
+        self._finished = False
+        self._done = 0
+        self._total = 0
+
+    @property
+    def enabled(self) -> bool:
+        return self._interval > 0
+
+    def start(self, total: int = 0, detail: str = "Starting") -> None:
+        """Anchor the clock. Emits nothing — a fast run must stay silent."""
+        with self._lock:
+            if self._finished:
+                return
+            self._total = max(total, 0)
+            self._t0 = self._clock()
+            self._last_emit = self._t0
+
+    def update(self, done: int, total: int, detail: str = "") -> None:
+        """Emit a liveness line if a full interval has passed since the last."""
+        if self._interval <= 0:
+            return
+        with self._lock:
+            if self._finished:
+                return
+            self._total = max(int(total), 0)
+            self._done = max(0, int(done))
+            now = self._clock()
+            if now - self._last_emit < self._interval:
+                return
+            self._last_emit = now
+            self._emitted += 1
+            message = self._format(now - self._t0, detail)
+        self._log("%s", message)
+
+    def finish(self, detail: str = "Complete") -> None:
+        """Close out. Emits a total only if a heartbeat was already emitted.
+
+        A run that never got a heartbeat never worried anyone, so it gets
+        no completion line either — otherwise every sub-second index would
+        add a WARNING to the log of a user who had no problem.
+        """
+        with self._lock:
+            if self._finished:
+                return
+            self._finished = True
+            if not self._emitted:
+                return
+            elapsed = self._clock() - self._t0
+            message = f"{self._label}: finished after {elapsed:.0f}s ({detail})"
+        self._log("%s", message)
+
+    def close(self) -> list:
+        """Match ProgressReporter.close(). No async sends to drain."""
+        with self._lock:
+            self._finished = True
+        return []
+
+    def _format(self, elapsed: float, detail: str) -> str:
+        parts = [f"{self._label}: still working after {elapsed:.0f}s"]
+        if self._total > 0:
+            parts.append(f"{min(self._done, self._total)}/{self._total} files")
+        elif self._done > 0:
+            parts.append(f"{self._done} files")
+        if detail:
+            parts.append(detail)
+        line = ", ".join(parts)
+        if self._emitted == 1:
+            # Say WHY the usual indicator is missing, once, on the first
+            # line — otherwise this reads as an error rather than a
+            # substitute for a progress bar the client declined to request.
+            line += (
+                " [no progressToken from this client, so heartbeats replace"
+                " progress notifications; set JCODEMUNCH_HEARTBEAT_SECONDS=0"
+                " to silence]"
+            )
+        return line
 
 
 def _future_done(fut) -> bool:

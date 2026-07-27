@@ -4608,6 +4608,23 @@ _AUTO_WATCH_EXCLUDED = frozenset({
     "check_embedding_drift",
 })
 
+# Tools that index their own `path` argument, so the pre-dispatch hook must not
+# index it too (#384, fixed v1.108.189). These are DEFERRED, not excluded: the
+# folder is still registered for watching, just AFTER the tool runs and without
+# a second indexing pass.
+#
+# Excluding them outright was the obvious alternative and was rejected — it
+# silently removes auto-start-watching from the single most natural way a user
+# would ask for a folder to be watched, which is a behaviour removal under the
+# 1.x zero-surprise contract. Dropping only the redundant `ensure_indexed` was
+# rejected too: the watch task's own initial index would then race the tool's
+# index on the same `indexwrite` lock (60s waits), which is plausibly worse than
+# the duplicate work it replaces. Deferring avoids both — by the time the watch
+# task starts, the tool's index is on disk and there is nothing left to race.
+_AUTO_WATCH_DEFERRED = frozenset({
+    "index_folder",
+})
+
 
 def _get_source_root(repo: str, storage_path: Optional[str]) -> Optional[str]:
     """Resolve repo ID to folder path using IndexStore public API.
@@ -4629,23 +4646,29 @@ def _get_source_root(repo: str, storage_path: Optional[str]) -> Optional[str]:
         return None
 
 
-async def _auto_watch_if_needed(name: str, arguments: dict, storage_path: Optional[str]) -> None:
+async def _auto_watch_if_needed(
+    name: str, arguments: dict, storage_path: Optional[str]
+) -> Optional[str]:
     """Auto-watch hook: ensure unwatched repos are indexed before tool execution.
 
     Hook fires BEFORE tool dispatch to ensure the tool runs against fresh data.
+
+    Returns a folder path when the registration has been DEFERRED to after the
+    tool runs (#384) — the caller must hand it to ``_auto_watch_after_tool``.
+    Returns None in every other case, including every pre-v1.108.189 path.
     """
     global _watcher_manager
 
     # Check if watcher is running and auto-watch is enabled
     if _watcher_manager is None:
-        return
+        return None
 
     if not config_module.get("watch", False):
-        return
+        return None
 
     # Check if tool is excluded
     if name in _AUTO_WATCH_EXCLUDED:
-        return
+        return None
 
     # Extract folder from arguments
     folder: Optional[str] = None
@@ -4664,11 +4687,16 @@ async def _auto_watch_if_needed(name: str, arguments: dict, storage_path: Option
             folder = _get_source_root(repo, storage_path)
 
     if not folder:
-        return
+        return None
 
     # Check if already watched
     if _watcher_manager.is_watched(folder):
-        return
+        return None
+
+    # The tool about to run indexes this exact folder itself. Do nothing now;
+    # register the watch afterwards, against the index the tool produces (#384).
+    if name in _AUTO_WATCH_DEFERRED:
+        return folder
 
     # Opportunistic standby takeover before indexing
     maybe_takeover = getattr(_watcher_manager, "maybe_takeover", None)
@@ -4676,7 +4704,7 @@ async def _auto_watch_if_needed(name: str, arguments: dict, storage_path: Option
         result = await maybe_takeover(folder)
         if result.get("status") in {"started", "already_watched"}:
             await _watcher_manager.ensure_indexed(folder)
-            return
+            return None
 
     # Race-safe reindex, then start watching
     try:
@@ -4685,6 +4713,37 @@ async def _auto_watch_if_needed(name: str, arguments: dict, storage_path: Option
         logger.debug("Auto-watch: indexed and watching %s", folder)
     except Exception:
         logger.debug("Auto-watch failed for %s", folder, exc_info=True)
+    return None
+
+
+async def _auto_watch_after_tool(folder: str) -> None:
+    """Register a deferred auto-watch after the indexing tool has run (#384).
+
+    Runs no index of its own: the tool that just completed is what made the
+    index current, so a second pass here would be the exact duplication this
+    deferral exists to remove.
+    """
+    global _watcher_manager
+
+    if _watcher_manager is None:
+        return
+    if _watcher_manager.is_watched(folder):
+        return
+
+    try:
+        # Standby takeover still applies — another process may hold the lock.
+        # Unlike the eager path this does NOT call ensure_indexed afterwards.
+        maybe_takeover = getattr(_watcher_manager, "maybe_takeover", None)
+        if maybe_takeover is not None:
+            result = await maybe_takeover(folder)
+            if result.get("status") in {"started", "already_watched"}:
+                logger.debug("Auto-watch (deferred): took over %s", folder)
+                return
+
+        await _watcher_manager.add_folder(folder, skip_initial_index=True)
+        logger.debug("Auto-watch (deferred): watching %s without reindex", folder)
+    except Exception:
+        logger.debug("Deferred auto-watch failed for %s", folder, exc_info=True)
 
 
 # --- Turn-economy steering (v1.108.158) --------------------------------------
@@ -5013,6 +5072,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent] | CallToolR
     _t0_call = time.perf_counter()
     _call_ok = True
     _reporter_ref = None  # progress reporter; drained in finally (#359)
+    _deferred_watch = None  # folder to start watching AFTER dispatch (#384)
     try:   # main handler try starts here, before coerce
         # Extract cross-cutting args that are not part of any tool's schema.
         # `format` controls compact-output encoding (see .encoding package).
@@ -5100,7 +5160,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent] | CallToolR
 
         # Auto-watch: ensure unwatched repos are indexed before tool execution
         try:
-            await _auto_watch_if_needed(name, arguments, storage_path)
+            _deferred_watch = await _auto_watch_if_needed(name, arguments, storage_path)
         except Exception:
             logger.debug("Auto-watch check failed", exc_info=True)
 
@@ -5108,14 +5168,27 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent] | CallToolR
         _progress_cb = None
         if name in ("index_repo", "index_folder", "index_file", "embed_repo"):
             try:
-                from .progress import make_progress_notify, ProgressReporter
+                from .progress import (
+                    make_progress_notify, ProgressReporter, HeartbeatReporter,
+                )
+                _label = {"index_repo": "Index", "index_folder": "Index",
+                          "index_file": "Index", "embed_repo": "Embed"}[name]
                 _progress_notify = make_progress_notify(server)
                 if _progress_notify:
-                    _label = {"index_repo": "Index", "index_folder": "Index",
-                              "index_file": "Index", "embed_repo": "Embed"}[name]
                     _reporter = ProgressReporter(_progress_notify, _label)
                     _progress_cb = _reporter.update
                     _reporter_ref = _reporter  # drained in finally (#359)
+                else:
+                    # v1.108.189 (#383): the client sent no progressToken, so
+                    # the spec forbids progress notifications. Fall back to an
+                    # elapsed-time heartbeat on the log channel instead of
+                    # running silently — silence is what made a healthy long
+                    # index indistinguishable from a hang in #375.
+                    _heartbeat = HeartbeatReporter(_label)
+                    if _heartbeat.enabled:
+                        _heartbeat.start()
+                        _progress_cb = _heartbeat.update
+                        _reporter_ref = _heartbeat  # finished + closed in finally
             except Exception:
                 logger.debug("Progress setup failed", exc_info=True)
 
@@ -6662,10 +6735,26 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent] | CallToolR
         # stdio connection / loses the tool result (#359).
         if _reporter_ref is not None:
             try:
-                from .progress import drain_reporter
+                from .progress import drain_reporter, HeartbeatReporter
+                # A heartbeat that already spoke closes the loop (#383) — an
+                # operator told "still working after 120s" needs the line that
+                # says it ended. ProgressReporter is deliberately NOT finished
+                # here: its 100% send is the tool's to make, and synthesising
+                # one would put a notification after the work it describes.
+                if isinstance(_reporter_ref, HeartbeatReporter):
+                    _reporter_ref.finish("ok" if _call_ok else "failed")
                 await drain_reporter(_reporter_ref)
             except Exception:
                 logger.debug("Progress drain failed for %s", name, exc_info=True)
+        # Deferred auto-watch (#384): the tool has now indexed this folder, so
+        # the watch task can start without repeating that work. Runs even when
+        # the tool failed — add_folder is cheap and the watcher's own change
+        # handling is what recovers a partial index.
+        if _deferred_watch is not None:
+            try:
+                await _auto_watch_after_tool(_deferred_watch)
+            except Exception:
+                logger.debug("Deferred auto-watch failed", exc_info=True)
         try:
             from .storage.token_tracker import record_tool_latency
             duration_ms = (time.perf_counter() - _t0_call) * 1000.0
