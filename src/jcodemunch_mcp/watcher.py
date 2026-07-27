@@ -291,13 +291,25 @@ async def _watch_single(
     quiet: bool = False,
     log_file_handle: Optional[IO] = None,
     skip_initial_index: bool = False,
+    record_index_ready: bool = False,
 ) -> None:
     """Watch a single folder and re-index on changes.
 
     ``skip_initial_index`` suppresses the initial incremental index for the
-    one case where the caller has *already* indexed this exact folder (#384).
+    cases where the caller has *already* indexed this exact folder (#384, #388).
     The hash cache is still built from the on-disk index, so change detection
     is unaffected — only the redundant second full pass is skipped.
+
+    ``record_index_ready`` says whether this task writes the reindex record for
+    that caller's work. It is a SEPARATE flag from ``skip_initial_index``
+    because the two skipping callers differ (v1.108.191):
+
+    * the ``index_folder`` tool indexes but writes no reindex record, so the
+      watcher records readiness on its behalf or ``get_watch_status`` never
+      learns the index is current;
+    * ``ensure_indexed`` writes a real record carrying the real result, and a
+      synthetic one written over it would replace a measurement with a
+      placeholder.
     """
     _watcher_output(f"Watching {folder_path} (debounce={debounce_ms}ms)", quiet=quiet, log_file_handle=log_file_handle)
 
@@ -350,14 +362,17 @@ async def _watch_single(
         # The hash cache still has to be built, or every subsequent
         # WatcherChange loses its old_hash passthrough.
         _build_hash_cache()
-        # The index IS fresh, and get_watch_status has no other way to learn
-        # that. Recording who made it fresh keeps the claim checkable rather
-        # than presenting the caller's work as the watcher's own.
-        mark_reindex_done(repo_id, {
-            "success": True,
-            "message": "initial index skipped; folder was indexed by the caller",
-            "skipped_initial_index": True,
-        })
+        if record_index_ready:
+            # The caller indexed but recorded nothing (the index_folder tool
+            # writes no reindex record), and get_watch_status has no other way
+            # to learn the index is current. Recording who made it fresh keeps
+            # the claim checkable rather than presenting the caller's work as
+            # the watcher's own.
+            mark_reindex_done(repo_id, {
+                "success": True,
+                "message": "initial index skipped; folder was indexed by the caller",
+                "skipped_initial_index": True,
+            })
     else:
         _watcher_output(f"  Initial index for {folder_path}...", quiet=quiet, log_file_handle=log_file_handle)
         mark_reindex_start(repo_id)
@@ -627,7 +642,12 @@ class WatcherManager:
         except Exception:
             logger.debug("Failed to record watcher task crash for %s", folder, exc_info=True)
 
-    def _start_watch_task(self, folder: str, skip_initial_index: bool = False) -> asyncio.Task:
+    def _start_watch_task(
+        self,
+        folder: str,
+        skip_initial_index: bool = False,
+        record_index_ready: bool = False,
+    ) -> asyncio.Task:
         task = asyncio.create_task(
             _watch_single(
                 folder_path=folder,
@@ -640,6 +660,7 @@ class WatcherManager:
                 quiet=self._quiet,
                 log_file_handle=self._log_file_handle,
                 skip_initial_index=skip_initial_index,
+                record_index_ready=record_index_ready,
             ),
             name=f"watch:{folder}",
         )
@@ -647,7 +668,13 @@ class WatcherManager:
         self._watched.add(folder)
         return task
 
-    async def maybe_takeover(self, folder: str, *, skip_initial_index: bool = False) -> dict:
+    async def maybe_takeover(
+        self,
+        folder: str,
+        *,
+        skip_initial_index: bool = False,
+        record_index_ready: bool = False,
+    ) -> dict:
         """Try to become the active watcher for a standby folder.
 
         ``skip_initial_index=True`` adopts the folder without the watch task's
@@ -674,7 +701,11 @@ class WatcherManager:
         self._locked.add(folder)
         try:
             self._clear_standby(folder)
-            self._start_watch_task(folder, skip_initial_index=skip_initial_index)
+            self._start_watch_task(
+                folder,
+                skip_initial_index=skip_initial_index,
+                record_index_ready=record_index_ready,
+            )
             _watcher_output(
                 f"WatcherManager: standby took over {folder}",
                 quiet=self._quiet,
@@ -688,7 +719,12 @@ class WatcherManager:
 
     # ── Folder management ────────────────────────────────────────────────────
 
-    async def add_folder(self, folder: str, skip_initial_index: bool = False) -> dict:
+    async def add_folder(
+        self,
+        folder: str,
+        skip_initial_index: bool = False,
+        record_index_ready: bool = False,
+    ) -> dict:
         """Add a folder to watch, acquiring lock and starting watch task.
 
         Returns dict with 'status' and optionally 'task' or 'already_watched' key.
@@ -712,7 +748,11 @@ class WatcherManager:
         self._clear_standby(folder)
 
         try:
-            self._start_watch_task(folder, skip_initial_index=skip_initial_index)
+            self._start_watch_task(
+                folder,
+                skip_initial_index=skip_initial_index,
+                record_index_ready=record_index_ready,
+            )
             _watcher_output(
                 f"WatcherManager: started watching {folder}",
                 quiet=self._quiet,

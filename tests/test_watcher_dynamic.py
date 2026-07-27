@@ -294,9 +294,15 @@ class TestAutoWatchPathFromPathArg:
         )
 
         assert deferred is None
+        # The eager pre-dispatch index is what this path exists for and it stays.
         mock_mgr.ensure_indexed.assert_called_once()
         mock_mgr.add_folder.assert_called_once()
-        assert "skip_initial_index" not in mock_mgr.add_folder.call_args[1]
+        # v1.108.191: exactly ONE index. The watch task adopts ensure_indexed's
+        # work instead of walking the same tree again, and it must NOT write a
+        # synthetic reindex record over the real one ensure_indexed already
+        # wrote.
+        assert mock_mgr.add_folder.call_args[1]["skip_initial_index"] is True
+        assert mock_mgr.add_folder.call_args[1].get("record_index_ready", False) is False
 
 
 class TestAutoWatchPathFromRepoArg:

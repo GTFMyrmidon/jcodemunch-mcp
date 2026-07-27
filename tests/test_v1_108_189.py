@@ -464,6 +464,7 @@ class TestWatchTaskSkipsItsOwnInitialIndex:
                 follow_symlinks=False,
                 quiet=True,
                 skip_initial_index=True,
+                record_index_ready=True,
             )
         )
         await asyncio.sleep(0.2)

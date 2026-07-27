@@ -4698,18 +4698,38 @@ async def _auto_watch_if_needed(
     if name in _AUTO_WATCH_DEFERRED:
         return folder
 
-    # Opportunistic standby takeover before indexing
-    maybe_takeover = getattr(_watcher_manager, "maybe_takeover", None)
-    if maybe_takeover is not None:
-        result = await maybe_takeover(folder)
-        if result.get("status") in {"started", "already_watched"}:
-            await _watcher_manager.ensure_indexed(folder)
-            return None
-
-    # Race-safe reindex, then start watching
+    # Index ONCE, then adopt that index (v1.108.191).
+    #
+    # Both arms of this used to index twice. The takeover arm started a watch
+    # task (whose own initial index runs as a concurrent asyncio task) and THEN
+    # awaited ensure_indexed on the same folder, putting two writers on the
+    # `indexwrite` lock where every acquire waits up to 60s. The fall-through
+    # arm awaited ensure_indexed and then called add_folder, whose watch task
+    # walked the same tree a second time -- serialized, so not a race, but a
+    # redundant full walk on EVERY eager auto-watch, not just index_folder.
+    #
+    # ensure_indexed is the one to keep: it is awaited (so the tool runs against
+    # fresh data, which is this hook's whole purpose) and it is race-safe via
+    # the manager's _pending coordination. The watch tasks' initial index is the
+    # redundant one, so it is skipped and the caller's index is adopted.
+    #
+    # Ordering matters: ensure_indexed must complete BEFORE any watch task
+    # starts, or the task builds its hash cache from an index that is about to
+    # be rewritten underneath it.
     try:
         await _watcher_manager.ensure_indexed(folder)
-        await _watcher_manager.add_folder(folder)
+
+        # record_index_ready stays False on this path: ensure_indexed already
+        # wrote the real reindex record, and the watch task must not overwrite
+        # it with a synthetic one.
+        maybe_takeover = getattr(_watcher_manager, "maybe_takeover", None)
+        if maybe_takeover is not None:
+            result = await maybe_takeover(folder, skip_initial_index=True)
+            if result.get("status") in {"started", "already_watched"}:
+                logger.debug("Auto-watch: indexed, took over %s", folder)
+                return None
+
+        await _watcher_manager.add_folder(folder, skip_initial_index=True)
         logger.debug("Auto-watch: indexed and watching %s", folder)
     except Exception:
         logger.debug("Auto-watch failed for %s", folder, exc_info=True)
@@ -4741,12 +4761,19 @@ async def _auto_watch_after_tool(folder: str) -> None:
         # been watching the folder. Caught by their independent fix for #384.
         maybe_takeover = getattr(_watcher_manager, "maybe_takeover", None)
         if maybe_takeover is not None:
-            result = await maybe_takeover(folder, skip_initial_index=True)
+            result = await maybe_takeover(
+                folder, skip_initial_index=True, record_index_ready=True,
+            )
             if result.get("status") in {"started", "already_watched"}:
                 logger.debug("Auto-watch (deferred): took over %s", folder)
                 return
 
-        await _watcher_manager.add_folder(folder, skip_initial_index=True)
+        # record_index_ready=True: the index_folder tool indexes but writes no
+        # reindex record, so get_watch_status learns nothing unless the watcher
+        # records readiness on its behalf.
+        await _watcher_manager.add_folder(
+            folder, skip_initial_index=True, record_index_ready=True,
+        )
         logger.debug("Auto-watch (deferred): watching %s without reindex", folder)
     except Exception:
         logger.debug("Deferred auto-watch failed for %s", folder, exc_info=True)

@@ -2,6 +2,65 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.191] - 2026-07-27 - the eager auto-watch path indexes once
+
+Found while porting @Bortlesboat's #388. Both arms of `_auto_watch_if_needed`
+indexed twice, and neither was the bug #384 reported. One of them is older and
+wider than #384 ever was.
+
+### Fixed
+
+- **The takeover arm ran two concurrent indexes on the same folder.**
+  `maybe_takeover` returning `started` spawns a watch task whose initial index
+  runs as a concurrent `asyncio` task. The caller then awaited `ensure_indexed`
+  on the same folder. Two writers, one `indexwrite` lock, and every acquire
+  passes `wait_seconds=60.0`. This is the race the #384 discussion kept warning
+  about, and it was already in the code.
+
+- **The fall-through arm walked the tree twice.** `ensure_indexed` was awaited,
+  then `add_folder` started a watch task that walked the same tree again.
+  Serialized, so not a race, but a redundant full walk on **every eager
+  auto-watch** — any tool touching an unwatched repo, not just `index_folder`.
+
+  Both collapse to one restructure: index once via `ensure_indexed`, awaited,
+  then adopt that index. `maybe_takeover` and `add_folder` are both told to
+  skip.
+
+  ⚠ **Ordering is the fix, not just the flag, and there is a test on the call
+  order.** `ensure_indexed` must complete before any watch task starts, or the
+  task builds its hash cache from an index that is about to be rewritten
+  underneath it. The previous code started the task first.
+
+  `ensure_indexed` is the pass that was kept because it is the one that is both
+  awaited (so the tool runs against fresh data, which is this hook's entire
+  purpose) and race-safe through the manager's `_pending` coordination.
+
+### Changed
+
+- **`record_index_ready` is a separate flag from `skip_initial_index`.**
+  v1.108.189 had the skip path always write a synthetic reindex record. That was
+  right for its only caller and wrong the moment a second one appeared, because
+  the two differ:
+
+  - the `index_folder` tool indexes but writes **no** reindex record, so the
+    watcher must record readiness on its behalf or `get_watch_status` never
+    learns the index is current;
+  - `ensure_indexed` writes a **real** record carrying the real result, and a
+    synthetic one written over it would replace a measurement with a
+    placeholder.
+
+  One flag could not serve both without either losing the signal or clobbering
+  it, so there are two, each meaning one thing.
+
+### Tests
+
+- New `tests/test_v1_108_191.py` (9), including the call-order pin, both
+  directions of the record/skip split, and a guard that the two internal
+  standby-loop callers still pass no flags — they take over precisely so the
+  folder gets indexed.
+
+No tool-count, INDEX_VERSION or schema change.
+
 ## [1.108.190] - 2026-07-27 - the takeover half of the double index
 
 Credit for this one goes to **@Bortlesboat**, who found it independently in

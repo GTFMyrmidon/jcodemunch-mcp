@@ -24,7 +24,7 @@ class _Recorder:
     def __init__(self):
         self.calls = []
 
-    def __call__(self, folder, skip_initial_index=False):
+    def __call__(self, folder, skip_initial_index=False, record_index_ready=False):
         self.calls.append((folder, skip_initial_index))
         return None
 

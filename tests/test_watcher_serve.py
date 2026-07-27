@@ -994,14 +994,14 @@ class TestAutoWatchTakeover:
             def is_watched(self, folder_arg):
                 return False
 
-            async def maybe_takeover(self, folder_arg):
-                calls.append(("maybe_takeover", folder_arg))
+            async def maybe_takeover(self, folder_arg, **kwargs):
+                calls.append(("maybe_takeover", folder_arg, kwargs.get("skip_initial_index")))
                 return {"status": "started", "folder": folder_arg}
 
             async def ensure_indexed(self, folder_arg, **kwargs):
                 calls.append(("ensure_indexed", folder_arg))
 
-            async def add_folder(self, folder_arg):
+            async def add_folder(self, folder_arg, **kwargs):
                 calls.append(("add_folder", folder_arg))
 
         monkeypatch.setattr(server, "_watcher_manager", FakeWatcherManager())
@@ -1010,9 +1010,12 @@ class TestAutoWatchTakeover:
         await server._auto_watch_if_needed("search_symbols", {"path": str(folder)}, None)
 
         resolved = str(folder.resolve())
+        # v1.108.191 reordered this: index ONCE, awaited, THEN adopt it. The old
+        # order started the watch task first, so its own initial index ran
+        # concurrently with ensure_indexed on the same indexwrite lock.
         assert calls == [
-            ("maybe_takeover", resolved),
             ("ensure_indexed", resolved),
+            ("maybe_takeover", resolved, True),
         ]
 
     @pytest.mark.asyncio
@@ -1027,15 +1030,15 @@ class TestAutoWatchTakeover:
             def is_watched(self, folder_arg):
                 return False
 
-            async def maybe_takeover(self, folder_arg):
-                calls.append(("maybe_takeover", folder_arg))
+            async def maybe_takeover(self, folder_arg, **kwargs):
+                calls.append(("maybe_takeover", folder_arg, kwargs.get("skip_initial_index")))
                 return {"status": "lock_failed", "folder": folder_arg, "standby": True}
 
             async def ensure_indexed(self, folder_arg, **kwargs):
                 calls.append(("ensure_indexed", folder_arg))
 
-            async def add_folder(self, folder_arg):
-                calls.append(("add_folder", folder_arg))
+            async def add_folder(self, folder_arg, **kwargs):
+                calls.append(("add_folder", folder_arg, kwargs.get("skip_initial_index")))
                 return {"status": "started", "folder": folder_arg}
 
         monkeypatch.setattr(server, "_watcher_manager", FakeWatcherManager())
@@ -1044,10 +1047,12 @@ class TestAutoWatchTakeover:
         await server._auto_watch_if_needed("search_symbols", {"path": str(folder)}, None)
 
         resolved = str(folder.resolve())
+        # ensure_indexed exactly once, and the watch task adopts it rather than
+        # walking the same tree a second time (v1.108.191).
         assert calls == [
-            ("maybe_takeover", resolved),
             ("ensure_indexed", resolved),
-            ("add_folder", resolved),
+            ("maybe_takeover", resolved, True),
+            ("add_folder", resolved, True),
         ]
 
 
