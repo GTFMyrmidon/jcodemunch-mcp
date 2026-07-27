@@ -4733,9 +4733,15 @@ async def _auto_watch_after_tool(folder: str) -> None:
     try:
         # Standby takeover still applies — another process may hold the lock.
         # Unlike the eager path this does NOT call ensure_indexed afterwards.
+        #
+        # v1.108.190 (#388, @Bortlesboat): the takeover branch has to skip the
+        # initial index too. v1.108.189 covered add_folder and left this path
+        # doing a full pass over the tree the tool had just indexed, so the
+        # double index survived for exactly the case where another process had
+        # been watching the folder. Caught by their independent fix for #384.
         maybe_takeover = getattr(_watcher_manager, "maybe_takeover", None)
         if maybe_takeover is not None:
-            result = await maybe_takeover(folder)
+            result = await maybe_takeover(folder, skip_initial_index=True)
             if result.get("status") in {"started", "already_watched"}:
                 logger.debug("Auto-watch (deferred): took over %s", folder)
                 return

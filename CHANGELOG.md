@@ -2,6 +2,56 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.190] - 2026-07-27 - the takeover half of the double index
+
+Credit for this one goes to **@Bortlesboat**, who found it independently in
+[#388](https://github.com/jgravelle/jcodemunch-mcp/pull/388) while fixing #384.
+Their PR and v1.108.189 landed the same day and reached the same design; theirs
+covered a path ours did not.
+
+### Fixed
+
+- **`maybe_takeover` skips the initial index on the deferred path (#388).**
+  v1.108.189 stopped `index_folder` double-indexing by deferring registration
+  and passing `skip_initial_index` to `add_folder`. It left `maybe_takeover`
+  alone. So when another process had been watching the folder and this one
+  adopted it, the watch task still ran a full pass over the tree the tool had
+  just finished indexing, and the exact bug #384 reported survived for that
+  case.
+
+  `maybe_takeover` now takes `skip_initial_index`, and `_auto_watch_after_tool`
+  passes it.
+
+  Their PR threaded the same flag through the same three functions. Where the
+  two differ: they registered the watch before dispatch and hydrated the hash
+  cache lazily; we defer registration to after dispatch, which also closes the
+  window where a file edited mid-index could fire a debounced reindex into the
+  tool's in-flight index on the `indexwrite` lock. Both halves were right about
+  different things.
+
+  ⚠ **The default stays `False`, and there is a test pinning it.** The standby
+  signal loop and the fallback retry loop both call `maybe_takeover` when
+  nothing else is indexing, and there the initial index is the entire point of
+  taking over. Flipping the default would silently stop that.
+
+- **The hash cache hydrates lazily when the eager build never ran (#388).**
+  Also @Bortlesboat's, and it fixes something older than either #384 fix: the
+  cache is built only on a SUCCESSFUL initial index, so a failed one left it
+  empty for the life of the watch task. An empty cache does not raise. Every
+  subsequent `WatcherChange` just loses its `old_hash`, which is the quiet kind
+  of wrong.
+
+  ⚠ Guarded on an explicit `_hash_cache_built` flag rather than their
+  `if not _hash_cache`, so a legitimately empty index does not re-read the store
+  on every change.
+
+### Tests
+
+- New `tests/test_v1_108_190.py` (7), including the default-drift pin and a
+  non-vacuity check that the lazy guard is reachable.
+
+No tool-count, INDEX_VERSION or schema change.
+
 ## [1.108.189] - 2026-07-27 - the two residual #375 sub-problems, closed
 
 Both were filed as *decisions not taken* rather than bugs not found. Neither was

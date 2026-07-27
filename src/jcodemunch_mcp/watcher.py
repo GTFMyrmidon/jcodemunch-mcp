@@ -327,13 +327,16 @@ async def _watch_single(
 
     # Memory hash cache: rel_path -> content hash (for WatcherChange old_hash passthrough)
     _hash_cache: dict[str, str] = {}
+    _hash_cache_built = False
 
     def _build_hash_cache() -> None:
         """Build the memory hash cache from the on-disk index."""
+        nonlocal _hash_cache_built
         _hash_cache.clear()
         idx = store.load_index(_repo_owner, _repo_store_name)
         if idx and idx.file_hashes:
             _hash_cache.update(idx.file_hashes)
+        _hash_cache_built = True
 
     # Do an initial incremental index to ensure the index is current.
     # ...unless the caller just did it (#384). Indexing the same tree twice for
@@ -416,6 +419,15 @@ async def _watch_single(
         )
 
         try:
+            # v1.108.190 (#388, @Bortlesboat): hydrate lazily if the initial
+            # index was skipped and the eager build could not read an index yet.
+            # A watch task that starts alongside an external index can reach its
+            # first change with nothing cached, and an empty cache silently
+            # drops every old_hash rather than failing. Their PR caught this;
+            # the flag (rather than `if not _hash_cache`) keeps a legitimately
+            # empty index from re-reading the store on every change.
+            if not _hash_cache_built:
+                _build_hash_cache()
             # Map watchfiles Change enum to WatcherChange objects with old_hash from memory cache
             _change_map = {Change.added: "added", Change.modified: "modified", Change.deleted: "deleted"}
             watcher_changes: list[WatcherChange] = []
@@ -635,8 +647,16 @@ class WatcherManager:
         self._watched.add(folder)
         return task
 
-    async def maybe_takeover(self, folder: str) -> dict:
-        """Try to become the active watcher for a standby folder."""
+    async def maybe_takeover(self, folder: str, *, skip_initial_index: bool = False) -> dict:
+        """Try to become the active watcher for a standby folder.
+
+        ``skip_initial_index=True`` adopts the folder without the watch task's
+        own initial index, for the caller that has just indexed it (#384, #388).
+
+        ⚠ The default is False and must stay False: the standby signal loop and
+        the fallback retry loop both call this when nothing else is indexing,
+        and there the initial index is the whole point of taking over.
+        """
         folder = str(Path(folder).expanduser().resolve())
         if folder in self._watched:
             return {"status": "already_watched", "folder": folder}
@@ -654,7 +674,7 @@ class WatcherManager:
         self._locked.add(folder)
         try:
             self._clear_standby(folder)
-            self._start_watch_task(folder)
+            self._start_watch_task(folder, skip_initial_index=skip_initial_index)
             _watcher_output(
                 f"WatcherManager: standby took over {folder}",
                 quiet=self._quiet,
