@@ -95,6 +95,13 @@ def index_coverage_meta(index) -> Optional[dict]:
         out["dropped_after_discovery"] = cov["dropped_after_discovery"]
     if cov.get("unaccounted"):
         out["unaccounted"] = cov["unaccounted"]
+    # v1.108.193: surfaced separately from `excluded` because it answers a
+    # different question. `excluded` says what this corpus is not about; a
+    # binary or a gitignored tree was never a candidate. `withheld` says a real,
+    # current, wanted source file was refused by one of OUR limits, which is the
+    # one exclusion reason a reader must not read as "the file is not there".
+    if cov.get("withheld"):
+        out["withheld"] = cov["withheld"]
     return out
 
 

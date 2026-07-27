@@ -145,6 +145,20 @@ def absence_refusal(record: Optional[dict]) -> Optional[str]:
             "the index did not cover the whole tree at scan time, so the target "
             "may sit in a file that never entered the corpus"
         )
+    _withheld = (record.get("coverage") or {}).get("withheld") or {}
+    if _withheld:
+        # v1.108.193. Named BEFORE the generic state rule, and separately from
+        # `partial`, because the cause is ours and the remedy is a setting.
+        # `partial` says the corpus has a gap; this says WE made it, by refusing
+        # a file that is real, current and wanted. A reader who is told "the
+        # index did not cover the whole tree" goes looking at their repo; a
+        # reader told a file was too large goes and raises the limit.
+        _detail = ", ".join(f"{n} {reason}" for reason, n in sorted(_withheld.items()))
+        return (
+            f"the index withheld files that belong to this corpus ({_detail}), so "
+            "the target may sit in a real, current file that our own limits kept "
+            "out; raise the relevant limit and re-index before claiming absence"
+        )
     _tree = record.get("working_tree") or {}
     if _tree.get("files_not_in_index"):
         # Named before the generic state rule (#377 item 5). Work OUTSIDE the

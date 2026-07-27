@@ -23,6 +23,7 @@ ENV_VAR_MAPPING = {
     "JCODEMUNCH_USE_AI_SUMMARIES": "use_ai_summaries",
     "JCODEMUNCH_TRUSTED_FOLDERS": "trusted_folders",
     "JCODEMUNCH_TRUSTED_FOLDERS_WHITELIST_MODE": "trusted_folders_whitelist_mode",
+    "JCODEMUNCH_MAX_FILE_SIZE": "max_file_size",
     "JCODEMUNCH_MAX_FOLDER_FILES": "max_folder_files",
     "JCODEMUNCH_MAX_INDEX_FILES": "max_index_files",
     "JCODEMUNCH_STALENESS_DAYS": "staleness_days",
@@ -325,6 +326,7 @@ DEFAULTS = {
     "use_ai_summaries": "auto",
     "trusted_folders": [],
     "trusted_folders_whitelist_mode": True,
+    "max_file_size": 512000,
     "max_folder_files": 2000,
     "max_index_files": 10000,
     "staleness_days": 7,
@@ -480,6 +482,7 @@ CONFIG_TYPES = {
     "use_ai_summaries": (bool, str),
     "trusted_folders": list,
     "trusted_folders_whitelist_mode": bool,
+    "max_file_size": int,
     "max_folder_files": int,
     "max_index_files": int,
     "staleness_days": int,
@@ -1920,6 +1923,13 @@ def generate_template() -> str:
   // "trusted_folders_whitelist_mode": true,
   //   true = only trust folders in trusted_folders list (default, secure).
   //   false = trust all folders EXCEPT those in trusted_folders (blocklist mode).
+
+  // "max_file_size": 512000,
+  //   Per-file byte cap for indexing. A file larger than this is skipped with
+  //   reason `too_large`, and a search over a corpus that skipped one cannot
+  //   prove absence -- the file is real, current and wanted, it just never
+  //   entered the index. The default is deliberately conservative; raise it if
+  //   your repo has large legitimate source files, and re-index.
 
   // "max_folder_files": 2000,
   //   Maximum number of files to index when indexing a local folder.

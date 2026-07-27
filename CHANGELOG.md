@@ -2,6 +2,72 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.193] - 2026-07-27 - the size cap can be raised, and a withheld file cannot prove absence
+
+Both reported by @dkiaulakis, measured on 1.108.188. The ask was small. The
+finding underneath it was not.
+
+### Added
+
+- **`JCODEMUNCH_MAX_FILE_SIZE` / `max_file_size`.** The per-file size cap was
+  the one limit of three with no way to move it. Its neighbours
+  `DEFAULT_MAX_INDEX_FILES` and `DEFAULT_MAX_FOLDER_FILES` each had a resolver
+  reading config; the size cap had none, appeared in none of the 79
+  `JCODEMUNCH_*` variables, was not among `index_folder()`'s 11 parameters, and
+  was passed from `index_folder.py:1490` as a hardcoded constant. All five
+  points verified before the fix.
+
+  New `security.get_max_file_size()`, same shape as its siblings.
+  ⚠ **The default is unchanged at 500KB.** The ask was an escape hatch, not a
+  higher default, and 500KB still protects the common case from a parse worth
+  less than it costs.
+
+### Fixed
+
+- ⚠ **A file refused for size no longer lets the corpus call itself complete.**
+  His sentence, which is the actual finding: *"Size is the one exclusion reason
+  where the file is real, current, and wanted."*
+
+  Worse than reported. `too_large` is refused during **discovery**, so the file
+  never reaches `files_accepted`, and the 1.108.176 completeness reconciliation
+  balances perfectly because it compares what the walk accepted against what got
+  indexed — the refused file is outside **both** numbers. Coverage reported
+  `complete: true` over a corpus missing a real, current, wanted source file.
+  The contract was answering a question about the walk while presenting the
+  answer as being about the tree.
+
+  Exclusions now split in two:
+
+  - **excluded** — the corpus being defined. A `.png` is `binary`, a vendored
+    tree is `gitignore`, a lockfile is `wrong_extension`. Never candidates. A
+    search over this can still prove absence, and **must**, or no real
+    repository could prove anything.
+  - **withheld** — real source, current, wanted, refused by one of *our* limits:
+    `too_large`, `file_limit`, `unreadable`. Any of these makes `complete` false,
+    and a zero-result over such a corpus cannot prove absence.
+
+  The refusal names the cause and the remedy, separately from the generic
+  `partial` message, because they send a reader to different places: "the index
+  did not cover the whole tree" sends them to inspect their repo, while naming
+  `too_large` sends them to a setting.
+
+  ⚠ **Existing indexes will start reporting `complete: false` after a re-index
+  if they withheld anything, and affected absence claims degrade.** That is the
+  contract reporting something true it was previously hiding, not a regression.
+
+### Tests
+
+- New `tests/test_v1_108_193.py` (15), including the boundary that keeps the
+  signal useful: structural exclusions alone must still permit absence.
+- ⚠ `tests/test_watcher_memory_cache.py` corrected. It set a low cap by patching
+  `DEFAULT_MAX_FILE_SIZE`, which the resolver no longer consults, so the patch
+  silently did nothing and the watcher fast path indexed an oversize file. It
+  now sets the config value, which exercises the override a user actually has —
+  a stronger test than before, and the failure is what proved the fast path
+  honours the new route end to end.
+
+No tool-count, INDEX_VERSION or schema change.
+
 ## [1.108.192] - 2026-07-27 - #377 P3: one immutable snapshot, start to finish
 
 The two edges @mightydanp pinned adversarially on #377 after reviewing

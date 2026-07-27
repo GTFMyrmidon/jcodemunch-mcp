@@ -357,6 +357,42 @@ MAX_INDEX_FILES_ENV_VAR = "JCODEMUNCH_MAX_INDEX_FILES"
 DEFAULT_MAX_FOLDER_FILES = 2_000
 MAX_FOLDER_FILES_ENV_VAR = "JCODEMUNCH_MAX_FOLDER_FILES"
 
+# The size cap was the only one of these three with no way to move it
+# (reported by @dkiaulakis, v1.108.193). Its two neighbours each had a
+# resolver reading config; this one was passed as a hardcoded constant from
+# index_folder.py and appeared in none of the 79 JCODEMUNCH_* variables.
+#
+# The default is NOT raised. 500KB stays, because it protects the common case
+# from a parse that costs more than the file is worth. What changes is that a
+# caller who knows their own corpus can move it, the same way they can already
+# move both file-count limits three lines up.
+MAX_FILE_SIZE_ENV_VAR = "JCODEMUNCH_MAX_FILE_SIZE"
+
+
+def get_max_file_size(max_size: Optional[int] = None) -> int:
+    """Resolve the per-file byte cap from arg or config.
+
+    Parity with ``get_max_index_files`` / ``get_max_folder_files``, which is the
+    whole point: the size cap was the one limit of the three that could not be
+    moved by any route (v1.108.193).
+
+    Args:
+        max_size: Explicit override. Must be a positive integer when provided.
+
+    Returns:
+        Positive byte limit. Falls back to the default if config is unset or
+        invalid, matching the siblings rather than failing the index.
+    """
+    if max_size is not None:
+        if max_size <= 0:
+            raise ValueError("max_size must be a positive integer")
+        return max_size
+
+    value = _config.get("max_file_size", DEFAULT_MAX_FILE_SIZE)
+    if isinstance(value, int) and value > 0:
+        return value
+    return DEFAULT_MAX_FILE_SIZE
+
 
 def get_max_index_files(max_files: Optional[int] = None) -> int:
     """Resolve the maximum indexed file count from arg or config.

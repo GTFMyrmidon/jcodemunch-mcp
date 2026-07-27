@@ -419,12 +419,20 @@ class TestFastPathHonorsAllDiscoveryFilters:
         store = IndexStore(base_path=storage)
         owner, name = result["repo"].split("/", 1)
 
-        # Grow big.py past the size cap. Patch the module-level constant so
-        # the fast-path filter config sees a low cap (real cap is 500 KB;
-        # writing that many bytes per test is wasteful).
-        original_cap = idx_mod.DEFAULT_MAX_FILE_SIZE
+        # Grow big.py past the size cap. Set the cap through the CONFIG route
+        # (real cap is 500 KB; writing that many bytes per test is wasteful).
+        #
+        # v1.108.193: this used to patch idx_mod.DEFAULT_MAX_FILE_SIZE, which
+        # index_folder passed straight through as a hardcoded constant. It now
+        # resolves via security.get_max_file_size(), so the constant is no
+        # longer consulted and patching it silently did nothing -- the fast path
+        # indexed the oversize file and this assertion caught it. Setting the
+        # config value exercises the override a user actually has, which makes
+        # this a stronger test than it was.
+        from jcodemunch_mcp import config as _cfg_mod
+        original_cap = _cfg_mod._GLOBAL_CONFIG.get("max_file_size")
         try:
-            idx_mod.DEFAULT_MAX_FILE_SIZE = 200  # bytes
+            _cfg_mod._GLOBAL_CONFIG["max_file_size"] = 200  # bytes
             big_file.write_text("# padding\n" * 100)  # ~1000 bytes
             watcher_changes = [
                 WatcherChange("modified", str(big_file.resolve()), "__cache_miss__"),
@@ -445,7 +453,10 @@ class TestFastPathHonorsAllDiscoveryFilters:
                 f"result: {result2}"
             )
         finally:
-            idx_mod.DEFAULT_MAX_FILE_SIZE = original_cap
+            if original_cap is None:
+                _cfg_mod._GLOBAL_CONFIG.pop("max_file_size", None)
+            else:
+                _cfg_mod._GLOBAL_CONFIG["max_file_size"] = original_cap
 
     def test_added_file_under_skip_dir_not_indexed(self, tmp_path):
         """Per #306: watchfiles can emit events under build/cache dirs that

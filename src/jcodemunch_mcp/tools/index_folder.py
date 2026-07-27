@@ -29,6 +29,7 @@ from ..security import (
     is_secret_file,
     is_binary_file,
     DEFAULT_MAX_FILE_SIZE,
+    get_max_file_size,
     get_max_folder_files,
     get_extra_ignore_patterns,
     get_skip_directories,
@@ -86,6 +87,25 @@ def _attach_cap_report(result: dict, cap: Optional[dict]) -> None:
         f"from the index. Raise max_folder_files in config.jsonc (or set "
         f"JCODEMUNCH_MAX_FOLDER_FILES) and re-index, or narrow the path."
     )
+
+#: Skip reasons where the file is REAL, CURRENT and WANTED, and we refused it
+#: anyway (v1.108.193, reported by @dkiaulakis). Every other reason describes a
+#: file that was never a candidate for this corpus: a `.png` is `binary`, a
+#: vendored tree is `gitignore`, a `.lock` is `wrong_extension`. Excluding
+#: those is the corpus being defined, and a search over it can still prove
+#: absence.
+#:
+#: These are different in kind. The file is source, it is current, an agent
+#: asked about it by name, and it is missing because of OUR limit rather than
+#: the caller's intent. A zero-result over a corpus that withheld one cannot
+#: prove absence: "I never learned that file" and "that file does not exist"
+#: are exactly the two things this whole contract exists to keep apart.
+WITHHELD_SKIP_REASONS = frozenset({
+    "too_large",     # over max_file_size, which until v1.108.193 could not be raised
+    "file_limit",    # over max_folder_files / max_index_files
+    "unreadable",    # a permission or IO failure, NOT a statement about the file
+})
+
 
 def _coverage_report(
     skip_counts: dict, files_indexed: int, no_symbols_count: int,
@@ -148,7 +168,16 @@ def _coverage_report(
     unaccounted = int(files_accepted) - int(files_indexed) - sum(drops.values())
     if unaccounted > 0:
         report["unaccounted"] = unaccounted
-    report["complete"] = (int(files_indexed) == int(files_accepted)) and not drops
+    # v1.108.193: withheld files never reach `files_accepted` (they are refused
+    # during discovery), so the reconciliation below balances perfectly while a
+    # real, wanted source file sits outside the corpus. Counting them keeps
+    # `complete` honest about the tree rather than only about the walk.
+    withheld = {k: v for k, v in skips.items() if k in WITHHELD_SKIP_REASONS}
+    if withheld:
+        report["withheld"] = withheld
+    report["complete"] = (
+        int(files_indexed) == int(files_accepted) and not drops and not withheld
+    )
     return report
 
 
@@ -1487,7 +1516,7 @@ def index_folder(
             _fast_filter_cfg = _build_index_filters(
                 root=folder_path.resolve(),
                 follow_symlinks=follow_symlinks,
-                max_size=DEFAULT_MAX_FILE_SIZE,
+                max_size=get_max_file_size(),
                 extra_spec=_fast_extra_spec,
                 forced_paths=set(),
                 skip_dirs_regex=_build_skip_dirs_regex(),
