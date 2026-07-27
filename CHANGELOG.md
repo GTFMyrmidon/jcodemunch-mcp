@@ -2,6 +2,84 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.187] - 2026-07-26 - both fusion exits record the features they measured
+
+### Fixed
+
+- ⚠ **`get_ranked_context`'s fusion exit passed no `extract_ledger_features` payload
+  at all**, so `top1_score`, `top2_score` and `identity_hit` were recorded as their
+  defaults on every ranking-ledger row it ever wrote. Three of regret's six signals
+  read those columns, and a default is indistinguishable from a measurement once it
+  is in the ledger. Reported as an adjacent finding in 1.108.186 rather than folded
+  in; this is the follow-through.
+
+  Identity comes from the identity channel's own `raw_scores` rather than being left
+  to default. That exit BUILDS the identity channel, so unlike its sibling it knows
+  per symbol whether identity matched, and `build_identity_channel` admits only
+  symbols scoring above zero.
+
+- ⚠ **`search_symbols`' fusion exit had the narrower half of the same defect.** It
+  passed the features but built their input as `{"score": s}` with no `identity` key,
+  so `identity_hit` was recorded False on every fusion row regardless of what the
+  identity channel found. Both fusion producers are fixed together: shipping one
+  honest and one false would have guaranteed a third release on the same column.
+
+- ⚠ **A pre-fix single-result row was clustered as `thin_result` on the strength of a
+  default.** That detector treats `top1_score is None` as thin, which reads a MISSING
+  measurement as a weak one — correct where the score was genuinely absent, wrong for
+  rows that recorded no features at all. Only those rows are skipped; every other
+  producer's behaviour is unchanged, pinned by tests for the empty-result,
+  weak-score and other-tool cases.
+
+### Changed
+
+- **The ledger input is now SEPARATE from the confidence input, and a failing test is
+  what found this.** `compute_confidence` sniffs the same `identity` key when no
+  `has_identity_match` is passed, scoring it 1.0 known-true / 0.7 unknown / 0.6
+  known-false — so feeding identity through the shared input would have moved the
+  confidence of every fusion search (measured: 0.742 -> 0.783 on one fixture). That
+  is a ranking-adjacent change with its own justification, not a side effect of
+  recording a column, so the confidence call keeps the input it has always had. The
+  separation is pinned behaviourally: `attach_confidence` must receive rows without
+  an identity key on the same call where the ledger features receive rows with one.
+
+- **`ledger_trust.identity_label_is_trustworthy`, and its discriminator is weaker
+  than the semantic one on purpose.** `identity_hit` has no value a pre-fix row alone
+  can carry — pre-fix is always `0`, and `0` is also an honest post-fix answer, so
+  matching on the column would discard good evidence forever. What IS exact: a row
+  that returned symbols while recording no `top1_score` can only have come from the
+  exit that passed no features. Post-fix a non-empty result always carries a fused
+  score, and an empty result carries no `returned_ids` to match on.
+
+- ⚠ **`search_symbols_fusion`'s history is NOT separable, and no heuristic is used.**
+  It always recorded top scores and only omitted the `identity` key, so its pre-fix
+  rows are indistinguishable from honest post-fix rows that had no identity match.
+  There is no version or timestamp column to bound it by. The recency window is the
+  only remedy and that is stated rather than papered over.
+
+- ⚠ **An identity guard on regret's `vocabulary_gap` was UNREACHABLE and was
+  removed** — found by a failing non-vacuity test, not by reading. That signal
+  requires `semantic_used`, and a `get_ranked_context_fusion` row with
+  `semantic_used=1` is already refused by the v1.108.186 rule, so the rows are
+  suppressed either way. An unreachable guard reads like protection and is not.
+
+- Disclosure follows the 1.108.186 pattern: `events_without_ledger_features` on
+  `analyze_regret`, `no_ledger_features` per repo in `analyze_perf --ledger`, and
+  `identity_hits` no longer counts a default as a miss. Both keys are absent — not
+  zero — for a caller whose ledger holds no such row.
+
+### Notes
+
+- New `tests/test_v1_108_187.py` (24). Non-vacuity shown on both exits: reverting
+  either producer fails four tests. Compatibility pinned — a pre-fix ledger stays
+  readable and unrewritten.
+- No tool-count change, no `INDEX_VERSION` change, no schema change. Replay gate
+  green (mrr/ndcg/recall 1.0), which matters here because the confidence separation
+  is the thing that kept ranking output still.
+- Still open from the 1.108.186 findings: `token_tracker._ensure_loaded(None)` on the
+  first savings write repins the perf db to `~/.code-index` even when a tool was
+  handed a `storage_path`.
+
 ## [1.108.186] - 2026-07-26 - the ledger stops claiming a channel that never ran
 
 ### Fixed

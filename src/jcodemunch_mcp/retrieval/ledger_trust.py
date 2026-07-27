@@ -44,6 +44,8 @@ from typing import Sequence
 #   6 top1_score  7 top2_score  8 confidence  9 semantic_used
 #   10 identity_hit  11 repo_is_stale
 _TOOL = 2
+_RETURNED_IDS = 5
+_TOP1_SCORE = 6
 _SEMANTIC_USED = 9
 
 # (tool, semantic_used-as-bool) pairs whose semantic label is not evidence.
@@ -74,3 +76,41 @@ def semantic_label_is_trustworthy(row: Sequence) -> bool:
     except (IndexError, TypeError, KeyError):
         return True
     return (tool, semantic_used) not in _UNTRUSTED_SEMANTIC_LABELS
+
+
+def identity_label_is_trustworthy(row: Sequence) -> bool:
+    """True when ``row``'s ``identity_hit`` column is evidence of anything.
+
+    v1.108.187. Until then, `_get_ranked_context_fusion` passed no
+    ``extract_ledger_features`` payload at all, so ``top1_score``, ``top2_score``
+    and ``identity_hit`` were recorded as their defaults on every row it wrote.
+
+    **The discriminator is different from the semantic one, and weaker on purpose.**
+    ``identity_hit`` has no value a pre-fix row alone can carry — pre-fix is always
+    `0`, and `0` is also a perfectly honest post-fix answer, so matching on the
+    column would discard good evidence forever. What IS exact: a row that returned
+    symbols while recording no ``top1_score`` can only have come from the exit that
+    passed no features. Post-fix, a non-empty result always carries a fused score,
+    and an empty result carries no ``returned_ids`` to match on.
+
+    ⚠ **`search_symbols_fusion` is NOT covered, and cannot be.** It always passed
+    ``top1_score``/``top2_score`` and only ever omitted the ``identity`` key its
+    features read, so its pre-fix rows are indistinguishable from honest post-fix
+    rows that genuinely had no identity match. There is no version or timestamp
+    column to bound it by, so its history is unseparable: the recency window is the
+    only remedy, and inventing a heuristic here would be worse than the gap.
+    """
+    try:
+        tool = row[_TOOL]
+        if tool != MISLABELLED_FUSION_TOOL:
+            return True
+        if row[_TOP1_SCORE] is not None:
+            return True
+        returned = row[_RETURNED_IDS]
+    except (IndexError, TypeError, KeyError):
+        return True
+    # `returned_ids` is stored as a JSON array string; "[]" and None both mean the
+    # scan returned nothing, which is not a row this rule can speak about.
+    if not returned or returned in ("[]", b"[]"):
+        return True
+    return False

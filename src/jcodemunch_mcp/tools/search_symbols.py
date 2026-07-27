@@ -1861,9 +1861,25 @@ def _search_symbols_fusion(
     )
     if _runtime_summary:
         meta["runtime_freshness"] = _runtime_summary
+    # v1.108.187. `_ledger_feats` reads `identity`/`identity_match` off these rows and
+    # this input carried neither, so `identity_hit` was recorded False on every fusion
+    # row regardless of what the identity channel found. Unlike the non-fusion paths,
+    # whose rows carry `identity` from `_identity_score`, the fused rows never get
+    # that key. The channel's own `raw_scores` is the answer, and it admits only
+    # symbols scoring above zero.
+    #
+    # ⚠ Fed to the LEDGER only, not to `attach_confidence`. `compute_confidence`
+    # sniffs the same key when no `has_identity_match` is passed and scores it 1.0
+    # known-true / 0.7 unknown / 0.6 known-false, so sharing one input would move the
+    # confidence of every fusion search. That is its own change with its own
+    # justification, not a side effect of recording a column.
     _conf_input = [{"score": s} for s in _conf_scores]
     _attach_confidence(result, _conf_input, is_stale=_probe.repo_is_stale)
-    _feat = _ledger_feats(_conf_input)
+    _id_raw = getattr(id_ch, "raw_scores", None) or {}
+    _feat = _ledger_feats([
+        {"score": fr.score, "identity": _id_raw.get(fr.symbol_id, 0.0)}
+        for fr in fused[:effective_limit]
+    ])
     _record_ranking_event(
         tool="search_symbols_fusion",
         repo=f"{owner}/{name}",

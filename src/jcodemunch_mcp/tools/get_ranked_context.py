@@ -829,11 +829,36 @@ def _get_ranked_context_fusion(
         file_rel = sid.split("::", 1)[0] if "::" in sid else ""
         item["_freshness"] = _probe.classify(file_rel)
     fusion_result["_meta"]["freshness"] = _probe.summary(context_items)
+    # v1.108.187. This exit passed NO ledger features, so `top1_score`, `top2_score`
+    # and `identity_hit` were recorded as their defaults on every row it has ever
+    # written — three of regret's six signals read those columns, and a default is
+    # indistinguishable from a measurement once it is in the ledger.
+    #
+    # Identity comes from the channel's own `raw_scores` rather than being left to
+    # default: this exit BUILDS the identity channel, so unlike its sibling it knows
+    # per symbol whether identity matched. `build_identity_channel` only admits
+    # symbols scoring above zero, so membership is the match.
+    # ⚠ The ledger input is SEPARATE from the confidence input on purpose.
+    # `compute_confidence` sniffs the same `identity` key when the caller passes no
+    # `has_identity_match`, and scores it 1.0 known-true / 0.7 unknown / 0.6
+    # known-false — so feeding identity to `attach_confidence` would MOVE the
+    # confidence of every fusion search (measured: 0.742 -> 0.783 on one fixture).
+    # That is a ranking-adjacent behaviour change, not "record the feature", so the
+    # confidence call keeps the input it has always had.
     _attach_confidence(
         fusion_result,
         [{"score": item.get("fusion_score")} for item in context_items],
         is_stale=_probe.repo_is_stale,
     )
+    from ..retrieval.confidence import extract_ledger_features as _ledger_feats
+    _id_raw = getattr(id_ch, "raw_scores", None) or {}
+    _feat = _ledger_feats([
+        {
+            "score": item.get("fusion_score"),
+            "identity": _id_raw.get(item.get("symbol_id", ""), 0.0),
+        }
+        for item in context_items
+    ])
     # v1.108.186. This was a hardcoded `semantic_used=True` while the channel list
     # above builds lexical, identity and structural — never similarity — so every
     # row this exit has ever written claimed a channel that did not run. Derived
@@ -849,6 +874,7 @@ def _get_ranked_context_fusion(
         confidence=fusion_result["_meta"].get("confidence"),
         semantic_used=_semantic_used,
         repo_is_stale=_probe.repo_is_stale,
+        **_feat,
     )
 
     # v1.108.185. The last exit in this tool without a verdict. The non-fusion
