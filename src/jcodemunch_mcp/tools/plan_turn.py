@@ -321,6 +321,9 @@ def plan_turn(
     _attach_confidence(result, recommended_symbols)
     _feat = _ledger_feats(recommended_symbols)
     _record_ranking_event(
+        # v1.108.188: this tool takes storage_path directly, so it can name the
+        # store without going through a store object.
+        base_path=storage_path,
         tool="plan_turn",
         repo=f"{owner}/{name}",
         query=query,

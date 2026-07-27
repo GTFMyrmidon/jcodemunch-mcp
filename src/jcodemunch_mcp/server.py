@@ -6670,7 +6670,14 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent] | CallToolR
             from .storage.token_tracker import record_tool_latency
             duration_ms = (time.perf_counter() - _t0_call) * 1000.0
             _repo_arg = arguments.get("repo") if isinstance(arguments, dict) else None
-            record_tool_latency(name, duration_ms, ok=_call_ok, repo=_repo_arg)
+            # v1.108.188: persist against the store the CALL named. analyze_perf
+            # reads tool_calls and ranking_events through one base path, so a row
+            # written to the default while the reader looks in a named store is
+            # invisible to the only thing that consumes it.
+            _store_arg = arguments.get("storage_path") if isinstance(arguments, dict) else None
+            record_tool_latency(
+                name, duration_ms, ok=_call_ok, repo=_repo_arg, base_path=_store_arg,
+            )
         except Exception:
             logger.debug("Latency recording failed for %s", name, exc_info=True)
 

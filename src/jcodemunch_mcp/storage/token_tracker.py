@@ -485,8 +485,15 @@ class _State:
         duration_ms: float,
         ok: bool = True,
         repo: Optional[str] = None,
+        base_path: Optional[str] = None,
     ) -> None:
-        """Record a tool-call duration. Called from server.call_tool."""
+        """Record a tool-call duration. Called from server.call_tool.
+
+        ``base_path`` routes the persisted row to the store the CALL named, the same
+        fix the ranking ledger gets in v1.108.188 — ``analyze_perf`` reads BOTH
+        tables through one base path, so latency rows had the same write-here /
+        read-there split.
+        """
         try:
             with self._lock:
                 ring = self._tool_latencies.get(tool_name)
@@ -497,7 +504,7 @@ class _State:
                 if not ok:
                     self._tool_errors[tool_name] = self._tool_errors.get(tool_name, 0) + 1
                 if _config.get("perf_telemetry_enabled", False):
-                    self._persist_perf_locked(tool_name, duration_ms, ok, repo)
+                    self._persist_perf_locked(tool_name, duration_ms, ok, repo, base_path)
         except Exception:
             logger.debug("record_latency failed for %s", tool_name, exc_info=True)
 
@@ -529,7 +536,26 @@ class _State:
         with self._lock:
             return self._latency_stats_locked()
 
-    def _perf_db_path(self) -> Optional[Path]:
+    def _perf_db_path(self, base_path: Optional[str] = None) -> Optional[Path]:
+        """Resolve the perf db path, preferring an explicitly supplied base.
+
+        ⚠ v1.108.188. ``self._base_path`` is whatever the FIRST caller of
+        ``_ensure_loaded`` happened to pass, and most savings writes pass nothing —
+        so it is usually ``None`` and this resolved to ``~/.code-index`` even for a
+        tool that was handed a ``storage_path``. The read side
+        (``ranking_db_query(base_path=)``, ``analyze_perf(storage_path=)``) has
+        always been parameterised, so writes and reads could disagree about which
+        database they meant. An explicit ``base_path`` wins and is NOT cached: it
+        belongs to one call, not to the process.
+        """
+        if base_path is not None:
+            try:
+                root = Path(base_path)
+                root.mkdir(parents=True, exist_ok=True)
+                return root / _PERF_DB_FILE
+            except Exception:
+                logger.debug("Failed to resolve perf db path at %s", base_path, exc_info=True)
+                return None
         if self._perf_db_path_cached is not None:
             return self._perf_db_path_cached
         try:
@@ -542,11 +568,11 @@ class _State:
             logger.debug("Failed to resolve perf db path", exc_info=True)
             return None
 
-    def _ensure_perf_db_locked(self) -> Optional[sqlite3.Connection]:
+    def _ensure_perf_db_locked(self, base_path: Optional[str] = None) -> Optional[sqlite3.Connection]:
         """Open the perf SQLite db (create schema on first use)."""
         if self._perf_db_failed:
             return None
-        path = self._perf_db_path()
+        path = self._perf_db_path(base_path)
         if path is None:
             return None
         try:
@@ -587,7 +613,12 @@ class _State:
             return conn
         except Exception:
             logger.debug("Failed to open perf db at %s", path, exc_info=True)
-            self._perf_db_failed = True
+            # v1.108.188. The kill-switch covers the DEFAULT db only. One unwritable
+            # caller-supplied path must not disable telemetry for every other store
+            # in the process — the flag was written when there was only one path it
+            # could ever mean.
+            if base_path is None:
+                self._perf_db_failed = True
             return None
 
     def record_ranking_event(
@@ -603,16 +634,24 @@ class _State:
         semantic_used: bool = False,
         identity_hit: bool = False,
         repo_is_stale: bool = False,
+        base_path: Optional[str] = None,
     ) -> None:
         """Append a ranking event to the perf db (no-op when disabled).
 
         v1.79.0 will use these rows to tune per-repo BM25/semantic weights.
+
+        ⚠ v1.108.188. ``base_path`` is the store the CALLER was told to use. Without
+        it these rows landed in ``~/.code-index`` whatever ``storage_path`` the tool
+        was handed, while every reader (``ranking_db_query``, ``WeightTuner``,
+        ``analyze_perf``) took a base path — so a non-default store wrote to one
+        database and read from another, and the tuner learned from a ledger the
+        searches had never written to.
         """
         if not _config.get("perf_telemetry_enabled", False):
             return
         try:
             with self._lock:
-                conn = self._ensure_perf_db_locked()
+                conn = self._ensure_perf_db_locked(base_path)
                 if conn is None:
                     return
                 try:
@@ -654,8 +693,9 @@ class _State:
         duration_ms: float,
         ok: bool,
         repo: Optional[str],
+        base_path: Optional[str] = None,
     ) -> None:
-        conn = self._ensure_perf_db_locked()
+        conn = self._ensure_perf_db_locked(base_path)
         if conn is None:
             return
         try:
@@ -1051,9 +1091,10 @@ def record_tool_latency(
     duration_ms: float,
     ok: bool = True,
     repo: Optional[str] = None,
+    base_path: Optional[str] = None,
 ) -> None:
     """Record a tool-call duration for the current session (and optional perf db)."""
-    _state.record_latency(tool_name, duration_ms, ok=ok, repo=repo)
+    _state.record_latency(tool_name, duration_ms, ok=ok, repo=repo, base_path=base_path)
 
 
 def latency_stats() -> dict:
@@ -1072,7 +1113,11 @@ def record_ranking_event(**kwargs) -> None:
     """Append a ranking event to telemetry.db (no-op when telemetry disabled).
 
     Keyword args: tool, repo, query, returned_ids, top1_score, top2_score,
-    confidence, semantic_used, identity_hit, repo_is_stale.
+    confidence, semantic_used, identity_hit, repo_is_stale, base_path.
+
+    ⚠ Pass ``base_path`` whenever the caller was given a ``storage_path``, or the
+    row lands in the default store while the readers look in the named one
+    (v1.108.188).
     """
     _state.record_ranking_event(**kwargs)
 

@@ -6,7 +6,7 @@ from fnmatch import fnmatch
 from typing import Optional
 
 from ..storage import IndexStore, record_savings, estimate_savings, cost_avoided as _cost_avoided
-from ._utils import index_status_to_tool_error, resolve_repo
+from ._utils import index_status_to_tool_error, ledger_base_path as _ledger_base_path, resolve_repo
 from .get_context_bundle import _count_tokens
 from .search_symbols import (
     _tokenize,
@@ -619,6 +619,9 @@ def get_ranked_context(
     negative_evidence = _vres["negative_evidence"]
     result["_meta"]["verdict"] = _vres["verdict"]
     _record_ranking_event(
+        # v1.108.188: the store this call was told to use, not whichever one the
+        # first savings write of the process happened to pin.
+        base_path=_ledger_base_path(store),
         tool="get_ranked_context",
         repo=f"{owner}/{name}",
         query=query,
@@ -867,6 +870,7 @@ def _get_ranked_context_fusion(
     # as `search_symbols_fusion`, which records its real `similarity_used` flag.
     _semantic_used = any(ch.name == "similarity" for ch in channels)
     _record_ranking_event(
+        base_path=_ledger_base_path(store),
         tool="get_ranked_context_fusion",
         repo=f"{owner}/{name}",
         query=query,

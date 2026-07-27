@@ -13,7 +13,12 @@ logger = logging.getLogger(__name__)
 
 from ..storage import IndexStore, record_savings, estimate_savings, cost_avoided
 from ..parser.imports import resolve_specifier
-from ._utils import resolve_repo, resolve_fqn, index_status_to_tool_error
+from ._utils import (
+    resolve_repo,
+    resolve_fqn,
+    index_status_to_tool_error,
+    ledger_base_path as _ledger_base_path,
+)
 
 BYTES_PER_TOKEN = 4
 
@@ -1127,6 +1132,9 @@ def search_symbols(
     _attach_confidence(result, _conf_input, is_stale=_probe.repo_is_stale)
     _feat = _ledger_feats(_conf_input)
     _record_ranking_event(
+        # v1.108.188: the store this call was told to use, not whichever one the
+        # first savings write of the process happened to pin.
+        base_path=_ledger_base_path(store),
         tool="search_symbols",
         repo=f"{owner}/{name}",
         query=query,
@@ -1494,6 +1502,9 @@ def _search_symbols_semantic(
     _attach_confidence(result, _conf_input, is_stale=_probe.repo_is_stale)
     _feat = _ledger_feats(_conf_input)
     _record_ranking_event(
+        # v1.108.188: the store this call was told to use, not whichever one the
+        # first savings write of the process happened to pin.
+        base_path=_ledger_base_path(store),
         tool="search_symbols",
         repo=f"{owner}/{name}",
         query=query,
@@ -1881,6 +1892,7 @@ def _search_symbols_fusion(
         for fr in fused[:effective_limit]
     ])
     _record_ranking_event(
+        base_path=_ledger_base_path(store),
         tool="search_symbols_fusion",
         repo=f"{owner}/{name}",
         query=query,

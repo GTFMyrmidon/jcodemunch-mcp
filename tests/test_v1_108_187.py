@@ -74,8 +74,10 @@ def _r187_env(tmp_path, monkeypatch):
 
     repo = index_folder(path=str(proj), use_ai_summaries=False, storage_path=str(store))["repo"]
 
-    ledger = tmp_path / "ledger"
-    ledger.mkdir()
+    # v1.108.188: telemetry rows now follow the caller's storage_path, so the ledger
+    # IS the store. A separate directory only captured rows while the writers
+    # ignored it.
+    ledger = store
     fresh = _r187_tt._State()
     fresh._base_path = str(ledger)
     fresh._loaded = True

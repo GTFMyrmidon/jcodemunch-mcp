@@ -20,6 +20,23 @@ _bare_name_cache: dict[str, tuple[float, dict[str, list[str]]]] = {}
 _BARE_NAME_LOCK = threading.Lock()
 
 
+def ledger_base_path(store) -> "Optional[str]":
+    """The storage root a ranking-ledger row belongs to (v1.108.188).
+
+    Every reader of ``ranking_events`` takes a base path — ``ranking_db_query``,
+    ``WeightTuner``, ``analyze_perf`` — but the writers passed none, so rows landed
+    in ``~/.code-index`` whatever ``storage_path`` the tool was handed. A search
+    against a non-default store therefore wrote to one database and read from
+    another. Returns ``None`` when the store cannot say, which restores the previous
+    default rather than dropping the row.
+    """
+    try:
+        base = getattr(store, "base_path", None)
+        return str(base) if base is not None else None
+    except Exception:  # pragma: no cover - a store that cannot name itself
+        return None
+
+
 def _get_bare_name_map(store: IndexStore) -> dict[str, list[str]]:
     """Return a cached bare-name → [owner/name] mapping for the store's base_path.
 

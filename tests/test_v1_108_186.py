@@ -62,8 +62,11 @@ def _r186_ledger(tmp_path, monkeypatch):
     when the tool was handed a ``storage_path``. Pre-marking the state loaded is
     what keeps a test off the developer's real telemetry.db.
     """
-    base = tmp_path / "ledger"
-    base.mkdir()
+    # v1.108.188: the ledger lives in the STORE, so this must be the same directory
+    # `_r186_repo` indexes into. A separate directory only captured rows while
+    # telemetry writes ignored the caller's storage_path.
+    base = tmp_path / "idx"
+    base.mkdir(exist_ok=True)
     fresh = _r186_tt._State()
     fresh._base_path = str(base)
     fresh._loaded = True

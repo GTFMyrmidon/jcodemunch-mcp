@@ -2,6 +2,68 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.188] - 2026-07-26 - telemetry rows land in the store the caller named
+
+### Fixed
+
+- ⚠ **Every reader of the perf database took a base path; the writers passed none.**
+  `ranking_db_query`, `WeightTuner` and `analyze_perf` all resolve through an explicit
+  base, but writes resolved through `_State._base_path` — whatever the FIRST caller of
+  `_ensure_loaded` happened to pass. Most savings writes pass nothing, so it was
+  usually `None` and every row landed in `~/.code-index` no matter which
+  `storage_path` the tool was handed.
+
+  **A search against a named store therefore wrote to one database and read from
+  another.** Measured, not argued: with a fresh tracker state and a boxed home, five
+  producers wrote five rows to `~/.code-index` while
+  `ranking_db_query(base_path=<named store>)` returned zero. Reported as an adjacent
+  finding in 1.108.186, left open in 1.108.187, fixed here.
+
+- **`WeightTuner` on a non-default store was learning from a ledger the searches had
+  never written to** — the same base path it reads through was the one nothing wrote
+  to. On a default install writer and reader coincided, which is why this stayed
+  invisible.
+
+- **Both tables in that file had it.** `ranking_events` gets `base_path` at all six
+  producer call sites (`search_symbols` lexical/semantic/fusion, `get_ranked_context`
+  main/fusion, `plan_turn`), and `tool_calls` gets it from the dispatcher, which
+  already extracts `repo` from the same arguments. `analyze_perf` reads both through
+  one base path, so fixing one and not the other would have left the tool half blind.
+
+- ⚠ **`_perf_db_failed` is a process-wide kill switch, and it now covers the DEFAULT
+  database only.** It was written when there was one path it could possibly mean; one
+  unwritable caller-supplied store must not take telemetry down for every other store
+  in the process.
+
+### Changed
+
+- New `tools._utils.ledger_base_path(store)`, returning `None` when a store cannot
+  name itself — which restores the previous default rather than dropping the row.
+- An explicit base path is **not cached**. It belongs to one call, not to the process:
+  caching it would make the second store in a session silently write to the first
+  one's database. The default path keeps its cache.
+- ⚠ **Deliberately NOT changed: where the savings TOTAL lives.** `_ensure_loaded`
+  still pins `_base_path` on first call. That counter is a process-global lifetime
+  total loaded once from disk, and re-anchoring it mid-process would move a user's
+  cumulative savings between files. Telemetry rows are per-call facts about a named
+  store; the savings total is not. Pinned by a test so the asymmetry is a decision
+  rather than an oversight.
+
+### Notes
+
+- ⚠ **Nine tests from 1.108.186 and 1.108.187 had to be corrected, and that is part of
+  the finding:** their fixtures put the ledger in a different directory from the
+  storage path and captured rows only BECAUSE writes ignored `storage_path`. They now
+  point at the store, which is where rows actually go. The 1.108.186 and 1.108.187
+  pins were re-verified as non-vacuous under the corrected fixtures.
+- The practical effect for tests: a test that writes ranking events no longer needs
+  `_state._loaded = True` to stay off the developer's real `telemetry.db`, because it
+  no longer routes through `_base_path` at all.
+- New `tests/test_v1_108_188.py` (14). Reverting the routing fails six of them.
+  Compatibility pinned: a call with no `base_path` still uses the default store.
+- No tool-count change, no `INDEX_VERSION` change, no schema change. Replay gate green
+  (mrr/ndcg/recall 1.0).
+
 ## [1.108.187] - 2026-07-26 - both fusion exits record the features they measured
 
 ### Fixed
