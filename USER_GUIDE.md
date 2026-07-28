@@ -227,7 +227,7 @@ With optional GitHub auth and AI summaries:
   Disables context-provider enrichment during indexing.
 
 * `JCODEMUNCH_EMBED_MODEL`
-  Activates local embedding via `sentence-transformers`. Set to a model name such as `all-MiniLM-L6-v2`. Install the optional dep with `pip install jcodemunch-mcp[semantic]`.
+  Activates local embedding via `sentence-transformers`. Set to a model name such as `all-MiniLM-L6-v2`. Install the optional dep with `pip install "jcodemunch-mcp[semantic]"`.
 
 * `OPENAI_EMBED_MODEL`
   Activates OpenAI embedding (requires `OPENAI_API_KEY` also set). Example: `text-embedding-3-small`.

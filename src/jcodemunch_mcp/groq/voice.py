@@ -5,7 +5,7 @@ Uses Groq's full audio stack:
   - LLM for code Q&A (via existing inference module)
   - Orpheus (playht) for text-to-speech
 
-Requires: pip install jcodemunch-mcp[groq-voice]
+Requires: pip install "jcodemunch-mcp[groq-voice]"
 """
 
 import io
@@ -51,7 +51,7 @@ def _check_audio_deps() -> Optional[str]:
     if missing:
         return (
             f"Missing audio dependencies: {', '.join(missing)}\n"
-            "Install with: pip install jcodemunch-mcp[groq-voice]"
+            'Install with: pip install "jcodemunch-mcp[groq-voice]"'
         )
     return None
 

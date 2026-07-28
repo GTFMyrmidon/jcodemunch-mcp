@@ -8,7 +8,7 @@ Pipeline:
   5. Composite slides + audio into MP4 via FFmpeg
 
 MVP: static slides (no animation). Requires FFmpeg on PATH.
-Requires: pip install jcodemunch-mcp[groq-explain]
+Requires: pip install "jcodemunch-mcp[groq-explain]"
 """
 
 import json
@@ -97,7 +97,7 @@ def _check_deps() -> Optional[str]:
         parts = []
         pip_pkgs = [m for m in missing if m != "ffmpeg (system binary, not pip)"]
         if pip_pkgs:
-            parts.append("pip install jcodemunch-mcp[groq-explain]")
+            parts.append('pip install "jcodemunch-mcp[groq-explain]"')
         if "ffmpeg (system binary, not pip)" in missing:
             parts.append("Install FFmpeg: https://ffmpeg.org/download.html")
         return f"Missing dependencies: {', '.join(missing)}\n" + "\n".join(parts)

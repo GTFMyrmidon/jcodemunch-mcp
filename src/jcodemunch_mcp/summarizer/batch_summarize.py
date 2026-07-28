@@ -425,7 +425,7 @@ class BatchSummarizer(BaseSummarizer):
 
                 warnings.warn(
                     "ANTHROPIC_API_KEY is set but the 'anthropic' package is not installed. "
-                    "Install it with: pip install jcodemunch-mcp[anthropic]",
+                    'Install it with: pip install "jcodemunch-mcp[anthropic]"',
                     stacklevel=2,
                 )
             self.client = None
@@ -482,7 +482,7 @@ class GeminiBatchSummarizer(BaseSummarizer):
 
                 warnings.warn(
                     "GOOGLE_API_KEY is set but the 'google-generativeai' package is not installed. "
-                    "Install it with: pip install jcodemunch-mcp[gemini]",
+                    'Install it with: pip install "jcodemunch-mcp[gemini]"',
                     stacklevel=2,
                 )
             self.client = None

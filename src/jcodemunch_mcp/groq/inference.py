@@ -13,7 +13,7 @@ def _get_client(cfg: GcmConfig):
     except ImportError:
         print(
             "Error: openai package required. Install with:\n"
-            "  pip install jcodemunch-mcp[groq]",
+            '  pip install "jcodemunch-mcp[groq]"',
             file=sys.stderr,
         )
         sys.exit(1)
