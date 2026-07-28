@@ -900,7 +900,7 @@ def resolve_explicit_paths(
     walk_root: Path,
     paths: list,
     max_files: Optional[int],
-    max_size: int = DEFAULT_MAX_FILE_SIZE,
+    max_size: Optional[int] = None,
     follow_symlinks: bool = False,
 ) -> tuple[list[Path], list[str], dict[str, int], list[str]]:
     """Materialise a caller-supplied list of paths into the (files, warnings,
@@ -928,6 +928,10 @@ def resolve_explicit_paths(
     files they already know about (git-diff list, edited-files list,
     rg-matched list) without paying the cost of a full directory walk.
     """
+    # Same resolve-on-entry rule as discover_local_files: the explicit-paths
+    # route is a second walk entry point, and a cap that applies to one and not
+    # the other is the defect v1.108.194 exists to close.
+    max_size = get_max_file_size(max_size)
     files: list[Path] = []
     warnings: list[str] = []
     skip_counts: dict[str, int] = {}
@@ -1038,7 +1042,7 @@ def resolve_explicit_paths(
 def discover_local_files(
     folder_path: Path,
     max_files: Optional[int] = None,
-    max_size: int = DEFAULT_MAX_FILE_SIZE,
+    max_size: Optional[int] = None,
     extra_ignore_patterns: Optional[list[str]] = None,
     follow_symlinks: bool = False,
 ) -> tuple[list[Path], list[str], dict[str, int]]:
@@ -1056,6 +1060,13 @@ def discover_local_files(
     Returns:
         Tuple of (list of Path objects for source files, list of warning strings).
     """
+    # ⚠ v1.108.194: resolve the size cap HERE, not at each call site. v1.108.193
+    # gave the cap a config key and an env var, but `index_folder` called this
+    # function without `max_size=`, so the walk kept the hardcoded default and
+    # the new route reached only the watcher fast path. Resolving on entry makes
+    # every caller correct by default, including ones not yet written — the
+    # same shape as `max_files` on the line above (@dkiaulakis, #375).
+    max_size = get_max_file_size(max_size)
     max_files = get_max_folder_files(max_files)
     files = []
     warnings = []
@@ -1513,12 +1524,37 @@ def index_folder(
             except Exception:
                 pass
 
+            # ── forced_paths on the fast path (@dkiaulakis, 2026-07-27) ──
+            # The full walk exempts package.json entry points from the size cap
+            # (#25). This path passed an EMPTY set, so the same oversize file was
+            # indexed by a full walk and dropped as `too_large` by an incremental
+            # one — it appeared, then silently vanished on the next edit.
+            #
+            # Scanning is NOT unconditional: _scan_package_json_forced_paths
+            # walks the tree, and this path exists to avoid exactly that per
+            # event. The exemption can only change an outcome for a file that is
+            # actually over the cap, so the scan is paid only when the change set
+            # contains one — the common case still walks nothing.
+            _fast_max_size = get_max_file_size()
+
+            def _fast_forced_paths() -> set:
+                for _c in changed_paths:
+                    _p = _c[1] if isinstance(_c, (tuple, WatcherChange)) else _c
+                    try:
+                        if Path(_p).stat().st_size > _fast_max_size:
+                            return _scan_package_json_forced_paths(
+                                folder_path.resolve()
+                            )
+                    except OSError:
+                        continue
+                return set()
+
             _fast_filter_cfg = _build_index_filters(
                 root=folder_path.resolve(),
                 follow_symlinks=follow_symlinks,
-                max_size=get_max_file_size(),
+                max_size=_fast_max_size,
                 extra_spec=_fast_extra_spec,
-                forced_paths=set(),
+                forced_paths=_fast_forced_paths(),
                 skip_dirs_regex=_build_skip_dirs_regex(),
                 check_binary=False,
                 check_filename=True,

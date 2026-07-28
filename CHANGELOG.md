@@ -2,6 +2,95 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.194] - 2026-07-28 - the escape hatch reached one walk out of three
+
+⚠⚠ **v1.108.193 did not fix the reported problem.** It added `max_file_size`,
+`JCODEMUNCH_MAX_FILE_SIZE` and a resolver, wired `get_max_file_size()` into
+**exactly one call site — the watcher fast path** — and shipped. `index_folder`
+calls `discover_local_files` without `max_size=`, so the primary walk kept the
+hardcoded default. Measured on the release: with the cap raised to 2,000,000 the
+resolver returned 2000000 and discovery still reported `too_large: 1` and found
+nothing. **"The size cap cannot be moved" was still true after the release that
+claimed to move it.**
+
+The route now resolves ON ENTRY inside `discover_local_files` and
+`resolve_explicit_paths`, next to the existing `max_files = get_max_folder_files(
+max_files)` line, so every caller is correct by default — including callers not
+yet written. Fixing the call site would have left the next entry point wrong.
+
+⚠ **This is the same defect shape as the one 1.108.193 was written about**: a
+limit that exists on one path and not another. We shipped a release describing
+that lesson and then committed it.
+
+Reported by @dkiaulakis, who then **withdrew the finding** — he had read
+`should_exclude_file`, which has zero production callers. Following his
+retraction is what exposed the two real bugs below; the ask he cancelled was
+worth more than the ask he filed.
+
+### A limit you cannot read is a limit with no route
+
+He measured `JCODEMUNCH_MAX_FILE_SIZE=2000000` and got 512000 back from
+`security.get_max_file_size()`, and concluded the env route was dead. It is not:
+the env var populates through `load_config()`, which the server calls at
+startup, and his probe was a bare REPL that never called it. The resolver works.
+
+What sent him to the resolver in the first place was ours. **`config` printed
+`max_folder_files` and `max_index_files` and not `max_file_size`**, so the one
+limit 1.108.193 existed to make reachable was the one limit with no window. An
+omission next to its own two siblings does not read as "not shown", it reads as
+"not there" — and the only remaining way to answer "what is my cap" was to
+import `security` and call the resolver by hand, which is precisely the thing a
+config reporter exists to spare you.
+
+1.108.193 gave the cap a route and no way to see it. That is half a fix, and the
+half that was missing is the half a user actually touches.
+
+### Fixed
+
+- **`config` now reports `max_file_size`**, with its provenance, alongside the
+  two sibling limits. An env override renders as `2000000 [env]`, so a "my
+  setting is being ignored" report is now settled by one command instead of a
+  hand-written probe.
+
+- **The size-cap exemption now reaches the incremental path.** ⚠ **This is the
+  bigger half, and it was found by following his retraction rather than his
+  report.** The full walk scans `package.json` for `main`/`module`/`browser`/
+  `exports`/`bin` targets and exempts them from the cap (#25, lodash at 548 KB).
+  The watcher/incremental fast path built its filter with `forced_paths=set()`
+  hardcoded, so **the same oversize file was indexed by a full walk and dropped
+  as `too_large` by an incremental one** — it appeared, then silently vanished
+  on the next edit that touched it. Anyone who fixed a cap problem the way he
+  did, by adding a manifest, would have watched the fix undo itself.
+  ⚠ **The scan is lazy, deliberately.** `_scan_package_json_forced_paths` walks
+  the tree, and this path exists to avoid exactly that per watcher event. The
+  exemption can only change an outcome for a file already over the cap, so the
+  walk is paid only when the change set contains one; the common case still
+  scans nothing. Restoring correctness by making every keystroke pay for a tree
+  walk would have traded this bug for the #375 cost class, reported by the same
+  person.
+
+### Tests
+
+- New `tests/test_v1_108_194.py` (7). ⚠ The reporter guard is written against
+  the SET of indexing limits, not against `max_file_size` alone — the defect
+  class is "a limit gains a route and the reporter is not updated", and pinning
+  one key would not catch the next one. Removing the added `row(...)` fails 3.
+- ⚠⚠ **The first draft of the forced_paths parity test was VACUOUS and passed
+  with the bug present.** It asserted on `discovery_skip_counts`, which the
+  incremental result does not carry, so the assertion could not fail. The
+  discriminator is `changed`: 1 with the exemption, 0 without, because the file
+  is filtered out before it is ever compared. Both parity tests now fail on a
+  revert. **A regression test that was never run against the unfixed code is a
+  claim, not a check.**
+
+### Not changed
+
+- The default stays 512000. This release adds visibility, not headroom.
+- The deprecation notice on `JCODEMUNCH_MAX_FILE_SIZE` still fires, because
+  every var in `ENV_VAR_MAPPING` emits it and the siblings behave identically.
+  Making one limit quiet would trade a documented inconsistency for an
+  undocumented one; the config-file route is the one that never warns.
+
 ## [1.108.193] - 2026-07-27 - the size cap can be raised, and a withheld file cannot prove absence
 
 Both reported by @dkiaulakis, measured on 1.108.188. The ask was small. The

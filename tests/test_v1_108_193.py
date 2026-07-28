@@ -64,16 +64,56 @@ class TestMaxFileSizeIsMovable:
         assert DEFAULT_MAX_FILE_SIZE == 500 * 1024
         assert get_max_file_size() == DEFAULT_MAX_FILE_SIZE
 
-    def test_index_folder_resolves_rather_than_hardcoding(self):
+    def test_index_folder_resolves_rather_than_hardcoding(self, monkeypatch):
         """The constant used to be passed straight through, which is why no
-        route existed at all."""
-        import inspect
+        route existed at all.
 
+        ⚠ This assertion was rewritten in v1.108.194. It used to grep the module
+        source for the literal ``max_size=get_max_file_size()``, which pinned a
+        SPELLING rather than the behaviour: hoisting the identical call into a
+        local (so the fast path could reuse the value without calling twice)
+        broke it while the resolver was still consulted on every walk. A source
+        grep cannot tell a refactor from a regression, so it fails on the one
+        that is safe. What matters is that a changed cap reaches the walk.
+        """
+        from jcodemunch_mcp import security
         from jcodemunch_mcp.tools import index_folder as mod
 
-        src = inspect.getsource(mod)
-        assert "max_size=get_max_file_size()" in src
-        assert "max_size=DEFAULT_MAX_FILE_SIZE," not in src.split("def _should_index_file")[0]
+        seen: list[int] = []
+        real = mod.get_max_file_size
+
+        def spy(*a, **k):
+            v = real(*a, **k)
+            seen.append(v)
+            return v
+
+        monkeypatch.setattr(mod, "get_max_file_size", spy)
+
+        # `security._config` is the config MODULE, not a dict — the resolver
+        # calls `_config.get(...)`. Patch that function, not an item.
+        real_get = security._config.get
+
+        def fake_get(key, default=None, *a, **k):
+            if key == "max_file_size":
+                return 1_234_567
+            return real_get(key, default, *a, **k)
+
+        monkeypatch.setattr(security._config, "get", fake_get)
+
+        import tempfile
+        from pathlib import Path
+
+        d = Path(tempfile.mkdtemp())
+        (d / "a.py").write_text("x = 1\n", encoding="utf-8")
+        mod.index_folder(
+            str(d), use_ai_summaries=False, storage_path=tempfile.mkdtemp()
+        )
+
+        assert seen, "index_folder never consulted the max_file_size resolver"
+        assert 1_234_567 in seen, (
+            "index_folder resolved a cap that ignored config; the route exists "
+            f"but does not reach the walk. resolved={seen}"
+        )
 
 
 # ── the finding underneath it ───────────────────────────────────────────────

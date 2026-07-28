@@ -7692,6 +7692,12 @@ def _run_config(check: bool = False, init: bool = False, upgrade: bool = False) 
             return f"[{len(v)} items]" if len(v) > 3 else str(v)
         return str(v)
 
+    # max_file_size is reported alongside its two siblings. v1.108.193 gave the
+    # per-file cap a config key and an env var but no window: `config` listed the
+    # other two limits and not this one, so the only way to read its effective
+    # value was to call the resolver by hand — which is exactly what the reporter
+    # exists to spare people (#375, @dkiaulakis).
+    row("max_file_size", _cfg.get("max_file_size", 512000), _detect_source("max_file_size", 512000))
     row("max_folder_files", _cfg.get("max_folder_files", 2000), _detect_source("max_folder_files", 2000))
     row("max_index_files", _cfg.get("max_index_files", 10000), _detect_source("max_index_files", 10000))
     row("staleness_days", _cfg.get("staleness_days", 7), _detect_source("staleness_days", 7))

@@ -1,0 +1,237 @@
+"""The `config` reporter must show every indexing limit it honours (#375).
+
+v1.108.193 gave the per-file cap a config key (`max_file_size`) and an env var
+(`JCODEMUNCH_MAX_FILE_SIZE`), and the resolver honoured both. The `config`
+command did not print it. Its two siblings were listed, so the omission read as
+"this limit does not exist" rather than "this limit is not shown", and the only
+way to read the effective value was to import `security` and call the resolver
+by hand — which is what @dkiaulakis did, concluding from a bare REPL (no
+`load_config()`) that the env route was dead. It was not; it was invisible.
+
+The guard below is deliberately written against the SET of limits rather than
+against `max_file_size` alone: the defect class is "a limit gains a route and
+the reporter is not updated", and pinning one key would not catch the next one.
+"""
+
+from __future__ import annotations
+
+import json as _json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+import pytest
+
+SRC = str(Path(__file__).resolve().parents[1] / "src")
+
+# Every limit the indexer resolves from config. Adding a resolver here without
+# adding a `row(...)` to the reporter is the bug this file exists to catch.
+INDEXING_LIMITS = ("max_file_size", "max_folder_files", "max_index_files")
+
+BIG_BODY = "// x\n" + ("a" * 700_000)
+TOUCHED_BODY = "// touched\n" + ("a" * 700_000)
+
+
+def _run_config(env_extra: dict[str, str] | None = None) -> str:
+    env = {**os.environ, "PYTHONPATH": SRC}
+    env.pop("JCODEMUNCH_MAX_FILE_SIZE", None)
+    if env_extra:
+        env.update(env_extra)
+    proc = subprocess.run(
+        [sys.executable, "-m", "jcodemunch_mcp", "config"],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
+    )
+    return proc.stdout
+
+
+@pytest.mark.parametrize("key", INDEXING_LIMITS)
+def test_config_reports_every_indexing_limit(key):
+    """Each limit the walk honours is visible in `config`."""
+    out = _run_config()
+    assert re.search(rf"^\s*{re.escape(key)}\s", out, re.M), (
+        f"`jcodemunch-mcp config` does not report {key!r}. A limit the indexer "
+        "honours but the reporter hides cannot be diagnosed without calling the "
+        "resolver by hand; that is the #375 failure mode."
+    )
+
+
+def test_config_reports_max_file_size_default():
+    out = _run_config()
+    m = re.search(r"^\s*max_file_size\s+(\S+)\s+\((default)\)", out, re.M)
+    assert m, f"max_file_size default row missing from:\n{out}"
+    assert m.group(1) == "512000", (
+        "v1.108.193 shipped the escape hatch with the DEFAULT deliberately "
+        f"unchanged at 512000; reporter shows {m.group(1)}."
+    )
+
+
+def test_config_attributes_an_env_override_to_env():
+    """The value AND its provenance: 'where did this come from' is the question."""
+    out = _run_config({"JCODEMUNCH_MAX_FILE_SIZE": "2000000"})
+    assert re.search(r"^\s*max_file_size\s+2000000\s+\[env\]", out, re.M), (
+        "An env override must report both the resolved value and `[env]` as its "
+        "source, or the reporter cannot settle a 'my setting is ignored' "
+        f"report. Got:\n{out}"
+    )
+
+
+# ── forced_paths parity between the full walk and the incremental fast path ──
+#
+# The full walk exempts package.json entry points from the size cap (#25). The
+# watcher/incremental fast path passed `forced_paths=set()`, so the SAME file was
+# indexed by one path and dropped as `too_large` by the other: it appeared after
+# a full index and vanished on the next incremental touch. Surfaced indirectly by
+# @dkiaulakis, who hit the cap on `tools/eidos`, added a package.json naming the
+# oversized file, and verified the predicate — against the full-walk config only.
+
+
+def _oversize_tree():
+    d = Path(tempfile.mkdtemp())
+    big = d / "huge.js"
+    big.write_text(BIG_BODY, encoding="utf-8")
+    (d / "package.json").write_text(
+        _json.dumps({"name": "p", "bin": {"p": "huge.js"}}), encoding="utf-8"
+    )
+    return d, big
+
+
+def test_package_json_exemption_survives_an_incremental_reindex():
+    """Drive the REAL fast path: full index, then an incremental touch.
+
+    An earlier draft of this test compared two calls built from the same
+    forced_paths value, which is true by construction and proves nothing. This
+    one indexes for real and asserts the oversize entry point is not dropped
+    once the incremental path has handled it.
+    """
+    from jcodemunch_mcp.tools.index_folder import index_folder
+
+    d, big = _oversize_tree()
+    store_dir = tempfile.mkdtemp()
+
+    full = index_folder(str(d), use_ai_summaries=False, storage_path=store_dir)
+    assert full.get("success"), full
+    assert "huge.js" in _json.dumps(full.get("files", [])), (
+        "full walk dropped the manifest-exempt file; fixture or #25 is broken"
+    )
+
+    big.write_text(TOUCHED_BODY, encoding="utf-8")
+    inc = index_folder(
+        str(d),
+        use_ai_summaries=False,
+        storage_path=store_dir,
+        incremental=True,
+        changed_paths=[("modified", str(big))],
+    )
+    assert inc.get("success"), inc
+
+    # `changed` is the discriminator, NOT discovery_skip_counts: the incremental
+    # result carries no skip counts, so asserting on them passed with the bug
+    # present and proved nothing. With the exemption reaching this path the file
+    # is re-indexed (changed == 1); without it the file is filtered out before
+    # it is ever compared, and the call reports changed == 0.
+    assert inc.get("changed") == 1, (
+        "the incremental path dropped a manifest-exempt oversize file: it was "
+        "indexed by the full walk and then filtered out on re-index, so the "
+        f"symbol would appear and then vanish. result={inc}"
+    )
+
+
+def test_forced_path_scan_is_skipped_when_nothing_is_oversize():
+    """Correctness must not cost a tree walk per watcher event.
+
+    Spies on the REAL module-level scanner while driving the REAL incremental
+    path, so this fails if the shipped closure stops being lazy. An earlier
+    draft re-implemented the laziness inside the test and could not have caught
+    a regression in the code that ships.
+    """
+    from jcodemunch_mcp.tools import index_folder as m
+
+    d, big = _oversize_tree()
+    small = d / "small.js"
+    small.write_text("x = 1\n", encoding="utf-8")
+    store_dir = tempfile.mkdtemp()
+    m.index_folder(str(d), use_ai_summaries=False, storage_path=store_dir)
+
+    calls: list = []
+    real = m._scan_package_json_forced_paths
+
+    def spy(p):
+        calls.append(p)
+        return real(p)
+
+    m._scan_package_json_forced_paths = spy
+    try:
+        small.write_text("x = 2\n", encoding="utf-8")
+        m.index_folder(
+            str(d),
+            use_ai_summaries=False,
+            storage_path=store_dir,
+            incremental=True,
+            changed_paths=[("modified", str(small))],
+        )
+        assert calls == [], (
+            "the manifest scan (a full tree walk) ran for a change set with no "
+            "oversize file; that is the #375 cost class on the hot path"
+        )
+
+        big.write_text(TOUCHED_BODY, encoding="utf-8")
+        m.index_folder(
+            str(d),
+            use_ai_summaries=False,
+            storage_path=store_dir,
+            incremental=True,
+            changed_paths=[("modified", str(big))],
+        )
+        assert calls, "the scan must run when an oversize file IS in the change set"
+    finally:
+        m._scan_package_json_forced_paths = real
+
+
+# ── the escape hatch must reach the PRIMARY walk, not just the fast path ──
+#
+# v1.108.193 added `max_file_size` + JCODEMUNCH_MAX_FILE_SIZE and wired
+# `get_max_file_size()` into exactly one call site: the watcher fast path.
+# `index_folder` called `discover_local_files` WITHOUT `max_size=`, so the main
+# walk kept the hardcoded default and a raised cap changed nothing. The reported
+# problem — "the cap cannot be moved" — was still true after the release that
+# claimed to fix it.
+
+
+def test_raised_cap_reaches_the_primary_discovery_walk(monkeypatch):
+    from jcodemunch_mcp import security
+    from jcodemunch_mcp.tools.index_folder import discover_local_files
+
+    d, _big = _oversize_tree()
+    (d / "package.json").unlink()  # isolate the cap from the #25 exemption
+
+    real_get = security._config.get
+
+    def cap(value):
+        def fake(key, default=None, *a, **k):
+            return value if key == "max_file_size" else real_get(key, default, *a, **k)
+        return fake
+
+    monkeypatch.setattr(security._config, "get", cap(2_000_000))
+    files, _w, skips = discover_local_files(d)
+    assert len(files) == 1 and not skips.get("too_large"), (
+        "a raised max_file_size did not reach discover_local_files; the escape "
+        f"hatch only covers the fast path. files={len(files)} skips={skips}"
+    )
+
+
+def test_default_cap_still_rejects(monkeypatch):
+    """Raising must be opt-in: the default is protection, not an accident."""
+    from jcodemunch_mcp.tools.index_folder import discover_local_files
+
+    d, _big = _oversize_tree()
+    (d / "package.json").unlink()
+    files, _w, skips = discover_local_files(d)
+    assert len(files) == 0 and skips.get("too_large") == 1, (
+        f"default cap stopped rejecting oversize files. files={len(files)} skips={skips}"
+    )
