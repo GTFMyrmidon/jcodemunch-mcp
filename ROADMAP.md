@@ -33,11 +33,64 @@ file" and "that file does not exist" look identical to every agent downstream.
 | Phase | Scope | Status |
 |-------|-------|--------|
 | 1 | Claim-scoped evidence (`claims` + per-claim `evidence_refs`) | **Shipped** — jcm 1.108.165, jdoc 1.116.0, jdata 1.25.0 |
-| 2 | Exact immutable evidence receipts + producer registration | **P1/P2 shipped** (1.108.183); P3/P4/P5 open on [#377](https://github.com/jgravelle/jcodemunch-mcp/issues/377) |
+| 2 | Exact immutable evidence receipts + producer registration | **P1/P2 shipped** (1.108.183); two P3 edges shipped (1.108.192). **P3 remainder below.** Not started |
 | 3 | Absence evidence + subject state | **Shipped** — 1.108.178-.181 |
-| 4 | Requirement matching | Open on [#377](https://github.com/jgravelle/jcodemunch-mcp/issues/377) |
+| 4 | Requirement matching | **Below.** Not started |
 | 5 | Corpus / source-universe identity | **Below.** Not started |
 | 6 | Path-first program understanding | **Below.** Not started |
+
+---
+
+## Phase 2 P3 remainder — evidence lifetime
+
+Two of the four P3 edges shipped in **1.108.192**: the absence record is
+deep-copied into the receipt at mint time (so a later scan on the same
+`absent:<sha12>` key cannot contaminate or rescue it), and validation hands its
+resolved envelopes to rendering (so one resolution feeds validate, render, hash
+and persist). Both verified by @mightydanp against the shipped code.
+
+What is left is the **expiry taxonomy** — a different axis from "a different
+scan must not contaminate this one", and deliberately not answered by the
+frozen record:
+
+- **Successful retrieval should tombstone contradictory negative evidence**
+  (design item 18). `note_absence` returns early on an `ok` state today, so a
+  scan identity that recorded `absent` and now returns a match leaves the old
+  record in place. Partly mitigated, not closed: a replayed cached `absent` is
+  downgraded to `degraded` with its evidence token stripped
+  (`subject_state.revalidate_verdict`), and a receipt stands on its own frozen
+  record rather than a live lookup. The gap is the store itself, which still
+  holds a record the world has contradicted.
+- **Expiry and collision taxonomy** (design item 19). `lookup()` already
+  separates `never_recorded` / `evicted` / `collision`. Still undistinguished:
+  **wrong session**, **wrong repository or dataset**, and **expired**.
+- **Session / snapshot identity and invalidation** — whether a receipt should
+  expire because the tree moved on after it was minted.
+
+**Close condition.** Design items 17-19 in full, minus the two halves shipped in
+1.108.192. A caller holding a stale token must be told which of the five reasons
+applies, and a negative record contradicted by a later successful scan of the
+same canonical snapshot and effective search identity must not remain citable.
+
+**Sequencing.** Nobody is blocked on this today: the two adversarial edges that
+could produce a wrong attestation are closed, and the remaining cases fail
+toward refusal rather than toward borrowed proof.
+
+---
+
+## Phase 4 — requirement matching
+
+Caller-declared `requirements` and `coverage_requirements`: a handoff states up
+front what it needed to cover, and finalization reports coverage against that
+declaration rather than against whatever happened to be retrieved.
+
+Accepted at design time, deferred with Phase 2 P2. Never tracked as work in
+progress.
+
+**Close condition.** As accepted in the original design comment.
+
+**Sequencing.** After the Phase 2 P3 remainder. Requirement coverage that cites
+evidence with an unsettled lifetime inherits the unsettled lifetime.
 
 ---
 
@@ -73,7 +126,7 @@ visible; generated and dependency domains are explicit; document conversion and
 embedding coverage are represented; data row, profile, sample and value coverage
 are separate; a failed or cancelled generation cannot support absence.
 
-**Sequencing.** After the remaining Phase 2 work on #377 — the receipt schema
+**Sequencing.** After the remaining Phase 2 work above — the receipt schema
 needs the extension points Phase 5 defines, and building them in the other order
 means designing the extension points twice.
 

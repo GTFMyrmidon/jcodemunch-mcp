@@ -286,7 +286,7 @@ one of these "we don't take branded providers"** — MiniMax/GLM/OpenRouter are
 exactly this shape and already merged; the comment concedes that on the record.
 The bar is a user asking, same as platform installers. It correctly added
 atlascloud to `_PAID_CLOUD_PROVIDERS`, so the money-safety guard was respected.
-**Open issues (2026-07-27): #375, #377 ONLY. Open PRs: #387 (@nyxst4ck, draft,
+**Open issues (2026-07-28): #375 ONLY** (#377 closed 2026-07-28 — Phase 2 P1/P2 + both P3 edges shipped, the P3 remainder and P4 moved to `ROADMAP.md` with close conditions and @mightydanp's credit, same treatment as #385/#386; #390 and #391 closed with 1.108.197). **Prior line (2026-07-27): #375, #377. Open PRs: #387 (@nyxst4ck, draft,
 docs) and #388 (@Bortlesboat) — BOTH BLOCKED ON AN UNSIGNED CLA
 (`license/cla pending`), so neither can merge on merit alone.**
 
