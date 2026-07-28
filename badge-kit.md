@@ -89,11 +89,11 @@ Best for: marketing site footers, sustainability dashboards, About pages. Card f
 
 ### Basic embed
 <div data-jcodemunch-impact></div>
-<script src="https://j.gravelle.us/jCodeMunch/embed.js" async></script>
+<script src="https://jcodemunch.com/embed.js" async></script>
 
 ```html
 <div data-jcodemunch-impact></div>
-<script src="https://j.gravelle.us/jCodeMunch/embed.js" async></script>
+<script src="https://jcodemunch.com/embed.js" async></script>
 ```
 
 That's it. The widget injects its own CSS, fetches the live counter, and renders a card. Whole card is clickable to the impact page by default.
@@ -105,7 +105,7 @@ That's it. The widget injects its own CSS, fetches the live counter, and renders
      data-compact="false"
      data-link="true">
 </div>
-<script src="https://j.gravelle.us/jCodeMunch/embed.js" async></script>
+<script src="https://jcodemunch.com/embed.js" async></script>
 
 ```html
 <div data-jcodemunch-impact
@@ -114,16 +114,16 @@ That's it. The widget injects its own CSS, fetches the live counter, and renders
      data-compact="false"
      data-link="true">
 </div>
-<script src="https://j.gravelle.us/jCodeMunch/embed.js" async></script>
+<script src="https://jcodemunch.com/embed.js" async></script>
 ```
 
 ### Compact (for tight spaces, e.g. email signatures, sidebars)
 <div data-jcodemunch-impact data-compact="true"></div>
-<script src="https://j.gravelle.us/jCodeMunch/embed.js" async></script>
+<script src="https://jcodemunch.com/embed.js" async></script>
 
 ```html
 <div data-jcodemunch-impact data-compact="true"></div>
-<script src="https://j.gravelle.us/jCodeMunch/embed.js" async></script>
+<script src="https://jcodemunch.com/embed.js" async></script>
 ```
 
 ### Configuration reference
@@ -187,7 +187,7 @@ The badges and widgets degrade gracefully. The SVG badge will return the last ca
 
 ### Can I host the embed.js file myself to avoid third-party dependencies?
 
-Yes. Download it from `https://j.gravelle.us/jCodeMunch/embed.js`, host it on your CDN, and replace the script src in the embed code. The widget still calls our public API for the live number, but the JavaScript itself can live anywhere.
+Yes. Download it from `https://jcodemunch.com/embed.js`, host it on your CDN, and replace the script src in the embed code. The widget still calls our public API for the live number, but the JavaScript itself can live anywhere.
 
 ---
 
