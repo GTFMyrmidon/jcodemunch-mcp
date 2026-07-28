@@ -286,9 +286,23 @@ one of these "we don't take branded providers"** — MiniMax/GLM/OpenRouter are
 exactly this shape and already merged; the comment concedes that on the record.
 The bar is a user asking, same as platform installers. It correctly added
 atlascloud to `_PAID_CLOUD_PROVIDERS`, so the money-safety guard was respected.
-**Open issues (2026-07-28): #375 ONLY** (#377 closed 2026-07-28 — Phase 2 P1/P2 + both P3 edges shipped, the P3 remainder and P4 moved to `ROADMAP.md` with close conditions and @mightydanp's credit, same treatment as #385/#386; #390 and #391 closed with 1.108.197). **Prior line (2026-07-27): #375, #377. Open PRs: #387 (@nyxst4ck, draft,
-docs) and #388 (@Bortlesboat) — BOTH BLOCKED ON AN UNSIGNED CLA
-(`license/cla pending`), so neither can merge on merit alone.**
+**Tracker state 2026-07-28: ZERO open issues, ZERO open PRs.** Verified against
+`gh issue list --state open` / `gh pr list --state open`, with an
+`--state all` query alongside to prove the empty result was not a failed query
+([[feedback_empty_cli_query_is_not_evidence]]).
+
+⚠⚠ **DO NOT quote a tracker count from this file — re-run the query.** The line
+that used to live here said "Open issues: #375, #377. Open PRs: #387 and #388"
+while a paragraph twelve lines below it recorded #388's own close. **It was
+internally contradictory and it was believed anyway**, which is how a stale
+"#375 ONLY" got written into this file on 2026-07-28 for an issue closed the day
+before. A count is the one fact here with a guaranteed expiry date.
+
+Closed this session: **#390** (@lazy-geeek, its own repro already fixed by
+`.194`), **#391** (@amarakramali, rewritten as 1.108.197), **#387** (@nyxst4ck,
+rewritten wider), **#377** (P3 remainder + P4 to `ROADMAP.md` with close
+conditions and @mightydanp's credit, same treatment as #385/#386). **#375** and
+**#388** were already closed 2026-07-27.
 
 ⚠⚠ **PROCESS FAILURE WORTH NOT REPEATING: #388 fixed #384 and was opened
 2026-07-27 06:51 UTC. We shipped our own .189 fix and closed #384 at 12:56 UTC
