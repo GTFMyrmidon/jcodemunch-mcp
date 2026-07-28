@@ -2,6 +2,38 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.198] - 2026-07-28 - the transitional fallbacks outlived their transition
+
+Audit WS-8 (V12) shipped the license-key transport move in 1.108.163: validate.php
+checks travel as a POST body, starter-pack downloads carry the key in an
+`X-JCM-License` header, so a key can never land in a server or proxy access log.
+
+Both clients carried a **one-shot legacy fallback** keyed to the exact error a
+pre-deploy backend returns, so ship order could not strand a paying customer
+mid-deploy. The backend was deployed and live-verified the same day, 2026-07-23.
+Removed now, and re-verified live against the deployed endpoints first rather
+than trusted from the note:
+
+- `validate.php` - form POST, JSON POST and `X-JCM-License` all answer
+  `License key not found for this product.` for a bogus key, which proves the key
+  was read. A keyless POST still returns the `Missing license parameter.` 400.
+- packs API - a bogus key over the header returns `Invalid or expired license.`
+  with the key masked and echoed back; only a request with no key at all gets
+  `This pack requires a jCodeMunch license.`, the string the fallback matched.
+
+So for any caller that sends a key, both fallback branches were already
+unreachable. Removed: `_needs_legacy_get_fallback` (`org/license.py`) and
+`_looks_like_missing_license_response` (`cli/install_pack.py`), with their retries.
+
+**The legacy retry was the last code path that could put a license key in a URL.**
+That is the finding this work exists to close, so leaving a dormant one behind is
+worse than the small deploy risk it was insuring against.
+
+Tests: the four tests pinning fallback behaviour are replaced by tests pinning
+the invariant they protected - the key never reaches a URL, no retry is attempted
+on any answer, and both helpers are asserted **absent by name**, because a
+resurrected helper is how a removed transitional path quietly returns.
+
 ## [1.108.197] - 2026-07-28 - the escape hatch read the wrong config file
 
 ⚠ **Third release on the same defect, and the first two each fixed a real half of

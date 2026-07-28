@@ -59,22 +59,6 @@ def resolve_effective_license_key(explicit: Optional[str]) -> Optional[str]:
         return None
 
 
-def _looks_like_missing_license_response(resp) -> bool:
-    """True only for the exact answer a pre-header backend gives a licensed-pack
-    request whose key rode the X-JCM-License header it doesn't read: the
-    no-license 403. A real key rejection says "Invalid or expired license."
-    and must NOT retry over the legacy query string."""
-    if "application/json" not in resp.headers.get("content-type", ""):
-        return False
-    try:
-        data = resp.json()
-    except Exception:
-        return False
-    if not isinstance(data, dict):
-        return False
-    return "requires a jcodemunch license" in (data.get("error") or "").lower()
-
-
 def _mask_license(key: str) -> str:
     """Mask a license key for display: first 4 + last 4 chars."""
     if len(key) <= 8:
@@ -170,21 +154,6 @@ def _install_pack(
             f"Check your network connection.{_RESET}",
         )
         return 1
-
-    # Transitional: a backend that predates header support never saw the key
-    # and answers a licensed pack with its no-license 403. Retry ONCE over the
-    # legacy query-string transport so a paying customer isn't punished by a
-    # deploy-order gap. Remove once the deployed API is confirmed header-aware.
-    if license_key and _looks_like_missing_license_response(resp):
-        legacy_url = url + f"&license={license_key}"
-        try:
-            resp = httpx.get(legacy_url, timeout=120, follow_redirects=True)
-        except httpx.HTTPError:
-            print(
-                f"  {_RED}{_CROSS} Could not reach the starter packs server. "
-                f"Check your network connection.{_RESET}",
-            )
-            return 1
 
     content_type = resp.headers.get("content-type", "")
 

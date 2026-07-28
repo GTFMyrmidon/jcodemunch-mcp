@@ -108,12 +108,14 @@ def _check_server(key: str) -> Optional[dict]:
     means "leave cached state alone" — the sticky-offline rule.
 
     The key travels in the POST body, NEVER the URL query string, so it can't
-    land in server/proxy access logs (audit finding V12). A backend that
-    predates POST support answers the bodyless-looking request with its
-    "Missing license parameter." 400 — that exact signature (and only it)
-    triggers a one-shot legacy GET so a paying customer is never punished by
-    a deploy-order gap. Remove the fallback once the deployed validate.php is
-    confirmed POST-aware.
+    land in server/proxy access logs (audit finding V12).
+
+    The one-shot legacy GET fallback that covered the deploy-order gap was
+    removed in v1.108.198: validate.php has been POST-aware since 2026-07-23,
+    verified live on form, JSON and header transports. It was transitional by
+    construction — a fallback keyed to a signature the server no longer emits
+    is unreachable code that still has to be read and reasoned about on every
+    pass through the licensing path.
 
     The endpoint carries ``valid`` in the JSON body for both its 200 and 400
     responses, so the body is trusted over the status code."""
@@ -140,30 +142,7 @@ def _check_server(key: str) -> Optional[dict]:
         )
     except Exception:
         return None
-    answer = _parse(resp)
-
-    if _needs_legacy_get_fallback(answer):
-        try:
-            resp = httpx.get(
-                VALIDATE_URL,
-                params={"product": PRODUCT, "license": key},
-                timeout=REQUEST_TIMEOUT,
-                follow_redirects=True,
-            )
-        except Exception:
-            return None
-        return _parse(resp)
-    return answer
-
-
-def _needs_legacy_get_fallback(answer: Optional[dict]) -> bool:
-    """True only for the exact answer a pre-POST validate.php gives a POST:
-    a definitive-looking ``valid: false`` whose error is the missing-parameter
-    complaint (the old code read only ``$_GET``). A real key rejection says
-    "not found"/"revoked"/"expired" and must NOT retry over GET."""
-    if not answer or answer.get("valid") is not False:
-        return False
-    return "missing license parameter" in (answer.get("error") or "").lower()
+    return _parse(resp)
 
 
 def _is_validated(key: str, storage_path: Optional[str] = None) -> dict:
