@@ -543,7 +543,12 @@ def _should_index_file(
         size = file_path.stat().st_size
     except OSError:
         return False, "unreadable", rel_path, None
-    if size > cfg.max_size and resolved_str not in cfg.forced_paths:
+    # ⚠ normcase, not the raw string: on Windows the SAME file resolves to
+    # strings that differ by drive-letter case or 8.3 short form, and a raw
+    # `in` test silently voids the #25 size-cap exemption. The gitignore check
+    # a few lines up already normalises for exactly this reason; this one did
+    # not, and CI on windows-latest caught it where a local Windows run did not.
+    if size > cfg.max_size and resolved_norm not in cfg.forced_paths:
         return False, "too_large", rel_path, None
 
     # 13. Binary detection (opt-out for callers that read the file separately)
@@ -841,19 +846,19 @@ def _scan_package_json_forced_paths(folder_path: Path) -> set[str]:
                 # If extension-less, try common JS/TS extensions and index
                 # variants so we resolve to a concrete file on disk.
                 if target.is_file():
-                    forced.add(str(target))
+                    forced.add(os.path.normcase(str(target)))
                     continue
                 for ext in (".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx"):
                     trial = pkg_dir / f"{cand}{ext}"
                     if trial.is_file():
-                        forced.add(str(trial.resolve()))
+                        forced.add(os.path.normcase(str(trial.resolve())))
                         break
                 else:
                     for sub in ("/index.js", "/index.ts", "/index.mjs",
                                 "/index.cjs"):
                         trial = pkg_dir / f"{cand}{sub}"
                         if trial.is_file():
-                            forced.add(str(trial.resolve()))
+                            forced.add(os.path.normcase(str(trial.resolve())))
                             break
     except OSError:
         pass

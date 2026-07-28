@@ -235,3 +235,43 @@ def test_default_cap_still_rejects(monkeypatch):
     assert len(files) == 0 and skips.get("too_large") == 1, (
         f"default cap stopped rejecting oversize files. files={len(files)} skips={skips}"
     )
+
+
+def test_size_cap_exemption_is_case_insensitive_where_the_os_is():
+    """The #25 exemption must survive a differently-cased path.
+
+    ⚠ Found by CI on windows-latest, not locally. `_should_index_file` compared
+    the RAW resolved string against `forced_paths`, while the gitignore check a
+    few lines above it normalised with os.path.normcase for exactly this reason.
+    On Windows the same file resolves to strings differing by drive-letter case
+    or 8.3 short form, so the exemption silently voided and the entry point was
+    dropped as `too_large` — a real user-facing bug, not just a flaky test.
+    """
+    import os
+
+    from jcodemunch_mcp.tools.index_folder import (
+        _build_index_filters,
+        _scan_package_json_forced_paths,
+        _should_index_file,
+    )
+
+    d, big = _oversize_tree()
+    forced = _scan_package_json_forced_paths(d)
+    assert forced, "fixture produced no forced paths"
+
+    # Every stored entry is normalised, so a caller cannot reintroduce a raw
+    # comparison without this failing.
+    assert all(e == os.path.normcase(e) for e in forced), (
+        f"forced_paths holds un-normalised entries: {forced}"
+    )
+
+    cfg = _build_index_filters(
+        root=d.resolve(), follow_symlinks=False, max_size=512000,
+        extra_spec=None, forced_paths=forced, skip_dirs_regex=None,
+        check_binary=True, check_filename=True,
+    )
+    ok, reason = _should_index_file(big, cfg)[:2]
+    assert ok and not reason, (
+        f"the manifest-exempt file was rejected as {reason!r} despite being in "
+        "forced_paths; the comparison is not normalisation-safe"
+    )

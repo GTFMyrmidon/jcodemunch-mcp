@@ -2,6 +2,54 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.195] - 2026-07-28 - the size-cap exemption compared raw Windows paths
+
+⚠ **Windows only. POSIX is unaffected** — `os.path.normcase` is the identity
+function there, so a raw comparison cannot fail on Linux or macOS.
+
+`_should_index_file` tested the size-cap exemption with a raw string:
+
+    if size > cfg.max_size and resolved_str not in cfg.forced_paths:
+
+Four lines above it, the gitignore check already used
+`resolved_norm = os.path.normcase(resolved_str)` for exactly this reason. On
+Windows the same file resolves to strings that differ by drive-letter case or
+8.3 short form, so the `in` test missed and **the #25 exemption silently voided:
+a package.json entry point over the cap was dropped as `too_large` even though
+it was named in `forced_paths`.**
+
+### Fixed
+
+- `forced_paths` entries are stored `os.path.normcase`-normalised, and the
+  size-cap check compares `resolved_norm`. Both sides now agree on Windows and
+  are byte-identical to previous behaviour on POSIX.
+
+### Tests
+
+- `test_size_cap_exemption_is_case_insensitive_where_the_os_is` asserts that
+  **every stored entry is already normalised**, so a future raw comparison
+  cannot creep back in without failing. Fails on revert.
+- `test_v1_80_9_lodash_class.py::test_resolves_main_field` updated: it asserted
+  `str(big.resolve()) in forced`, which is the exact representation this release
+  changes. The claim it makes is unchanged — the `main` target resolves and
+  lands in the set — and on POSIX the assertion is byte-identical to the
+  original, because normcase is the identity there. ⚠ It is the ONLY test in
+  that class that spelled a full path; its siblings use `endswith`/basename
+  comparisons and were unaffected.
+
+### How this was found, and what it says about the last release
+
+⚠⚠ **A green local Windows suite is not a green Windows suite.** 1.108.194 was
+shipped on 6213 local passes; CI on `windows-latest` failed the new incremental
+parity test at the first run afterwards. The local box (Python 3.10, a temp path
+that happened to resolve identically) could not reproduce it. The runner's
+`C:\Users\runneradmin\...` path could.
+
+⚠ `fail-fast` cancelled the windows 3.10/3.11/3.12 jobs after 3.13 failed, so
+only one Windows job reached a conclusion. The defect is casing-dependent, not
+version-dependent, so the others were probably affected too — but that is an
+inference, not a measurement, and it is recorded here as one.
+
 ## [1.108.194] - 2026-07-28 - the escape hatch reached one walk out of three
 
 ⚠⚠ **v1.108.193 did not fix the reported problem.** It added `max_file_size`,

@@ -17,6 +17,8 @@ work didn't cover. Two compounding issues from sverklo bench round-2:
 
 from __future__ import annotations
 
+import os
+
 from jcodemunch_mcp.tools.get_dead_code_v2 import get_dead_code_v2
 from jcodemunch_mcp.tools.index_folder import (
     index_folder,
@@ -32,7 +34,12 @@ class TestPackageJsonForcedPaths:
         big = tmp_path / "big.js"
         big.write_text("// content\n" * 100, encoding="utf-8")
         forced = _scan_package_json_forced_paths(tmp_path)
-        assert str(big.resolve()) in forced
+        # v1.108.195: entries are stored os.path.normcase-normalised so the
+        # size-cap exemption survives Windows drive-letter case and 8.3 short
+        # forms. On POSIX normcase is the identity function, so this assertion
+        # is byte-identical to the original there. The claim is unchanged — the
+        # `main` target resolves and lands in the set — only its spelling is.
+        assert os.path.normcase(str(big.resolve())) in forced
 
     def test_resolves_extension_less_main(self, tmp_path):
         (tmp_path / "package.json").write_text(
