@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Accepted design work with no start date
+    url: https://github.com/jgravelle/jcodemunch-mcp/blob/main/ROADMAP.md
+    about: Ideas we have agreed to build eventually live on the roadmap with their close conditions, not as open issues. Parking is not rejection.

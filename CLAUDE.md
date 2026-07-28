@@ -386,6 +386,48 @@ parsers WITHOUT parsing pathological input.
 author; the badge renders "Top 1% of 81,432", not the rank the PR body promised,
 and it is live third-party-controlled content in a README that also renders on PyPI.
 
+## Issue + release policy (2026-07-28)
+
+**1. One issue, one verdict.** A multi-finding report gets SPLIT at triage into
+one issue per finding, cross-linked, credit on each. Nothing is dropped and no
+detail is discouraged. The reason is closure mechanics: a 4-finding issue closes
+only when the last one settles, so three finished fixes sit behind one
+unfinished conversation and the tracker cannot say which is which.
+
+⚠ **This is the correction to a mistake we made deliberately.** On 2026-07-27 we
+CONSOLIDATED five jdoc issues (#80/#89/#90/#93) into one gate, #95. It cut the
+open count from 5 to 1 and manufactured a single artifact with the power to
+block a release. **Tracker-tidiness and granularity pull in opposite directions;
+do not optimize the count.**
+
+**2. A release is NEVER blocked on an open issue**, including a verification we
+asked for. Done + tested + green ships on schedule, carrying a plain-language
+verification-status line (the #95 disclosure sentence is the template; it is
+deliberately weaker than a sign-off and the changelog must never blur the two).
+Late re-verification counts IN FULL and is announced retroactively. Nothing
+expires. **Every timebox names its default action** ("verification by X, or Y
+ships with disclosure Z"); a date with no stated consequence is a wish.
+
+⚠ **The point is that a reviewer's thoroughness must never become a veto.** If
+being careful can stall a release, careful review becomes expensive to accept,
+which is backwards.
+
+**3. A contributor's PR is never the only path.** Timebox it and keep our own
+path warm (#388 taught this the expensive way).
+
+⚠⚠ **Do NOT answer "an issue is stuck" with aggregate stats.** Measured
+2026-07-28: jcm median 0 days to close (80 issues, 70 within a day, 2 ever past
+a week); jdoc median 1 day. **Those numbers are TRUE and they are NOT a
+response.** jjg: a fraction of an eyelash commands full attention and impairs
+binocularity; "it is a small fraction of your body" helps nobody. The cost of a
+blocked issue is CONCENTRATED, not distributed. Design the fix at the OUTLIER
+(policy 2), never at the median. See
+[[feedback_dont_answer_pain_with_aggregates]].
+
+Surfaces: `CONTRIBUTING.md` ("One issue, one verdict" + "A release is never
+blocked on an open issue") and `.github/ISSUE_TEMPLATE/` (bug_report,
+multi_finding_report, config.yml pointing parked design at ROADMAP.md).
+
 ## Maintenance Practices
 
 1. **Document every tool before shipping.** Any PR adding a new tool to `server.py`
