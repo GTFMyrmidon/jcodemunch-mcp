@@ -2,6 +2,75 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.197] - 2026-07-28 - the escape hatch read the wrong config file
+
+⚠ **Third release on the same defect, and the first two each fixed a real half of
+it.** v1.108.193 gave the per-file size cap a config key and an env var.
+v1.108.194 made every walk resolve it **on entry**, so no call site could forget
+it. Both left the same hole: the resolver read **global config only**.
+
+    value = _config.get("max_file_size", DEFAULT_MAX_FILE_SIZE)   # no repo=
+
+`max_file_size` is a documented key in the config template, so the obvious place
+to set it is the project's own `.jcodemunch.jsonc` — the file `index_folder`
+parses, validates, and caches **one call before** the walk begins. That value was
+then never consulted. The failure is completely silent: no unknown-key warning,
+no error, no skip reason naming the config. The file is simply reported absent,
+and the cap that was set is the cap that does not apply.
+
+⚠ **`.193` fixed WHERE the cap is read. `.194` fixed WHICH WALKS read it. Neither
+fixed WHICH CONFIG is read.** All three limit resolvers — `get_max_file_size`,
+`get_max_index_files`, `get_max_folder_files` — now take `repo=`, and all three
+discovery entry points pass it: the full walk, the explicit-paths route, and the
+watcher fast path. **Parity across the three limits is the point, not tidiness.**
+They are documented side by side as per-project keys; fixing only the one that
+was reported leaves the other two lying in exactly the same way.
+
+⚠⚠ **The fix walked into a second bug, and the existing suite caught it.**
+`load_project_config` seeded `_PROJECT_CONFIGS[repo]` from global on first sight
+and then **never rewrote it** for a repo with no `.jcodemunch.jsonc`. A repo with
+no project file has nothing of its own to say, so its entry is supposed to be a
+**mirror** of global — but a mirror written only once stops being one the moment
+global changes. Every `get(..., repo=...)` read for that repo served a snapshot
+of whatever global was when it was first indexed. Harmless while repo-scoped
+reads were rare; a wrong answer the instant the limit resolvers started taking
+`repo=`. It now refreshes. **This was invisible until a caller that mattered
+started asking, which is the argument for the parity change above.**
+
+⚠⚠ **And the FIRST cut of that refresh was itself wrong, in the same family.**
+Refreshing unconditionally silently destroyed any `_PROJECT_CONFIGS` entry
+installed by a caller for a repo with no file on disk. Caught by
+`test_tools.py::TestIndexFolderGitignoreWarning::
+test_project_config_override_threshold_suppresses_warning` (#301) — **one real
+failure sitting inside the twelve known local-ONNX `test_semantic_search` env
+failures, which is exactly the noise that makes a real one easy to wave through.**
+Refresh now applies ONLY to mirrors this branch wrote (`_PROJECT_CONFIG_MIRRORS`);
+an entry we did not write is not ours to overwrite. **"Cache maintenance" that
+discards data someone else put there is data loss wearing a costume.**
+
+⚠ **The reporting PR ([#391](https://github.com/jgravelle/jcodemunch-mcp/pull/391),
+@amarakramali) branched before `.194` and named the `.194` cause.** Its patch
+re-added call-site resolution that `.194` had deliberately removed, and reached
+two of the three walks — the watcher fast path would have kept ignoring project
+config, which is the appear-then-vanish shape `.194` exists to prevent. **The
+finding was right and the repro was exact**; its two discovery tests are the
+regression tests here, unchanged in substance and credited in the commit.
+
+Fixed:
+- `security.get_max_file_size` / `get_max_index_files` / `get_max_folder_files`
+  take `repo=` and pass it to `config.get`
+- `discover_local_files`, `resolve_explicit_paths`, and the watcher fast path
+  each resolve with the walked root as the repo key (resolved spelling — the
+  `.195` lesson), which is the key `load_project_config` was called with, before
+  the git-root retarget moves `folder_path`
+- `config.load_project_config` refreshes rather than seeds-once when a repo has
+  no `.jcodemunch.jsonc`
+
+Tests: 7 new in `tests/test_v1_108_193.py`. Six fail on revert; the seventh
+(the clobber guard) passes on revert **by design** — it bounds this release's own
+fix rather than reproducing a defect on `main`, and is stated that way in its
+docstring so it is never mistaken for regression coverage.
+
 ## [1.108.196] - 2026-07-28 - a watcher change whose path spelled the root differently was dropped in silence
 
 ⚠ **The bare `continue` is the bug, not the `ValueError`.** The incremental fast

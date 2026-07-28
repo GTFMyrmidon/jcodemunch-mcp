@@ -15,6 +15,11 @@ logger = logging.getLogger(__name__)
 _GLOBAL_CONFIG: dict[str, Any] = {}
 _PROJECT_CONFIGS: dict[str, dict[str, Any]] = {}
 _PROJECT_CONFIG_HASHES: dict[str, str] = {}
+# Repo keys whose _PROJECT_CONFIGS entry is a MIRROR of global that WE wrote
+# because the repo has no `.jcodemunch.jsonc` (v1.108.197). Only these may be
+# refreshed from global — an entry installed by anyone else is theirs, and
+# overwriting it is data loss, not cache maintenance.
+_PROJECT_CONFIG_MIRRORS: set[str] = set()
 _DEPRECATED_ENV_VARS_LOGGED: set[str] = set()
 _CONFIG_LOCK = threading.Lock()
 _REPO_PATH_CACHE: dict[str, str] = {}
@@ -199,6 +204,7 @@ def invalidate_project_config_cache(source_root: str) -> None:
     with _CONFIG_LOCK:
         _PROJECT_CONFIGS.pop(resolved, None)
         _PROJECT_CONFIG_HASHES.pop(resolved, None)
+        _PROJECT_CONFIG_MIRRORS.discard(resolved)
 
 
 def _check_raw_local_adaptive(local_path: Path) -> tuple[bool, str]:
@@ -1149,14 +1155,34 @@ def load_project_config(source_root: str) -> None:
                             )
                 _PROJECT_CONFIGS[repo_key] = merged
                 _PROJECT_CONFIG_HASHES[repo_key] = content_hash
+                # File-backed, so no longer a mirror of global.
+                _PROJECT_CONFIG_MIRRORS.discard(repo_key)
         except Exception as e:
             logger.warning("Failed to load project config: %s", e)
             with _CONFIG_LOCK:
+                # A file exists but did not parse. The fallback is global, but
+                # this is NOT a mirror: the next call must retry the file.
                 _PROJECT_CONFIGS[repo_key] = deepcopy(_GLOBAL_CONFIG)
+                _PROJECT_CONFIG_MIRRORS.discard(repo_key)
     else:
         with _CONFIG_LOCK:
-            if repo_key not in _PROJECT_CONFIGS:
+            # ⚠ v1.108.197: REFRESH, don't seed-once. A repo with no
+            # `.jcodemunch.jsonc` has nothing of its own to say, so its entry is
+            # a mirror of global — and a mirror that is only ever written on
+            # first sight stops being one the moment global changes. The old
+            # `if repo_key not in _PROJECT_CONFIGS` guard froze the snapshot
+            # taken at first index, so a later global change was invisible to
+            # every `get(..., repo=...)` read for that repo. Harmless while
+            # repo-scoped reads were rare; not harmless now that the three limit
+            # resolvers take `repo=` (#390).
+            #
+            # ⚠ Refresh ONLY entries this branch wrote (`_PROJECT_CONFIG_MIRRORS`).
+            # An entry installed by anyone else — a caller configuring a repo in
+            # memory with no file on disk — is theirs. Overwriting it is data
+            # loss wearing a cache-maintenance costume, and it is silent.
+            if repo_key not in _PROJECT_CONFIGS or repo_key in _PROJECT_CONFIG_MIRRORS:
                 _PROJECT_CONFIGS[repo_key] = deepcopy(_GLOBAL_CONFIG)
+                _PROJECT_CONFIG_MIRRORS.add(repo_key)
             _PROJECT_CONFIG_HASHES.pop(repo_key, None)
 
 

@@ -972,8 +972,9 @@ def resolve_explicit_paths(
     """
     # Same resolve-on-entry rule as discover_local_files: the explicit-paths
     # route is a second walk entry point, and a cap that applies to one and not
-    # the other is the defect v1.108.194 exists to close.
-    max_size = get_max_file_size(max_size)
+    # the other is the defect v1.108.194 exists to close. `repo=` is what makes
+    # the walked root, not the ambient process, decide the cap (#390).
+    max_size = get_max_file_size(max_size, repo=str(Path(walk_root).resolve()))
     files: list[Path] = []
     warnings: list[str] = []
     skip_counts: dict[str, int] = {}
@@ -1108,11 +1109,19 @@ def discover_local_files(
     # the new route reached only the watcher fast path. Resolving on entry makes
     # every caller correct by default, including ones not yet written — the
     # same shape as `max_files` on the line above (@dkiaulakis, #375).
-    max_size = get_max_file_size(max_size)
-    max_files = get_max_folder_files(max_files)
+    #
+    # ⚠ v1.108.197: pass `repo=` too. Resolving on entry fixed WHERE the cap is
+    # read; it did not fix WHICH config is read. Without a repo the resolver sees
+    # global config only, so a cap set in the project's own `.jcodemunch.jsonc`
+    # was parsed, cached, and then never consulted (@amarakramali, #390). The key
+    # is the walked root because that is what `load_project_config` was called
+    # with, before the git-root retarget moves `folder_path` (line ~1319).
+    root = folder_path.resolve()
+    _repo_key = str(root)
+    max_size = get_max_file_size(max_size, repo=_repo_key)
+    max_files = get_max_folder_files(max_files, repo=_repo_key)
     files = []
     warnings = []
-    root = folder_path.resolve()
 
     skip_counts: dict[str, int] = {
         "skip_dir": 0,
@@ -1577,7 +1586,10 @@ def index_folder(
             # event. The exemption can only change an outcome for a file that is
             # actually over the cap, so the scan is paid only when the change set
             # contains one — the common case still walks nothing.
-            _fast_max_size = get_max_file_size()
+            # `repo=` for the same reason the two walks below take it: this is a
+            # third discovery entry point, and a cap the project sets must reach
+            # all three or the file appears on one route and vanishes on another.
+            _fast_max_size = get_max_file_size(repo=str(Path(walk_root).resolve()))
 
             def _fast_forced_paths() -> set:
                 for _c in changed_paths:
