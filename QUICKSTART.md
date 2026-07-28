@@ -397,3 +397,16 @@ The output is grouped into four sections:
 ---
 
 For the full reference — all env vars, AI summaries, HTTP transport, dbt/SQL support, and more — see [README.md](README.md).
+
+---
+
+## Using this at work?
+
+jCodeMunch is free for personal use. Commercial use needs a paid license — one-time,
+not a subscription.
+
+* [**What it saves you**](https://jcodemunch.com/roi.php?utm_source=github&utm_medium=quickstart&utm_campaign=jcm_quickstart_footer) — put your team size and query volume into the ROI calculator
+* [**Pricing**](https://jcodemunch.com/?utm_source=github&utm_medium=quickstart&utm_campaign=jcm_quickstart_footer#pricing) — Builder $79 · Studio $349 · Platform $1,999
+* [**Live token counter**](https://jcodemunch.com/?utm_source=github&utm_medium=quickstart&utm_campaign=jcm_quickstart_footer) — what the whole user base has saved so far
+
+If jCodeMunch doesn't pay for itself, you don't pay for jCodeMunch.

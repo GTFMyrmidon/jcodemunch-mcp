@@ -3,7 +3,7 @@
 **The leading, most token-efficient MCP server for precise GitHub source code retrieval via tree-sitter AST parsing.** Cut AI token costs **95%+** on code exploration — stop burning your context window reading entire files.
 
 > **Real results, live from production**
-> **335B+ tokens saved** · **48,000+ developers** · **$1.69M+ in AI spend avoided** · **40,000+ kg CO₂ prevented**
+> **583B+ tokens saved** · **73,000+ developers** · **$2.9M+ in AI spend avoided** · **70,000+ kg CO₂ prevented**
 > Live telemetry at **[jcodemunch.com](https://jcodemunch.com/)** — benchmark: **99.6% average token reduction** (15 tasks / 3 repos, 99.9% peak; run 2026-07-23).
 
 Works with **Autohand Code**, **Claude Code**, **Cursor**, **VS Code**, **Codex CLI**, **Continue**, **Windsurf**, and any MCP-compatible client.
@@ -34,7 +34,14 @@ uvx --from git+https://github.com/jgravelle/jcodemunch-mcp.git jcodemunch-mcp
 
 Quickstart - https://github.com/jgravelle/jcodemunch-mcp/blob/main/QUICKSTART.md
 
-A crapload of detailed info: http://jcodemunch.com/
+A crapload of detailed info: https://jcodemunch.com/
+
+**Paying for AI coding assistants?** Put your own numbers in and see what this
+costs you today:
+
+* [**ROI calculator**](https://jcodemunch.com/roi.php?utm_source=github&utm_medium=readme&utm_campaign=jcm_readme_top) — team size and query volume in, annual savings out
+* [**Pricing**](https://jcodemunch.com/?utm_source=github&utm_medium=readme&utm_campaign=jcm_readme_top#pricing) — $79 solo, $349 team, $1,999 org-wide, one-time
+* [**For finance teams**](https://jcodemunch.com/for-finance.php?utm_source=github&utm_medium=readme&utm_campaign=jcm_readme_top) — the version to forward to whoever signs off
 
 **Live OSS code-health observatory** — weekly six-axis health snapshots
 of Express, FastAPI, Gin, Pydantic, Django, Flask, NestJS, Cobra, and

@@ -12,7 +12,7 @@ This page tells you how.
 
 > **You're part of the jCodeMunch-MCP impact program.**
 >
-> Every token your team prevents adds to our public CO₂ counter, currently sitting at over 27,000 kg CO₂ saved across the community. If you want to show that on your site, grab a badge, a live widget, or an embeddable SVG from `https://j.gravelle.us/jCodeMunch/badge-kit.md`. All three are free, configurable, and link to a public verification page.
+> Every token your team prevents adds to our public CO₂ counter, currently sitting at over 70,000 kg CO₂ saved across the community. If you want to show that on your site, grab a badge, a live widget, or an embeddable SVG from `https://github.com/jgravelle/jcodemunch-mcp/blob/main/badge-kit.md`. All three are free, configurable, and link to a public verification page.
 >
 > No tracking, no required attribution, no strings. Just a clean way to show you are reducing AI's carbon footprint.
 
@@ -26,7 +26,7 @@ All of the embed options pull the live total from our public counter at:
 https://j.gravelle.us/APIs/savings/total.php
 ```
 
-Returns JSON. Anyone can query it. The current kg-CO₂ figure is computed from `total_tokens × 0.00000012`, which is the upper-bound estimate from our SCI for AI case study. Methodology is published at `https://j.gravelle.us/jCodeMunch/case-study`.
+Returns JSON. Anyone can query it. The current kg-CO₂ figure is computed from `total_tokens × 0.00000012`, which is the upper-bound estimate from our SCI for AI case study. Methodology is published in the [225-Billion-Token Case Study Against SCI for AI](https://github.com/jgravelle/jcodemunch-mcp/wiki/Token-Reduction-as-an-Energy%E2%80%90Efficiency-Action:-A-225%E2%80%90Billion%E2%80%90Token-Case-Study-Against-SCI-for-AI).
 
 Click any badge or widget and the visitor lands on the impact page, where the full math, the equivalents, and the verification trail are spelled out. That page is the procurement-defensible destination for the badge.
 
@@ -37,47 +37,47 @@ Click any badge or widget and the visitor lands on the impact page, where the fu
 Best for: GitHub READMEs, GitLab project pages, plaintext-friendly contexts. shields.io-style SVG, two-tone, auto-refreshes once per hour.
 
 ### Default (dark, kg)
-[![CO₂ prevented by jCodeMunch-MCP](https://j.gravelle.us/jCodeMunch/badge.php)](https://j.gravelle.us/jCodeMunch/impact.php)
+[![CO₂ prevented by jCodeMunch-MCP](https://jcodemunch.com/badge.php)](https://jcodemunch.com/impact.php)
 ```markdown
-[![CO₂ prevented by jCodeMunch-MCP](https://j.gravelle.us/jCodeMunch/badge.php)](https://j.gravelle.us/jCodeMunch/impact.php)
+[![CO₂ prevented by jCodeMunch-MCP](https://jcodemunch.com/badge.php)](https://jcodemunch.com/impact.php)
 ```
 
 Renders as a clickable badge that links to the impact page.
 
 ### Light theme
-[![CO₂ prevented by jCodeMunch-MCP](https://j.gravelle.us/jCodeMunch/badge.php?theme=light)](https://j.gravelle.us/jCodeMunch/impact.php)
+[![CO₂ prevented by jCodeMunch-MCP](https://jcodemunch.com/badge.php?theme=light)](https://jcodemunch.com/impact.php)
 ```markdown
-[![CO₂ prevented by jCodeMunch-MCP](https://j.gravelle.us/jCodeMunch/badge.php?theme=light)](https://j.gravelle.us/jCodeMunch/impact.php)
+[![CO₂ prevented by jCodeMunch-MCP](https://jcodemunch.com/badge.php?theme=light)](https://jcodemunch.com/impact.php)
 ```
 
 ### Imperial units (pounds)
-[![CO₂ prevented by jCodeMunch-MCP](https://j.gravelle.us/jCodeMunch/badge.php?units=lbs)](https://j.gravelle.us/jCodeMunch/impact.php)
+[![CO₂ prevented by jCodeMunch-MCP](https://jcodemunch.com/badge.php?units=lbs)](https://jcodemunch.com/impact.php)
 ```markdown
-[![CO₂ prevented by jCodeMunch-MCP](https://j.gravelle.us/jCodeMunch/badge.php?units=lbs)](https://j.gravelle.us/jCodeMunch/impact.php)
+[![CO₂ prevented by jCodeMunch-MCP](https://jcodemunch.com/badge.php?units=lbs)](https://jcodemunch.com/impact.php)
 ```
 
 ### Tonnes (good for larger numbers)
-[![CO₂ prevented by jCodeMunch-MCP](https://j.gravelle.us/jCodeMunch/badge.php?units=tonnes)](https://j.gravelle.us/jCodeMunch/impact.php)
+[![CO₂ prevented by jCodeMunch-MCP](https://jcodemunch.com/badge.php?units=tonnes)](https://jcodemunch.com/impact.php)
 ```markdown
-[![CO₂ prevented by jCodeMunch-MCP](https://j.gravelle.us/jCodeMunch/badge.php?units=tonnes)](https://j.gravelle.us/jCodeMunch/impact.php)
+[![CO₂ prevented by jCodeMunch-MCP](https://jcodemunch.com/badge.php?units=tonnes)](https://jcodemunch.com/impact.php)
 ```
 
 ### Combine options
 
 Query params stack:
-[![CO₂ prevented](https://j.gravelle.us/jCodeMunch/badge.php?theme=light&units=lbs)](https://j.gravelle.us/jCodeMunch/impact.php)
+[![CO₂ prevented](https://jcodemunch.com/badge.php?theme=light&units=lbs)](https://jcodemunch.com/impact.php)
 ```markdown
-[![CO₂ prevented](https://j.gravelle.us/jCodeMunch/badge.php?theme=light&units=lbs)](https://j.gravelle.us/jCodeMunch/impact.php)
+[![CO₂ prevented](https://jcodemunch.com/badge.php?theme=light&units=lbs)](https://jcodemunch.com/impact.php)
 ```
 
 ### HTML version (for sites that don't render Markdown)
-<a href="https://j.gravelle.us/jCodeMunch/impact.php">
-  <img src="https://j.gravelle.us/jCodeMunch/badge.php" alt="CO₂ prevented by jCodeMunch-MCP">
+<a href="https://jcodemunch.com/impact.php">
+  <img src="https://jcodemunch.com/badge.php" alt="CO₂ prevented by jCodeMunch-MCP">
 </a>
 
 ```html
-<a href="https://j.gravelle.us/jCodeMunch/impact.php">
-  <img src="https://j.gravelle.us/jCodeMunch/badge.php" alt="CO₂ prevented by jCodeMunch-MCP">
+<a href="https://jcodemunch.com/impact.php">
+  <img src="https://jcodemunch.com/badge.php" alt="CO₂ prevented by jCodeMunch-MCP">
 </a>
 ```
 
@@ -147,9 +147,9 @@ Best for: print materials, PDF reports, places where you cannot reference a remo
 
 Right-click and save as:
 
-- Dark, kg: `https://j.gravelle.us/jCodeMunch/badge.php`
-- Light, kg: `https://j.gravelle.us/jCodeMunch/badge.php?theme=light`
-- Dark, tonnes: `https://j.gravelle.us/jCodeMunch/badge.php?units=tonnes`
+- Dark, kg: `https://jcodemunch.com/badge.php`
+- Light, kg: `https://jcodemunch.com/badge.php?theme=light`
+- Dark, tonnes: `https://jcodemunch.com/badge.php?units=tonnes`
 
 The SVG includes the current number at time of download. If you need it to stay current, use Option 1 or Option 2 instead.
 
