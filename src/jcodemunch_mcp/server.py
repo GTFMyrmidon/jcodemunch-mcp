@@ -234,7 +234,7 @@ _ALWAYS_PRESENT_TOOLS: frozenset[str] = frozenset({"set_tool_tier", "announce_mo
 _UNDISABLEABLE_TOOLS: frozenset[str] = frozenset({"set_tool_tier", "announce_model"})
 
 # --- The Counter: adaptive tool surface (front door) ----------------------- #
-# order/menu/route collapse the ~83-tool surface to a 3-tool front door without
+# order/menu/route collapse the whole tool surface to a 3-tool front door without
 # removing any capability. See docs/prd-adaptive-tool-surface.md + counter.py.
 from . import counter as _counter
 
@@ -286,7 +286,7 @@ def _counter_front_door_tools() -> list:
         Tool(
             name="menu",
             description=(
-                "Discover catalog actions without keeping all ~83 tool schemas "
+                "Discover catalog actions without keeping the full tool catalog "
                 "resident: menu(query?). Returns compact rows (action, summary, "
                 "required args, state_changing). With no query, lists the catalog. "
                 "Pair with 'order' to dispatch the chosen action."

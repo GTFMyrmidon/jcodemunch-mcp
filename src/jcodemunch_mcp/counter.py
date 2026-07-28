@@ -2,9 +2,9 @@
 
 Problem this solves
 -------------------
-jcm exposes ~83 MCP tools. The host serializes every resident tool's schema
+jcm exposes ~90 MCP tools. The host serializes every resident tool's schema
 into the model's context on every turn (a fixed per-turn token tax), and the
-model must select one tool out of ~83 (dispatch dilution). Both costs scale
+model must select one tool out of the whole catalog (dispatch dilution). Both costs scale
 with tool count and work against jcm's own token-efficiency thesis.
 
 The Counter is a small, stable front door that fronts the full catalog without
@@ -17,7 +17,7 @@ removing any capability:
     jcm ships none today, and the Counter must never become the surface that
     introduces one).
   * ``menu(query, tier)`` -- discovery. Search/browse the action catalog and
-    return compact entries, so all ~83 schemas need not stay resident.
+    return compact entries, so the full schema set need not stay resident.
   * ``route(task, execute)`` -- intent to action. Map a natural-language task
     to the best catalog action(s); optionally dispatch the top one. Composes
     with ``assemble_task_context`` / ``plan_turn`` (it recommends them for
