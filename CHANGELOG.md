@@ -2,6 +2,57 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.196] - 2026-07-28 - a watcher change whose path spelled the root differently was dropped in silence
+
+⚠ **The bare `continue` is the bug, not the `ValueError`.** The incremental fast
+path derived each change's root-relative name with:
+
+    rel_path = abs_path.relative_to(folder_path).as_posix()
+    except ValueError:
+        continue
+
+`relative_to` is a **string** operation. Whenever the change and the root spell
+the same location differently it raises, and the handler discarded the change
+with **no warning, no skip counter, and nothing in `discovery_skip_counts`** — a
+watcher could stop reindexing entirely and report success.
+
+On Windows this is not hypothetical: a path can arrive in 8.3 short form
+(`C:\Users\RUNNER~1\...`) while the root resolves long
+(`C:\Users\runneradmin\...`), or differ only in drive-letter case.
+
+### Fixed
+
+- Both call sites now use `_rel_to_root()`: literal comparison first (the
+  overwhelmingly common case, unchanged cost), then resolved, then normcased
+  with a **separator-aware** prefix test so a sibling directory sharing a name
+  prefix is still correctly refused. Returns `None` only when the path is
+  genuinely outside the root.
+
+### How this was found, and two wrong diagnoses on the way
+
+⚠⚠ **This took three CI rounds and produced one real-but-unrelated fix.** The
+same test failed on `windows-latest` while passing on every ubuntu job and on a
+local Windows box. Reasoning from the result dict alone produced v1.108.195 (the
+raw-vs-normcase `forced_paths` comparison) — a genuine Windows defect that was
+**not** this one. The failure only became diagnosable after the test was changed
+to report the predicate verdict, the reject reason, and the raw/resolved/
+normcased spellings of the path. It then answered in one round: `predicate ok =
+True`, and `RUNNER~1` in the raw path.
+
+**A remote failure that does not say why cannot be diagnosed remotely.** Guessing
+from a result dict twice cost more than instrumenting once.
+
+### Tests
+
+⚠⚠ **The regression test for this is VACUOUS on a local Windows box and says so
+in its own docstring.** Neutering the fallback does not fail it: Windows pathlib
+already compares drive letters case-insensitively, and an 8.3 short name cannot
+be constructed portably. It pins the portable half of the contract (exact
+spelling resolves; outside-the-root and prefix-sharing siblings are refused) and
+is **explicitly not offered as proof of the short-name fix**. CI on
+`windows-latest` is the real gate. A test that cannot fail is not evidence, and
+labelling it beats quietly counting it.
+
 ## [1.108.195] - 2026-07-28 - the size-cap exemption compared raw Windows paths
 
 ⚠ **Windows only. POSIX is unaffected** — `os.path.normcase` is the identity

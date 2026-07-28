@@ -306,3 +306,50 @@ def test_size_cap_exemption_is_case_insensitive_where_the_os_is():
         f"the manifest-exempt file was rejected as {reason!r} despite being in "
         "forced_paths; the comparison is not normalisation-safe"
     )
+
+
+def test_a_differently_spelled_watcher_path_is_not_silently_dropped():
+    r"""A change whose path spells the root differently must still resolve.
+
+    ⚠ Found by CI on windows-latest after two wrong diagnoses. The fast path did
+    `abs_path.relative_to(folder_path)` and answered ValueError with a bare
+    `continue`, so a change was DROPPED SILENTLY — no warning, no skip counter.
+    On the runner, tempfile handed back an 8.3 short path
+    (`C:\Users\RUNNER~1\...`) while the root resolved long
+    (`C:\Users\runneradmin\...`). A Windows watcher emitting either form would
+    stop reindexing and say nothing about it.
+
+    ⚠⚠ HONEST LIMIT, stated rather than hidden. The assertions below are the
+    PORTABLE half of the contract. This machine cannot exercise the fallback:
+    Windows pathlib already compares drive letters case-insensitively, and an
+    8.3 short name cannot be constructed portably — so neutering the fallback
+    does NOT fail this test locally. I checked, and it passed.
+    **CI on windows-latest is the real gate for the short-name case.** A test
+    that cannot fail is not evidence, so this one is kept only for the contract
+    it does pin, and is explicitly NOT offered as proof of the 8.3 fix.
+    """
+    from pathlib import Path as _P
+
+    from jcodemunch_mcp.tools.index_folder import _rel_to_root
+
+    root = _P(tempfile.mkdtemp()).resolve()
+    (root / "sub").mkdir()
+    f = root / "sub" / "a.js"
+    f.write_text("x\n", encoding="utf-8")
+
+    assert _rel_to_root(f, root) == "sub/a.js", "exact spelling must work"
+
+    # A genuinely unrelated path must still be refused — the fallback must not
+    # turn "outside the root" into a false positive.
+    outside = _P(tempfile.mkdtemp()) / "z.js"
+    assert _rel_to_root(outside, root) is None, (
+        "a path outside the root must not be accepted by the fallback"
+    )
+
+    # A sibling directory sharing a name prefix must not match by string
+    # prefix — the normcase fallback compares with a separator appended for
+    # exactly this reason.
+    sibling = _P(str(root) + "_other") / "a.js"
+    assert _rel_to_root(sibling, root) is None, (
+        "prefix matching must be separator-aware, not a bare startswith"
+    )

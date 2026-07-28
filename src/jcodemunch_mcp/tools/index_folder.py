@@ -788,6 +788,43 @@ def _fast_path_providers(folder_path: Path, context_providers: bool) -> list:
     return providers
 
 
+def _rel_to_root(abs_path: Path, root: Path) -> Optional[str]:
+    """Root-relative posix path for a watcher change, or None if genuinely outside.
+
+    ⚠ The naive `abs_path.relative_to(root)` raises ValueError whenever the two
+    spell the same location differently, and the call sites answered that with a
+    bare `continue` — so the change was **silently dropped, with no warning and
+    no skip counter**. On Windows that is not hypothetical: a path can arrive in
+    8.3 short form (`C:\\Users\\RUNNER~1\\...`) while the root is the long form
+    (`C:\\Users\\runneradmin\\...`), or differ only by drive-letter case. A
+    watcher emitting either would stop reindexing and say nothing.
+
+    Tries the literal comparison first (cheap, and the overwhelmingly common
+    case), then falls back to resolved + normcased forms before concluding the
+    path is actually outside the root.
+    """
+    try:
+        return abs_path.relative_to(root).as_posix()
+    except ValueError:
+        pass
+    try:
+        resolved = abs_path.resolve()
+        root_resolved = root.resolve()
+        try:
+            return resolved.relative_to(root_resolved).as_posix()
+        except ValueError:
+            pass
+        # Last resort: normcase both (Windows drive-letter/short-name casing).
+        r_norm = os.path.normcase(str(root_resolved))
+        p_norm = os.path.normcase(str(resolved))
+        prefix = r_norm if r_norm.endswith(os.sep) else r_norm + os.sep
+        if p_norm.startswith(prefix):
+            return str(resolved)[len(prefix):].replace("\\", "/")
+    except OSError:
+        pass
+    return None
+
+
 def _scan_package_json_forced_paths(folder_path: Path) -> set[str]:
     """Pre-scan ``package.json`` files under ``folder_path`` to collect the
     absolute paths of files referenced by ``main``/``module``/``exports``/
@@ -1601,9 +1638,8 @@ def index_folder(
                     abs_path_str = wc[1]
                     old_hash = wc[2]
                     abs_path = Path(abs_path_str)
-                    try:
-                        rel_path = abs_path.relative_to(folder_path).as_posix()
-                    except ValueError:
+                    rel_path = _rel_to_root(abs_path, folder_path)
+                    if rel_path is None:
                         continue
                     _old_hash_map[rel_path] = old_hash
 
@@ -1636,9 +1672,8 @@ def index_folder(
                         old_hash = wc_item[2] if len(wc_item) > 2 else ""
 
                     abs_path = Path(abs_path_str)
-                    try:
-                        rel_path = abs_path.relative_to(folder_path).as_posix()
-                    except ValueError:
+                    rel_path = _rel_to_root(abs_path, folder_path)
+                    if rel_path is None:
                         continue
 
                     # Apply the shared filter bundle (#306). Deletions bypass
