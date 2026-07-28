@@ -135,11 +135,42 @@ def test_package_json_exemption_survives_an_incremental_reindex():
     # present and proved nothing. With the exemption reaching this path the file
     # is re-indexed (changed == 1); without it the file is filtered out before
     # it is ever compared, and the call reports changed == 0.
-    assert inc.get("changed") == 1, (
-        "the incremental path dropped a manifest-exempt oversize file: it was "
-        "indexed by the full walk and then filtered out on re-index, so the "
-        f"symbol would appear and then vanish. result={inc}"
-    )
+    if inc.get("changed") != 1:
+        # Self-diagnosing failure. This assertion failed twice on windows-latest
+        # while passing on every ubuntu job and on a local Windows box, and two
+        # rounds of reasoning from the result dict alone produced one real bug
+        # (the normcase comparison, v1.108.195) that turned out NOT to be this
+        # one. A failure message that does not say WHY the filter rejected the
+        # file cannot be diagnosed remotely, so compute the reason here.
+        import os
+
+        from jcodemunch_mcp.tools.index_folder import (
+            _build_index_filters,
+            _scan_package_json_forced_paths,
+            _should_index_file,
+            get_max_file_size,
+        )
+
+        forced = _scan_package_json_forced_paths(d.resolve())
+        cfg = _build_index_filters(
+            root=d.resolve(), follow_symlinks=False,
+            max_size=get_max_file_size(), extra_spec=None,
+            forced_paths=forced, skip_dirs_regex=None,
+            check_binary=True, check_filename=True,
+        )
+        ok, reason = _should_index_file(big, cfg)[:2]
+        raise AssertionError(
+            "the incremental path dropped a manifest-exempt oversize file.\n"
+            f"  result          = {inc}\n"
+            f"  predicate ok    = {ok}\n"
+            f"  reject reason   = {reason!r}\n"
+            f"  forced_paths    = {sorted(forced)}\n"
+            f"  file (raw)      = {str(big)!r}\n"
+            f"  file (resolved) = {str(big.resolve())!r}\n"
+            f"  file (normcase) = {os.path.normcase(str(big.resolve()))!r}\n"
+            f"  size            = {big.stat().st_size} "
+            f"cap = {get_max_file_size()}"
+        )
 
 
 def test_forced_path_scan_is_skipped_when_nothing_is_oversize():
