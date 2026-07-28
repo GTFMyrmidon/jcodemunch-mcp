@@ -4,26 +4,45 @@ Thanks for your interest in contributing! A few things to know before you submit
 
 ## Contributor License Agreement
 
-This project is dual-licensed — free for non-commercial use, with paid licenses for commercial use. To keep that model legally sound, **all contributors must sign the CLA before their PR can be merged.**
+This project is dual-licensed: free for non-commercial use, with paid licenses
+for commercial use. To keep that model legally sound, **all contributors must
+sign the CLA before their PR can be merged.**
 
-The CLA is short and plain-English: you keep your copyright, you grant the project the right to sublicense your contribution commercially, and you confirm the work is yours to submit.
+The CLA is short and plain-English: you keep your copyright, you grant the
+project the right to sublicense your contribution commercially, and you confirm
+the work is yours to submit.
 
 **[Sign the CLA](https://cla-assistant.io/jgravelle/jcodemunch-mcp)**
 
-CLA Assistant will prompt you automatically when you open a PR. It takes about 30 seconds.
+CLA Assistant will prompt you automatically when you open a PR. It takes about
+30 seconds.
 
 ## Commercial Licensing
 
-If you're using jCodeMunch in a commercial context, see the [license section in the README](README.md#license-dual-use) for options.
+If you're using jCodeMunch in a commercial context, see the [license section in the
+README](README.md) for options.
 
 ## Getting Started
+
+Dev dependencies are declared in a PEP 735 `[dependency-groups]` block, not an
+optional-dependencies extra, so there is no `.[test]` or `.[dev]` to install.
 
 ```bash
 git clone https://github.com/jgravelle/jcodemunch-mcp
 cd jcodemunch-mcp
-pip install -e ".[test]"
-pytest tests/ -q
+
+# with uv
+uv sync
+uv run pytest tests/ -q
+
+# or with pip
+pip install -e . pytest pytest-asyncio pytest-cov
+PYTHONPATH=src python -m pytest tests/ -q
 ```
+
+Run the suite with `PYTHONPATH=src`. An installed copy of the package from PyPI
+will otherwise shadow `src/`, and you will be testing the released code instead
+of your change.
 
 ## Guidelines
 
@@ -56,8 +75,8 @@ What we do at triage:
 - Keep the original as the parent only if it still has its own verdict. If it is
   purely an index of the others, we close it and say so.
 - Accepted design work with no start date does not stay open as an issue at all.
-  It moves to [ROADMAP.md](ROADMAP.md) with its close condition verbatim and its
-  author credited. Parking is not rejection, and the roadmap says so.
+  It moves to the roadmap with its close condition verbatim and its author
+  credited. Parking is not rejection, and the roadmap says so.
 
 ## A release is never blocked on an open issue
 
