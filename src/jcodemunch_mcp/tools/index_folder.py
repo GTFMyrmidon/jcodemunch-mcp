@@ -1113,7 +1113,7 @@ def discover_local_files(
     # ⚠ v1.108.197: pass `repo=` too. Resolving on entry fixed WHERE the cap is
     # read; it did not fix WHICH config is read. Without a repo the resolver sees
     # global config only, so a cap set in the project's own `.jcodemunch.jsonc`
-    # was parsed, cached, and then never consulted (@amarakramali, #390). The key
+    # was parsed, cached, and then never consulted (#390 / #391 @amarakramali). The key
     # is the walked root because that is what `load_project_config` was called
     # with, before the git-root retarget moves `folder_path` (line ~1319).
     root = folder_path.resolve()

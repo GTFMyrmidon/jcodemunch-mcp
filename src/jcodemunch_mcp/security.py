@@ -405,7 +405,9 @@ def get_max_file_size(
 # corpus is exactly the case that justifies moving one — the monorepo with the
 # 800KB generated client, not the whole machine. Reading global config only made
 # that setting land in a file the resolver never opened, so it failed silently:
-# no warning, no unknown-key error, just the default (@amarakramali, #390).
+# no warning, no unknown-key error, just the default (#390 @lazy-geeek reported
+# the global-config half, fixed in .194; #391 @amarakramali carried the repro
+# that exposed this project-config half).
 def get_max_index_files(
     max_files: Optional[int] = None,
     repo: Optional[str] = None,

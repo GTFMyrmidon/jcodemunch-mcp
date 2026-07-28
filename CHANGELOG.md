@@ -48,8 +48,14 @@ Refresh now applies ONLY to mirrors this branch wrote (`_PROJECT_CONFIG_MIRRORS`
 an entry we did not write is not ours to overwrite. **"Cache maintenance" that
 discards data someone else put there is data loss wearing a costume.**
 
-⚠ **The reporting PR ([#391](https://github.com/jgravelle/jcodemunch-mcp/pull/391),
-@amarakramali) branched before `.194` and named the `.194` cause.** Its patch
+⚠ **Attribution, because the two halves have two different reporters.**
+[#390](https://github.com/jgravelle/jcodemunch-mcp/issues/390) (@lazy-geeek)
+reported the GLOBAL-config half against `.193` — **that half was already fixed by
+`.194`, and their exact repro passes on `.196`**, verified before closing. The
+project-config half fixed here came from
+[#391](https://github.com/jgravelle/jcodemunch-mcp/pull/391) (@amarakramali).
+
+⚠ **That PR branched before `.194` and named the `.194` cause.** Its patch
 re-added call-site resolution that `.194` had deliberately removed, and reached
 two of the three walks — the watcher fast path would have kept ignoring project
 config, which is the appear-then-vanish shape `.194` exists to prevent. **The
