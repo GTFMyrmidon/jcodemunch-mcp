@@ -428,6 +428,17 @@ Surfaces: `CONTRIBUTING.md` ("One issue, one verdict" + "A release is never
 blocked on an open issue") and `.github/ISSUE_TEMPLATE/` (bug_report,
 multi_finding_report, config.yml pointing parked design at ROADMAP.md).
 
+⚠ **CONTRIBUTING.md is now IDENTICAL suite-wide** (jcm/jdoc/jdata differ only by
+product name, repo slug, and jcm's extra quality-gates section). Two pre-existing
+bugs fell out of normalizing it: **the documented install command
+`pip install -e ".[test]"` was WRONG IN ALL THREE REPOS** — no repo declares a
+`test` extra; dev deps live in a PEP 735 `[dependency-groups]` block, so the
+FIRST command a new contributor ran failed. And jcm's
+`README.md#license-dual-use` anchor pointed at a heading that does not exist
+(`## License`). ⚠ **CI installs with `uv sync` and never runs the command the
+docs give a human**, which is why this survived: the thing we test is not the
+thing they do.
+
 ## Maintenance Practices
 
 1. **Document every tool before shipping.** Any PR adding a new tool to `server.py`
