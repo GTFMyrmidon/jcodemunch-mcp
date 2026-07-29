@@ -121,7 +121,7 @@ Tool-layer savings (isolated from fixed overhead): **15–25%**
 | File-level F1 (alive files) | 100.0% | 69.6% | gap |
 | Export-level F1 | 93.3% | 64.1% | gap |
 
-**Confirmed tool-layer savings: 20%** (statistically significant, Wilcoxon p=0.0074). Dead file detection is equivalent. Accuracy gaps identified on alive-file classification and export-level analysis; three root causes found and addressed (see report).
+**Confirmed tool-layer savings: 20%** (statistically significant, Wilcoxon p=0.0074). Dead file detection is equivalent. Accuracy gaps identified on alive-file classification and export-level analysis; three gaps identified, two fixed in code (v1.8.1, v1.8.3) and one a task-framing issue (see report).
 
 Raw data: https://gist.github.com/Mharbulous/bb097396fa92ef1d34d03a72b56b2c61
 
