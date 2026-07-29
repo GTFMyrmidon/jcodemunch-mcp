@@ -210,12 +210,12 @@ Measured with `tiktoken cl100k_base` across three public repos. Workflow: `searc
 
 | Repository | Files | Symbols | Baseline tokens | jCodeMunch tokens | Reduction |
 |------------|------:|--------:|----------------:|------------------:|----------:|
-| expressjs/express | 172 | 182 | 143,355 | ~1,040 avg | **99.3%** |
-| fastapi/fastapi | 1,000 | 6,722 | 823,784 | ~2,490 avg | **99.7%** |
-| gin-gonic/gin | 109 | 1,502 | 192,800 | ~1,510 avg | **99.2%** |
-| **Grand total (15 task-runs)** | | | **5,799,695** | **25,220** | **99.6%** |
+| expressjs/express | 185 | 200 | 155,960 | 985 avg | **99.4%** |
+| fastapi/fastapi | 1,000 | 6,722 | 823,784 | 2,494 avg | **99.7%** |
+| gin-gonic/gin | 98 | 1,179 | 151,842 | 1,540 avg | **99.0%** |
+| **Grand total (15 task-runs)** | | | **5,657,930** | **25,090** | **99.6%** |
 
-Per-query results range from 99.1% to 99.9%. The 99.6% figure is the aggregate (run 2026-07-23, v1.108.163, full un-capped indexes). Run `python benchmarks/harness/run_benchmark.py` to reproduce.
+Per-query results range from 99.0% to 99.9%. The 99.6% figure is the aggregate (run 2026-07-29, v1.108.199, full un-capped indexes). Run `python benchmarks/harness/run_benchmark.py` to reproduce, or `--reference` to also refresh `benchmarks/jcm_reference.json` — the artifact the RAG and Odysseus comparison harnesses read instead of carrying their own copy of these numbers.
 
 ### A/B test on production codebase
 

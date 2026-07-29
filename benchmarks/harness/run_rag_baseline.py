@@ -54,6 +54,15 @@ from typing import Optional
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _BENCH_DIR = _REPO_ROOT / "benchmarks"
 sys.path.insert(0, str(_REPO_ROOT / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# The jCodeMunch side of this comparison comes from run_benchmark.py's reference
+# artifact — one measurement path, one definition of "jCodeMunch tokens".
+from run_benchmark import (  # noqa: E402  (sibling module, same directory)
+    load_reference,
+    reference_drift,
+    reference_entry,
+)
 
 try:
     from jcodemunch_mcp.storage import IndexStore
@@ -120,19 +129,20 @@ EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 DEFAULT_REPOS = ["expressjs/express", "fastapi/fastapi", "gin-gonic/gin"]
 TASKS_PATH = _BENCH_DIR / "tasks.json"
 
-# jCodemunch grand summary captured from run_benchmark.py (run 2026-03-28).
-# Repos at that index state: express 165 files, fastapi 951 files, gin 98 files.
-# Re-run run_benchmark.py to refresh these numbers if the index changes.
-JCODEMUNCH_GRAND = {"baseline": 5_122_105, "jmunch": 19_406, "task_runs": 15}
-
-# Per-repo avg tokens/query from the same 2026-03-28 run_benchmark.py run.
-# When a repo is listed here, the renderer uses the exact value (no tilde).
-# Repos not in this dict fall back to proportional allocation from JCODEMUNCH_GRAND.
-JCODEMUNCH_PER_REPO: dict[str, int] = {
-    "expressjs/express": 924,
-    "fastapi/fastapi": 1_834,
-    "gin-gonic/gin": 1_124,
-}
+# ---------------------------------------------------------------------------
+# jCodeMunch reference measurements
+#
+# Read from benchmarks/jcm_reference.json, written by run_benchmark.py
+# --reference. NOT hardcoded: hand-typed constants go stale silently while the
+# RAG side of every table is measured live in this run, and a ratio of a fresh
+# numerator to a stale denominator moves on its own. Regenerate with:
+#
+#     python benchmarks/harness/run_benchmark.py --reference
+#
+# A repo the artifact does not cover gets no jCodeMunch column and no ratio.
+# "Not measured" is a legitimate cell; an estimate is not.
+# ---------------------------------------------------------------------------
+_REFERENCE = load_reference()
 
 # ---------------------------------------------------------------------------
 # Tokenizer helpers
@@ -558,18 +568,12 @@ def _fmt_ratio(r: float) -> str:
     return "∞" if r == float("inf") else f"{r:.1f}x"
 
 
-def _jmunch_avg_tokens_for_repo(repo_baseline: int, all_baselines: list[int]) -> int:
-    """
-    Estimate jCodemunch avg tokens/query for a repo by proportional allocation from the
-    grand summary: (this_repo_baseline / sum_all_baselines) × jmunch_total / 5 queries.
-    Uses the *actual* baselines measured in this run so the proportions are current.
-    """
-    total_bl = sum(all_baselines)
-    if total_bl == 0 or repo_baseline == 0:
-        return 0
-    repo_share = repo_baseline / total_bl
-    jmunch_total_repo = JCODEMUNCH_GRAND["jmunch"] * repo_share
-    return int(jmunch_total_repo / 5)
+# NOTE: there is deliberately no estimator here. A previous revision allocated
+# jCodeMunch's per-repo cost proportionally to repo size when the repo was not
+# in the reference set. That number was never measured, and its premise — that
+# retrieval cost scales with corpus size — is the opposite of what this project
+# claims, so the estimate was biased in a direction nobody could see. A repo
+# absent from the reference artifact now renders "not measured".
 
 
 def render_markdown(all_results: list[dict]) -> str:
@@ -688,22 +692,34 @@ def render_markdown(all_results: list[dict]) -> str:
     # -----------------------------------------------------------------------
     # Combined comparison table
     # -----------------------------------------------------------------------
+    if _REFERENCE:
+        provenance = (
+            "jCodemunch per-repo figures are read from `benchmarks/jcm_reference.json` "
+            f"(run {_REFERENCE.get('captured_at', 'unknown')}, "
+            f"v{_REFERENCE.get('jcodemunch_version', 'unknown')}; grand summary: baseline "
+            f"{_REFERENCE['grand']['baseline_tokens']:,}, jMunch "
+            f"{_REFERENCE['grand']['jmunch_tokens']:,}, "
+            f"{_REFERENCE['grand']['task_runs']} task-runs). "
+            "Regenerate with `python benchmarks/harness/run_benchmark.py --reference`."
+        )
+    else:
+        provenance = (
+            "**No jCodemunch reference artifact found** — the jCodemunch columns are "
+            "omitted rather than estimated. Run "
+            "`python benchmarks/harness/run_benchmark.py --reference` first."
+        )
+
     lines += [
         "## Combined Comparison",
         "",
         "Average RAG tokens per query (mean of 5 queries), compared to jCodemunch.",
-        "jCodemunch per-repo figures are from a back-to-back `run_benchmark.py` run "
-        f"on 2026-03-28 against the same index state "
-        f"(grand summary: baseline {JCODEMUNCH_GRAND['baseline']:,}, "
-        f"jMunch {JCODEMUNCH_GRAND['jmunch']:,}, "
-        f"{JCODEMUNCH_GRAND['task_runs']} task-runs).",
+        provenance,
         "",
         "| Repo | Baseline | RAG-512 | RAG-1024 | RAG-2048 | jCodemunch | Best-RAG-ratio | jCodemunch-ratio | Winner |",
         "|------|--------:|---------:|---------:|---------:|-----------:|--------------:|-----------------:|--------|",
     ]
 
-    # Collect all baselines for proportional jCodemunch estimation (fallback)
-    all_baselines = [r["baseline_tokens"] for r in all_results if "error" not in r]
+    cross_run_notes: list[str] = []
 
     for res in all_results:
         repo = res["repo"]
@@ -712,13 +728,11 @@ def render_markdown(all_results: list[dict]) -> str:
             continue
 
         baseline = res["baseline_tokens"]
-        # Use exact per-repo value when available; fall back to proportional estimate
-        if repo in JCODEMUNCH_PER_REPO:
-            jm_avg = JCODEMUNCH_PER_REPO[repo]
-            jm_exact = True
-        else:
-            jm_avg = _jmunch_avg_tokens_for_repo(baseline, all_baselines)
-            jm_exact = False
+        entry = reference_entry(_REFERENCE, repo)
+        jm_avg = entry["avg_tokens_per_query"] if entry else 0
+        drift = reference_drift(entry, res.get("file_count", 0), baseline)
+        if drift:
+            cross_run_notes.append(f"- `{repo}`: {drift}")
         jm_ratio = round(baseline / jm_avg, 1) if jm_avg > 0 else float("inf")
 
         rag_avgs: dict[int, float] = {}
@@ -740,12 +754,24 @@ def render_markdown(all_results: list[dict]) -> str:
             v = rag_avgs.get(cs)
             return f"{v:,.0f}" if v is not None else "—"
 
-        jm_col = f"{jm_avg:,}" if jm_exact else f"~{jm_avg:,}"
-        jm_ratio_col = _fmt_ratio(jm_ratio) if jm_exact else f"~{_fmt_ratio(jm_ratio)}"
+        if jm_avg > 0:
+            marker = "*" if drift else ""
+            jm_col = f"{jm_avg:,}{marker}"
+            jm_ratio_col = f"{_fmt_ratio(jm_ratio)}{marker}"
+        else:
+            jm_col = "not measured"
+            jm_ratio_col = "—"
 
         if best_rag_avg is not None and jm_avg > 0:
-            margin = round(best_rag_avg / jm_avg, 1)
-            winner = f"jCodemunch ({margin}×)" if jm_avg < best_rag_avg else f"RAG-512 ({margin}×)"
+            if jm_avg < best_rag_avg:
+                winner = f"jCodemunch ({round(best_rag_avg / jm_avg, 1)}×)"
+            else:
+                # Name the chunk size that actually won and state its margin the
+                # same way round. The old code labelled every RAG win "RAG-512"
+                # and printed a sub-1.0 margin.
+                best_cs = min(rag_avgs, key=lambda c: rag_avgs[c]) if rag_avgs else None
+                label = f"RAG-{best_cs}" if best_cs else "RAG"
+                winner = f"{label} ({round(jm_avg / best_rag_avg, 1)}×)"
         else:
             winner = "—"
 
@@ -760,6 +786,16 @@ def render_markdown(all_results: list[dict]) -> str:
             f"| {jm_ratio_col} "
             f"| {winner} |"
         )
+
+    if cross_run_notes:
+        lines += [
+            "",
+            "\\* **Cross-run comparison.** The RAG columns were measured against the index "
+            "state in this run; the marked jCodemunch figures were measured against a "
+            "different one, so the ratio mixes two corpora. Re-run "
+            "`run_benchmark.py --reference` to bring both sides onto the same index.",
+            "",
+        ] + cross_run_notes
 
     lines += [""]
 

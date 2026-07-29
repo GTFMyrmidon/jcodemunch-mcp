@@ -2,6 +2,82 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [Unreleased] - benchmarks: one measurement path, no estimates
+
+No shipped-package changes. Benchmark harnesses, their committed reports, and the
+published numbers that mirror them.
+
+### The comparison harnesses divided a fresh number by a stale one
+
+`run_rag_baseline.py` and `run_odysseus_compare.py` measure another retrieval
+layer live, then report it beside jCodeMunch. jCodeMunch's side was a
+hand-typed constant captured **2026-03-28** (`JCODEMUNCH_GRAND`,
+`JCODEMUNCH_PER_REPO`) while the other side was re-measured on every run, so
+each published ratio drifted on its own as the benchmark repos moved. Nothing
+detected it: `odysseus_compare_results.json` recorded a July run against express
+at 172 files and divided it by a March figure measured at 165.
+
+Re-measured on the current index state, **all three per-repo figures had moved
+against us** - express 924 -> 985, fastapi 1,834 -> 2,494, gin 1,124 -> 1,540 -
+and the published Odysseus table changed two of its three verdicts: gin flipped
+from `jcm 1.2x leaner` to `RAG 1.1x leaner`, and fastapi went from `RAG 3.0x` to
+`RAG 4.6x leaner`. Both reports are regenerated with both sides on the same
+index.
+
+The fix is structural, not a refreshed constant. `run_benchmark.py --reference`
+writes `benchmarks/jcm_reference.json` (schema `jcm-benchmark-reference/v1`) and
+both comparison harnesses read it. Each entry records the index state it was
+measured against, so when a comparison run measures a different corpus the
+affected rows are marked **cross-run** and the difference is printed under the
+table instead of being silently divided.
+
+### The fallback estimated a number nobody measured
+
+A repo outside the constants dict fell back to `_jmunch_avg_tokens_for_repo`,
+which allocated jCodeMunch's per-query cost **proportionally to repo size**.
+That value was never measured, and its premise - that retrieval cost scales with
+corpus size - is the opposite of what this project claims, so the estimate was
+biased in a direction no reader of the table could see. Removed. An uncovered
+repo now renders `not measured`; the reference loader returns `None` rather than
+a substitute.
+
+Two smaller defects fell out of the rewrite, both in the branch where jCodeMunch
+*loses*, which no committed run had ever rendered: the RAG comparison labelled
+every RAG win `RAG-512` regardless of which chunk size actually won, and printed
+its margin as a sub-1.0 ratio.
+
+### Guard
+
+`tests/test_benchmark_reference.py` (14 tests) fails the build if a
+`JCODEMUNCH_*` constant reappears in a comparison harness, if the removed
+estimator is redefined (asserted absent **by name**), if a harness stops reading
+the artifact, or if the artifact's grand summary stops matching its own per-repo
+rows. The structural half is plain file parsing so it runs without the benchmark
+dependencies. Verified non-vacuous: reintroducing both defects fails exactly the
+two guards and nothing else.
+
+### Published numbers re-synced
+
+`benchmarks/results.md`, `METHODOLOGY.md` and the README table now carry the
+2026-07-29 run (v1.108.199): express 185 files / 155,960 baseline, gin 98 files /
+151,842, grand total 5,657,930 -> 25,090 tokens. The headline **99.6% aggregate
+is unchanged**; the per-repo rows and the corpus sizes behind them are not.
+
+There was a **fourth** mirror of the same run, and re-syncing the first three
+missed it: `benchmarks/provenance/measured.json` backs every `basis="measured"`
+provenance entry, and its own header says never to hand-edit a number without
+re-running the cited benchmark. It was hand-maintained anyway, because nothing
+connected it to a run - so the prose moved and the artifact kept asserting the
+previous totals. **The existing drift guard caught it** (`test_provenance.py`
+compares that artifact against the METHODOLOGY prose), inside the same run as
+the 12 known local-ONNX `test_semantic_search` env failures, which is exactly
+where a real failure is easiest to wave through.
+
+`--reference` now rewrites that block from the same run, touching nothing else
+in the file, and prints the remaining prose mirrors that must move with it. A
+new guard pins the artifact to the reference totals directly rather than only
+through the prose.
+
 ## [1.108.199] - 2026-07-29 - a convention everybody followed and nothing enforced
 
 Three findings from @rknighton, each root-caused to a line in his own report.

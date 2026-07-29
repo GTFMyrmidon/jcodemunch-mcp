@@ -10,84 +10,84 @@
 
 | Metric | Value |
 |--------|-------|
-| Files indexed | **165** |
-| Baseline tokens (all files) | **137,978** |
-| Chunks (size 512) | 392 |
-| Chunks (size 1024) | 254 |
-| Chunks (size 2048) | 197 |
+| Files indexed | **185** |
+| Baseline tokens (all files) | **155,960** |
+| Chunks (size 512) | 442 |
+| Chunks (size 1024) | 285 |
+| Chunks (size 2048) | 222 |
 
 ### Chunk size: 512 tokens
 
-*392 chunks | embed 6.0s | total build 6.21s | FAISS 1,193 KB*
+*442 chunks | embed 5.4s | total build 5.63s | FAISS 1,341 KB*
 
 | Query | RAG tokens | Baseline | Reduction | Ratio | Complete/3 | Split/3 |
 |-------|----------:|----------:|---------:|------:|:---------:|:-------:|
-| `router route handler` | 4,665 | 137,978 | 96.6% | 29.6x | 0/3 | 0/3 |
-| `middleware` | 2,913 | 137,978 | 97.9% | 47.4x | 1/3 | 0/3 |
-| `error exception` | 1,342 | 137,978 | 99.0% | 102.8x | 0/3 | 0/3 |
-| `request response` | 2,898 | 137,978 | 97.9% | 47.6x | 0/3 | 0/3 |
-| `context bind` | 2,615 | 137,978 | 98.1% | 52.8x | 0/3 | 1/3 |
-| **Average** | — | — | **97.9%** | **56.0x** | **0.2** | **0.2** |
+| `router route handler` | 4,880 | 155,960 | 96.9% | 32.0x | 1/3 | 0/3 |
+| `middleware` | 2,089 | 155,960 | 98.7% | 74.7x | 0/3 | 0/3 |
+| `error exception` | 1,403 | 155,960 | 99.1% | 111.2x | 0/3 | 0/3 |
+| `request response` | 3,607 | 155,960 | 97.7% | 43.2x | 0/3 | 0/3 |
+| `context bind` | 3,827 | 155,960 | 97.5% | 40.8x | 0/3 | 1/3 |
+| **Average** | — | — | **98.0%** | **60.4x** | **0.2** | **0.2** |
 
 <details><summary>Retrieval quality detail (search + fetch tokens, latency)</summary>
 
 | Query | Search&nbsp;tokens | Fetch&nbsp;tokens | With&nbsp;terms/3 | With&nbsp;logic/3 | Query&nbsp;ms |
 |-------|-----------------:|------------------:|:-:|:-:|------:|
-| `router route handler` | 2,924 | 1,741 | 3/3 | 3/3 | 21.8 |
-| `middleware` | 1,851 | 1,062 | 3/3 | 2/3 | 17.8 |
-| `error exception` | 1,043 | 299 | 3/3 | 1/3 | 15.2 |
-| `request response` | 1,768 | 1,130 | 3/3 | 1/3 | 13.4 |
-| `context bind` | 1,921 | 694 | 0/3 | 2/3 | 12.0 |
+| `router route handler` | 3,077 | 1,803 | 3/3 | 3/3 | 18.3 |
+| `middleware` | 1,479 | 610 | 3/3 | 2/3 | 8.4 |
+| `error exception` | 1,104 | 299 | 3/3 | 1/3 | 7.5 |
+| `request response` | 2,218 | 1,389 | 3/3 | 2/3 | 8.2 |
+| `context bind` | 2,522 | 1,305 | 0/3 | 3/3 | 8.5 |
 
 </details>
 
 ### Chunk size: 1024 tokens
 
-*254 chunks | embed 5.59s | total build 5.88s | FAISS 973 KB*
+*285 chunks | embed 3.92s | total build 4.18s | FAISS 1,093 KB*
 
 | Query | RAG tokens | Baseline | Reduction | Ratio | Complete/3 | Split/3 |
 |-------|----------:|----------:|---------:|------:|:---------:|:-------:|
-| `router route handler` | 9,590 | 137,978 | 93.0% | 14.4x | 0/3 | 0/3 |
-| `middleware` | 6,703 | 137,978 | 95.1% | 20.6x | 0/3 | 0/3 |
-| `error exception` | 1,948 | 137,978 | 98.6% | 70.8x | 0/3 | 0/3 |
-| `request response` | 5,640 | 137,978 | 95.9% | 24.5x | 0/3 | 1/3 |
-| `context bind` | 6,232 | 137,978 | 95.5% | 22.1x | 0/3 | 0/3 |
-| **Average** | — | — | **95.6%** | **30.5x** | **0.0** | **0.2** |
+| `router route handler` | 9,480 | 155,960 | 93.9% | 16.5x | 0/3 | 0/3 |
+| `middleware` | 5,586 | 155,960 | 96.4% | 27.9x | 0/3 | 0/3 |
+| `error exception` | 1,984 | 155,960 | 98.7% | 78.6x | 0/3 | 0/3 |
+| `request response` | 3,884 | 155,960 | 97.5% | 40.2x | 0/3 | 1/3 |
+| `context bind` | 5,130 | 155,960 | 96.7% | 30.4x | 0/3 | 0/3 |
+| **Average** | — | — | **96.6%** | **38.7x** | **0.0** | **0.2** |
 
 <details><summary>Retrieval quality detail (search + fetch tokens, latency)</summary>
 
 | Query | Search&nbsp;tokens | Fetch&nbsp;tokens | With&nbsp;terms/3 | With&nbsp;logic/3 | Query&nbsp;ms |
 |-------|-----------------:|------------------:|:-:|:-:|------:|
-| `router route handler` | 6,007 | 3,583 | 3/3 | 3/3 | 31.6 |
-| `middleware` | 4,523 | 2,180 | 3/3 | 3/3 | 21.3 |
-| `error exception` | 1,649 | 299 | 3/3 | 1/3 | 21.5 |
-| `request response` | 3,522 | 2,118 | 3/3 | 3/3 | 18.2 |
-| `context bind` | 3,811 | 2,421 | 0/3 | 2/3 | 20.9 |
+| `router route handler` | 5,907 | 3,573 | 3/3 | 3/3 | 13.9 |
+| `middleware` | 3,923 | 1,663 | 3/3 | 2/3 | 13.4 |
+| `error exception` | 1,685 | 299 | 3/3 | 1/3 | 12.9 |
+| `request response` | 2,406 | 1,478 | 3/3 | 3/3 | 13.1 |
+| `context bind` | 2,929 | 2,201 | 1/3 | 2/3 | 11.7 |
 
 </details>
 
 ### Chunk size: 2048 tokens
 
-*197 chunks | embed 4.19s | total build 4.43s | FAISS 878 KB*
+*222 chunks | embed 3.29s | total build 3.53s | FAISS 988 KB*
 
 | Query | RAG tokens | Baseline | Reduction | Ratio | Complete/3 | Split/3 |
 |-------|----------:|----------:|---------:|------:|:---------:|:-------:|
-| `router route handler` | 16,109 | 137,978 | 88.3% | 8.6x | 0/3 | 0/3 |
-| `middleware` | 7,827 | 137,978 | 94.3% | 17.6x | 0/3 | 0/3 |
-| `error exception` | 3,067 | 137,978 | 97.8% | 45.0x | 0/3 | 0/3 |
-| `request response` | 6,464 | 137,978 | 95.3% | 21.3x | 0/3 | 0/3 |
-| `context bind` | 1,816 | 137,978 | 98.7% | 76.0x | 0/3 | 0/3 |
-| **Average** | — | — | **94.9%** | **33.7x** | **0.0** | **0.0** |
+| `router route handler` | 14,220 | 155,960 | 90.9% | 11.0x | 0/3 | 2/3 |
+| `middleware` | 8,622 | 155,960 | 94.5% | 18.1x | 0/3 | 0/3 |
+| `error exception` | 3,157 | 155,960 | 98.0% | 49.4x | 0/3 | 0/3 |
+| `request response` | 5,702 | 155,960 | 96.3% | 27.4x | 0/3 | 0/3 |
+| `context bind` | 3,628 | 155,960 | 97.7% | 43.0x | 0/3 | 0/3 |
+| **Average** | — | — | **95.5%** | **29.8x** | **0.0** | **0.4** |
 
 <details><summary>Retrieval quality detail (search + fetch tokens, latency)</summary>
 
 | Query | Search&nbsp;tokens | Fetch&nbsp;tokens | With&nbsp;terms/3 | With&nbsp;logic/3 | Query&nbsp;ms |
 |-------|-----------------:|------------------:|:-:|:-:|------:|
-| `router route handler` | 10,419 | 5,690 | 3/3 | 3/3 | 32.9 |
-| `middleware` | 4,743 | 3,084 | 3/3 | 3/3 | 17.1 |
-| `error exception` | 2,768 | 299 | 3/3 | 1/3 | 19.1 |
-| `request response` | 3,797 | 2,667 | 3/3 | 1/3 | 18.1 |
-| `context bind` | 1,116 | 700 | 0/3 | 1/3 | 15.2 |
+| `router route handler` | 9,572 | 4,648 | 3/3 | 3/3 | 12.9 |
+| `middleware` | 6,055 | 2,567 | 3/3 | 2/3 | 12.3 |
+| `error exception` | 2,858 | 299 | 3/3 | 1/3 | 11.2 |
+| `request response` | 3,939 | 1,763 | 3/3 | 3/3 | 10.3 |
+| `context bind` | 2,027 | 1,601 | 0/3 | 2/3 | 9.4 |
 
 </details>
 
@@ -97,84 +97,84 @@
 
 | Metric | Value |
 |--------|-------|
-| Files indexed | **951** |
-| Baseline tokens (all files) | **699,425** |
-| Chunks (size 512) | 2,256 |
-| Chunks (size 1024) | 1,436 |
-| Chunks (size 2048) | 1,114 |
+| Files indexed | **1,000** |
+| Baseline tokens (all files) | **823,784** |
+| Chunks (size 512) | 2,571 |
+| Chunks (size 1024) | 1,600 |
+| Chunks (size 2048) | 1,214 |
 
 ### Chunk size: 512 tokens
 
-*2,256 chunks | embed 46.8s | total build 48.67s | FAISS 7,556 KB*
+*2,571 chunks | embed 36.85s | total build 38.84s | FAISS 8,477 KB*
 
 | Query | RAG tokens | Baseline | Reduction | Ratio | Complete/3 | Split/3 |
 |-------|----------:|----------:|---------:|------:|:---------:|:-------:|
-| `router route handler` | 2,785 | 699,425 | 99.6% | 251.1x | 0/3 | 2/3 |
-| `middleware` | 2,464 | 699,425 | 99.6% | 283.9x | 1/3 | 0/3 |
-| `error exception` | 3,402 | 699,425 | 99.5% | 205.6x | 0/3 | 1/3 |
-| `request response` | 3,003 | 699,425 | 99.6% | 232.9x | 0/3 | 3/3 |
-| `context bind` | 2,598 | 699,425 | 99.6% | 269.2x | 0/3 | 2/3 |
-| **Average** | — | — | **99.6%** | **248.5x** | **0.2** | **1.6** |
+| `router route handler` | 4,069 | 823,784 | 99.5% | 202.5x | 0/3 | 2/3 |
+| `middleware` | 2,457 | 823,784 | 99.7% | 335.3x | 1/3 | 1/3 |
+| `error exception` | 3,402 | 823,784 | 99.6% | 242.1x | 0/3 | 1/3 |
+| `request response` | 3,462 | 823,784 | 99.6% | 238.0x | 0/3 | 3/3 |
+| `context bind` | 2,826 | 823,784 | 99.7% | 291.5x | 0/3 | 2/3 |
+| **Average** | — | — | **99.6%** | **261.9x** | **0.2** | **1.8** |
 
 <details><summary>Retrieval quality detail (search + fetch tokens, latency)</summary>
 
 | Query | Search&nbsp;tokens | Fetch&nbsp;tokens | With&nbsp;terms/3 | With&nbsp;logic/3 | Query&nbsp;ms |
 |-------|-----------------:|------------------:|:-:|:-:|------:|
-| `router route handler` | 2,045 | 740 | 3/3 | 2/3 | 16.6 |
-| `middleware` | 1,292 | 1,172 | 3/3 | 2/3 | 14.1 |
-| `error exception` | 2,325 | 1,077 | 3/3 | 3/3 | 12.3 |
-| `request response` | 1,823 | 1,180 | 3/3 | 1/3 | 15.9 |
-| `context bind` | 1,446 | 1,152 | 3/3 | 2/3 | 17.3 |
+| `router route handler` | 2,687 | 1,382 | 3/3 | 3/3 | 12.0 |
+| `middleware` | 1,289 | 1,168 | 3/3 | 2/3 | 10.1 |
+| `error exception` | 2,325 | 1,077 | 3/3 | 3/3 | 8.1 |
+| `request response` | 2,306 | 1,156 | 3/3 | 1/3 | 8.6 |
+| `context bind` | 1,674 | 1,152 | 3/3 | 2/3 | 8.1 |
 
 </details>
 
 ### Chunk size: 1024 tokens
 
-*1,436 chunks | embed 28.85s | total build 30.39s | FAISS 6,226 KB*
+*1,600 chunks | embed 22.1s | total build 23.61s | FAISS 6,913 KB*
 
 | Query | RAG tokens | Baseline | Reduction | Ratio | Complete/3 | Split/3 |
 |-------|----------:|----------:|---------:|------:|:---------:|:-------:|
-| `router route handler` | 6,692 | 699,425 | 99.0% | 104.5x | 0/3 | 2/3 |
-| `middleware` | 680 | 699,425 | 99.9% | 1028.6x | 0/3 | 0/3 |
-| `error exception` | 3,862 | 699,425 | 99.4% | 181.1x | 0/3 | 0/3 |
-| `request response` | 4,701 | 699,425 | 99.3% | 148.8x | 0/3 | 2/3 |
-| `context bind` | 5,461 | 699,425 | 99.2% | 128.1x | 0/3 | 2/3 |
-| **Average** | — | — | **99.4%** | **318.2x** | **0.0** | **1.2** |
+| `router route handler` | 7,435 | 823,784 | 99.1% | 110.8x | 1/3 | 2/3 |
+| `middleware` | 1,316 | 823,784 | 99.8% | 626.0x | 0/3 | 1/3 |
+| `error exception` | 3,862 | 823,784 | 99.5% | 213.3x | 0/3 | 0/3 |
+| `request response` | 5,631 | 823,784 | 99.3% | 146.3x | 0/3 | 2/3 |
+| `context bind` | 5,829 | 823,784 | 99.3% | 141.3x | 0/3 | 2/3 |
+| **Average** | — | — | **99.4%** | **247.5x** | **0.2** | **1.4** |
 
 <details><summary>Retrieval quality detail (search + fetch tokens, latency)</summary>
 
 | Query | Search&nbsp;tokens | Fetch&nbsp;tokens | With&nbsp;terms/3 | With&nbsp;logic/3 | Query&nbsp;ms |
 |-------|-----------------:|------------------:|:-:|:-:|------:|
-| `router route handler` | 4,007 | 2,685 | 3/3 | 3/3 | 17.7 |
-| `middleware` | 587 | 93 | 3/3 | 0/3 | 17.5 |
-| `error exception` | 2,180 | 1,682 | 3/3 | 3/3 | 20.9 |
-| `request response` | 3,485 | 1,216 | 3/3 | 1/3 | 15.4 |
-| `context bind` | 3,629 | 1,832 | 3/3 | 3/3 | 19.6 |
+| `router route handler` | 4,873 | 2,562 | 3/3 | 3/3 | 10.8 |
+| `middleware` | 722 | 594 | 3/3 | 1/3 | 10.7 |
+| `error exception` | 2,180 | 1,682 | 3/3 | 3/3 | 9.1 |
+| `request response` | 3,419 | 2,212 | 3/3 | 1/3 | 9.1 |
+| `context bind` | 3,997 | 1,832 | 3/3 | 3/3 | 9.1 |
 
 </details>
 
 ### Chunk size: 2048 tokens
 
-*1,114 chunks | embed 21.87s | total build 23.23s | FAISS 5,693 KB*
+*1,214 chunks | embed 16.22s | total build 17.64s | FAISS 6,272 KB*
 
 | Query | RAG tokens | Baseline | Reduction | Ratio | Complete/3 | Split/3 |
 |-------|----------:|----------:|---------:|------:|:---------:|:-------:|
-| `router route handler` | 6,988 | 699,425 | 99.0% | 100.1x | 0/3 | 1/3 |
-| `middleware` | 4,198 | 699,425 | 99.4% | 166.6x | 0/3 | 0/3 |
-| `error exception` | 5,415 | 699,425 | 99.2% | 129.2x | 0/3 | 0/3 |
-| `request response` | 4,995 | 699,425 | 99.3% | 140.0x | 0/3 | 2/3 |
-| `context bind` | 5,963 | 699,425 | 99.1% | 117.3x | 0/3 | 2/3 |
-| **Average** | — | — | **99.2%** | **130.6x** | **0.0** | **1.0** |
+| `router route handler` | 5,998 | 823,784 | 99.3% | 137.3x | 0/3 | 0/3 |
+| `middleware` | 680 | 823,784 | 99.9% | 1211.4x | 0/3 | 0/3 |
+| `error exception` | 5,415 | 823,784 | 99.3% | 152.1x | 0/3 | 0/3 |
+| `request response` | 4,995 | 823,784 | 99.4% | 164.9x | 0/3 | 2/3 |
+| `context bind` | 7,812 | 823,784 | 99.1% | 105.5x | 0/3 | 2/3 |
+| **Average** | — | — | **99.4%** | **354.2x** | **0.0** | **0.8** |
 
 <details><summary>Retrieval quality detail (search + fetch tokens, latency)</summary>
 
 | Query | Search&nbsp;tokens | Fetch&nbsp;tokens | With&nbsp;terms/3 | With&nbsp;logic/3 | Query&nbsp;ms |
 |-------|-----------------:|------------------:|:-:|:-:|------:|
-| `router route handler` | 4,747 | 2,241 | 3/3 | 2/3 | 21.3 |
-| `middleware` | 2,163 | 2,035 | 3/3 | 1/3 | 14.4 |
-| `error exception` | 3,816 | 1,599 | 2/3 | 3/3 | 14.2 |
-| `request response` | 2,667 | 2,328 | 3/3 | 1/3 | 14.7 |
-| `context bind` | 3,651 | 2,312 | 3/3 | 3/3 | 14.8 |
+| `router route handler` | 4,113 | 1,885 | 3/3 | 1/3 | 11.4 |
+| `middleware` | 587 | 93 | 3/3 | 0/3 | 9.2 |
+| `error exception` | 3,816 | 1,599 | 2/3 | 3/3 | 9.0 |
+| `request response` | 2,667 | 2,328 | 3/3 | 1/3 | 8.2 |
+| `context bind` | 5,500 | 2,312 | 3/3 | 3/3 | 8.8 |
 
 </details>
 
@@ -185,83 +185,83 @@
 | Metric | Value |
 |--------|-------|
 | Files indexed | **98** |
-| Baseline tokens (all files) | **187,018** |
-| Chunks (size 512) | 478 |
-| Chunks (size 1024) | 271 |
-| Chunks (size 2048) | 170 |
+| Baseline tokens (all files) | **151,842** |
+| Chunks (size 512) | 401 |
+| Chunks (size 1024) | 231 |
+| Chunks (size 2048) | 151 |
 
 ### Chunk size: 512 tokens
 
-*478 chunks | embed 11.01s | total build 11.41s | FAISS 1,453 KB*
+*401 chunks | embed 6.08s | total build 6.3s | FAISS 1,202 KB*
 
 | Query | RAG tokens | Baseline | Reduction | Ratio | Complete/3 | Split/3 |
 |-------|----------:|----------:|---------:|------:|:---------:|:-------:|
-| `router route handler` | 3,585 | 187,018 | 98.1% | 52.2x | 0/3 | 0/3 |
-| `middleware` | 4,697 | 187,018 | 97.5% | 39.8x | 0/3 | 0/3 |
-| `error exception` | 4,807 | 187,018 | 97.4% | 38.9x | 1/3 | 0/3 |
-| `request response` | 4,559 | 187,018 | 97.6% | 41.0x | 1/3 | 0/3 |
-| `context bind` | 4,110 | 187,018 | 97.8% | 45.5x | 0/3 | 1/3 |
-| **Average** | — | — | **97.7%** | **43.5x** | **0.4** | **0.2** |
+| `router route handler` | 3,577 | 151,842 | 97.6% | 42.4x | 0/3 | 0/3 |
+| `middleware` | 4,002 | 151,842 | 97.4% | 37.9x | 0/3 | 0/3 |
+| `error exception` | 3,850 | 151,842 | 97.5% | 39.4x | 1/3 | 1/3 |
+| `request response` | 4,306 | 151,842 | 97.2% | 35.3x | 0/3 | 1/3 |
+| `context bind` | 3,714 | 151,842 | 97.6% | 40.9x | 0/3 | 0/3 |
+| **Average** | — | — | **97.5%** | **39.2x** | **0.2** | **0.4** |
 
 <details><summary>Retrieval quality detail (search + fetch tokens, latency)</summary>
 
 | Query | Search&nbsp;tokens | Fetch&nbsp;tokens | With&nbsp;terms/3 | With&nbsp;logic/3 | Query&nbsp;ms |
 |-------|-----------------:|------------------:|:-:|:-:|------:|
-| `router route handler` | 2,427 | 1,158 | 3/3 | 1/3 | 15.0 |
-| `middleware` | 2,972 | 1,725 | 3/3 | 2/3 | 14.4 |
-| `error exception` | 2,950 | 1,857 | 3/3 | 2/3 | 14.3 |
-| `request response` | 2,736 | 1,823 | 3/3 | 3/3 | 14.5 |
-| `context bind` | 2,692 | 1,418 | 3/3 | 2/3 | 16.2 |
+| `router route handler` | 2,419 | 1,158 | 3/3 | 1/3 | 12.4 |
+| `middleware` | 2,437 | 1,565 | 3/3 | 2/3 | 11.2 |
+| `error exception` | 2,537 | 1,313 | 3/3 | 2/3 | 10.9 |
+| `request response` | 2,833 | 1,473 | 3/3 | 2/3 | 10.4 |
+| `context bind` | 2,367 | 1,347 | 3/3 | 3/3 | 10.7 |
 
 </details>
 
 ### Chunk size: 1024 tokens
 
-*271 chunks | embed 6.11s | total build 6.42s | FAISS 1,129 KB*
+*231 chunks | embed 3.53s | total build 3.75s | FAISS 932 KB*
 
 | Query | RAG tokens | Baseline | Reduction | Ratio | Complete/3 | Split/3 |
 |-------|----------:|----------:|---------:|------:|:---------:|:-------:|
-| `router route handler` | 5,785 | 187,018 | 96.9% | 32.3x | 0/3 | 0/3 |
-| `middleware` | 9,102 | 187,018 | 95.1% | 20.5x | 0/3 | 1/3 |
-| `error exception` | 8,822 | 187,018 | 95.3% | 21.2x | 1/3 | 0/3 |
-| `request response` | 7,188 | 187,018 | 96.2% | 26.0x | 0/3 | 0/3 |
-| `context bind` | 6,796 | 187,018 | 96.4% | 27.5x | 0/3 | 0/3 |
-| **Average** | — | — | **96.0%** | **25.5x** | **0.2** | **0.2** |
+| `router route handler` | 5,518 | 151,842 | 96.4% | 27.5x | 0/3 | 0/3 |
+| `middleware` | 8,259 | 151,842 | 94.6% | 18.4x | 1/3 | 0/3 |
+| `error exception` | 8,050 | 151,842 | 94.7% | 18.9x | 1/3 | 2/3 |
+| `request response` | 7,633 | 151,842 | 95.0% | 19.9x | 0/3 | 2/3 |
+| `context bind` | 6,739 | 151,842 | 95.6% | 22.5x | 1/3 | 0/3 |
+| **Average** | — | — | **95.3%** | **21.4x** | **0.6** | **0.8** |
 
 <details><summary>Retrieval quality detail (search + fetch tokens, latency)</summary>
 
 | Query | Search&nbsp;tokens | Fetch&nbsp;tokens | With&nbsp;terms/3 | With&nbsp;logic/3 | Query&nbsp;ms |
 |-------|-----------------:|------------------:|:-:|:-:|------:|
-| `router route handler` | 3,764 | 2,021 | 3/3 | 2/3 | 35.6 |
-| `middleware` | 5,570 | 3,532 | 3/3 | 3/3 | 18.6 |
-| `error exception` | 5,674 | 3,148 | 3/3 | 3/3 | 17.6 |
-| `request response` | 4,718 | 2,470 | 3/3 | 3/3 | 15.7 |
-| `context bind` | 4,105 | 2,691 | 3/3 | 3/3 | 16.4 |
+| `router route handler` | 3,706 | 1,812 | 3/3 | 1/3 | 13.8 |
+| `middleware` | 4,735 | 3,524 | 3/3 | 3/3 | 12.0 |
+| `error exception` | 4,747 | 3,303 | 3/3 | 2/3 | 12.0 |
+| `request response` | 4,569 | 3,064 | 3/3 | 3/3 | 12.6 |
+| `context bind` | 4,062 | 2,677 | 3/3 | 2/3 | 11.8 |
 
 </details>
 
 ### Chunk size: 2048 tokens
 
-*170 chunks | embed 3.91s | total build 4.22s | FAISS 969 KB*
+*151 chunks | embed 2.34s | total build 2.55s | FAISS 805 KB*
 
 | Query | RAG tokens | Baseline | Reduction | Ratio | Complete/3 | Split/3 |
 |-------|----------:|----------:|---------:|------:|:---------:|:-------:|
-| `router route handler` | 15,365 | 187,018 | 91.8% | 12.2x | 0/3 | 0/3 |
-| `middleware` | 15,191 | 187,018 | 91.9% | 12.3x | 0/3 | 1/3 |
-| `error exception` | 13,344 | 187,018 | 92.9% | 14.0x | 0/3 | 0/3 |
-| `request response` | 10,296 | 187,018 | 94.5% | 18.2x | 0/3 | 0/3 |
-| `context bind` | 10,052 | 187,018 | 94.6% | 18.6x | 0/3 | 0/3 |
-| **Average** | — | — | **93.1%** | **15.1x** | **0.0** | **0.2** |
+| `router route handler` | 16,557 | 151,842 | 89.1% | 9.2x | 0/3 | 0/3 |
+| `middleware` | 9,570 | 151,842 | 93.7% | 15.9x | 0/3 | 0/3 |
+| `error exception` | 12,670 | 151,842 | 91.7% | 12.0x | 0/3 | 0/3 |
+| `request response` | 9,529 | 151,842 | 93.7% | 15.9x | 0/3 | 1/3 |
+| `context bind` | 10,536 | 151,842 | 93.1% | 14.4x | 1/3 | 0/3 |
+| **Average** | — | — | **92.3%** | **13.5x** | **0.2** | **0.2** |
 
 <details><summary>Retrieval quality detail (search + fetch tokens, latency)</summary>
 
 | Query | Search&nbsp;tokens | Fetch&nbsp;tokens | With&nbsp;terms/3 | With&nbsp;logic/3 | Query&nbsp;ms |
 |-------|-----------------:|------------------:|:-:|:-:|------:|
-| `router route handler` | 9,096 | 6,269 | 3/3 | 3/3 | 30.4 |
-| `middleware` | 8,410 | 6,781 | 3/3 | 3/3 | 19.3 |
-| `error exception` | 8,276 | 5,068 | 3/3 | 3/3 | 17.3 |
-| `request response` | 7,703 | 2,593 | 3/3 | 3/3 | 17.3 |
-| `context bind` | 6,134 | 3,918 | 3/3 | 3/3 | 19.7 |
+| `router route handler` | 10,306 | 6,251 | 3/3 | 3/3 | 12.5 |
+| `middleware` | 5,544 | 4,026 | 2/3 | 2/3 | 12.6 |
+| `error exception` | 7,720 | 4,950 | 3/3 | 3/3 | 10.4 |
+| `request response` | 6,899 | 2,630 | 3/3 | 3/3 | 11.3 |
+| `context bind` | 6,624 | 3,912 | 3/3 | 2/3 | 10.9 |
 
 </details>
 
@@ -270,29 +270,27 @@
 ## Combined Comparison
 
 Average RAG tokens per query (mean of 5 queries), compared to jCodemunch.
-jCodemunch per-repo figures are from a back-to-back `run_benchmark.py` run on 2026-03-28
-against the same index state (express 165 files, fastapi 951 files, gin 98 files).
-jCodemunch wins on all three repos.
+jCodemunch per-repo figures are read from `benchmarks/jcm_reference.json` (run 2026-07-29T11:14:04-0500, v1.108.199; grand summary: baseline 5,657,930, jMunch 25,090, 15 task-runs). Regenerate with `python benchmarks/harness/run_benchmark.py --reference`.
 
 | Repo | Baseline | RAG-512 | RAG-1024 | RAG-2048 | jCodemunch | Best-RAG-ratio | jCodemunch-ratio | Winner |
 |------|--------:|---------:|---------:|---------:|-----------:|--------------:|-----------------:|--------|
-| expressjs/express | 137,978 | 2,887 | 6,023 | 7,057 | 924 | 47.8x | 149.3x | jCodemunch (3.1×) |
-| fastapi/fastapi | 699,425 | 2,850 | 4,279 | 5,512 | 1,834 | 245.4x | 381.4x | jCodemunch (1.6×) |
-| gin-gonic/gin | 187,018 | 4,352 | 7,539 | 12,850 | 1,124 | 43.0x | 166.4x | jCodemunch (3.9×) |
+| expressjs/express | 155,960 | 3,161 | 5,213 | 7,066 | 985 | 49.3x | 158.3x | jCodemunch (3.2×) |
+| fastapi/fastapi | 823,784 | 3,243 | 4,815 | 4,980 | 2,494 | 254.0x | 330.3x | jCodemunch (1.3×) |
+| gin-gonic/gin | 151,842 | 3,890 | 7,240 | 11,772 | 1,540 | 39.0x | 98.6x | jCodemunch (2.5×) |
 
 ## Infrastructure Overhead
 
 | Repo | Chunk size | Chunks | Embed time | FAISS size |
 |------|:----------:|-------:|-----------:|-----------:|
-| expressjs/express | 512 | 392 | 6.0s | 1,193 KB |
-| expressjs/express | 1024 | 254 | 5.59s | 973 KB |
-| expressjs/express | 2048 | 197 | 4.19s | 878 KB |
-| fastapi/fastapi | 512 | 2,256 | 46.8s | 7,556 KB |
-| fastapi/fastapi | 1024 | 1,436 | 28.85s | 6,226 KB |
-| fastapi/fastapi | 2048 | 1,114 | 21.87s | 5,693 KB |
-| gin-gonic/gin | 512 | 478 | 11.01s | 1,453 KB |
-| gin-gonic/gin | 1024 | 271 | 6.11s | 1,129 KB |
-| gin-gonic/gin | 2048 | 170 | 3.91s | 969 KB |
+| expressjs/express | 512 | 442 | 5.4s | 1,341 KB |
+| expressjs/express | 1024 | 285 | 3.92s | 1,093 KB |
+| expressjs/express | 2048 | 222 | 3.29s | 988 KB |
+| fastapi/fastapi | 512 | 2,571 | 36.85s | 8,477 KB |
+| fastapi/fastapi | 1024 | 1,600 | 22.1s | 6,913 KB |
+| fastapi/fastapi | 2048 | 1,214 | 16.22s | 6,272 KB |
+| gin-gonic/gin | 512 | 401 | 6.08s | 1,202 KB |
+| gin-gonic/gin | 1024 | 231 | 3.53s | 932 KB |
+| gin-gonic/gin | 2048 | 151 | 2.34s | 805 KB |
 
 ## Chunk Integrity Summary
 
@@ -303,10 +301,10 @@ Percentage of retrieved top-3 chunks that are complete code units vs. split mid-
 |------|:----------:|-----------:|--------:|
 | expressjs/express | 512 | 7% | 7% |
 | expressjs/express | 1024 | 0% | 7% |
-| expressjs/express | 2048 | 0% | 0% |
-| fastapi/fastapi | 512 | 7% | 53% |
-| fastapi/fastapi | 1024 | 0% | 40% |
-| fastapi/fastapi | 2048 | 0% | 33% |
-| gin-gonic/gin | 512 | 13% | 7% |
-| gin-gonic/gin | 1024 | 7% | 7% |
-| gin-gonic/gin | 2048 | 0% | 7% |
+| expressjs/express | 2048 | 0% | 13% |
+| fastapi/fastapi | 512 | 7% | 60% |
+| fastapi/fastapi | 1024 | 7% | 47% |
+| fastapi/fastapi | 2048 | 0% | 27% |
+| gin-gonic/gin | 512 | 7% | 13% |
+| gin-gonic/gin | 1024 | 20% | 27% |
+| gin-gonic/gin | 2048 | 7% | 7% |

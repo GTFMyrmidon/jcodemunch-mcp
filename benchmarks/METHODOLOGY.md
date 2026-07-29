@@ -17,9 +17,9 @@ jcodemunch's standard skip patterns (node_modules, __pycache__, etc.).
 
 | Repository | Files Indexed | Symbols Extracted | Baseline Tokens |
 |------------|:------------:|:-----------------:|:--------------:|
-| expressjs/express | 172 | 182 | 143,355 |
+| expressjs/express | 185 | 200 | 155,960 |
 | fastapi/fastapi | 1,000 | 6,722 | 823,784 |
-| gin-gonic/gin | 109 | 1,502 | 192,800 |
+| gin-gonic/gin | 98 | 1,179 | 151,842 |
 
 ## Query Corpus
 
@@ -85,10 +85,38 @@ python benchmarks/harness/run_benchmark.py
 
 # Write to file
 python benchmarks/harness/run_benchmark.py --out benchmarks/results.md
+
+# Refresh the artifact the comparison harnesses read
+python benchmarks/harness/run_benchmark.py --reference
 ```
 
 The harness script reads `tasks.json`, runs each query against each repo,
 counts tokens with `tiktoken`, and outputs the markdown tables in `results.md`.
+
+## Comparison Harnesses
+
+`harness/run_rag_baseline.py` (LangChain RAG) and `harness/run_odysseus_compare.py`
+(Odysseus `rag_server`) measure another retrieval layer live and report it beside
+jCodeMunch. The jCodeMunch side of both tables is read from
+[`jcm_reference.json`](jcm_reference.json), written by `run_benchmark.py --reference`.
+
+Two rules make those tables answerable:
+
+1. **No harness carries its own jCodeMunch numbers.** They were hardcoded until
+   2026-07-29 and had gone four months stale while the other side of every ratio
+   was measured fresh in each run. Re-measuring moved all three per-repo figures
+   against us and flipped one published winner. A CI guard
+   (`tests/test_benchmark_reference.py`) fails the build if a `JCODEMUNCH_*`
+   constant reappears in a comparison harness.
+2. **An unmeasured repo prints "not measured".** A repo outside the reference
+   artifact gets no jCodeMunch column and no ratio. The previous fallback
+   estimated jCodeMunch's cost as proportional to repo size — a number that was
+   never measured, whose premise contradicts what this project claims about
+   retrieval cost. It is removed, and the guard asserts it absent by name.
+
+When the index state behind the artifact differs from the one a comparison run
+measures, the affected rows are marked cross-run and the difference is printed
+under the table. A ratio across two corpora is labelled, never silently divided.
 
 ## Limitations
 
@@ -145,11 +173,15 @@ details.
 ## Common Misreadings
 
 **"The claim is up to 99%."**
-The primary claim is **99.6% average** across all 15 task-runs (5,799,695 baseline tokens →
-25,220 jCodeMunch tokens). Individual queries reach 99.9% on large repos with tight symbol
+The primary claim is **99.6% average** across all 15 task-runs (5,657,930 baseline tokens →
+25,090 jCodeMunch tokens). Individual queries reach 99.9% on large repos with tight symbol
 matches (e.g., `error exception` on fastapi/fastapi). The 99.6% aggregate
-is the honest headline across the current index state (express 172 files, fastapi 1,000 files,
-gin 109 files; run 2026-07-23, v1.108.163, repos re-indexed same day).
+is the honest headline across the current index state (express 185 files, fastapi 1,000 files,
+gin 98 files; run 2026-07-29, v1.108.199).
+
+Every number above is re-measured by the same run, and the machine-readable copy lives in
+[`jcm_reference.json`](jcm_reference.json). The comparison harnesses in `harness/` read that
+artifact rather than keeping their own constants — see *Comparison harnesses* below.
 
 **"I tested a different repo and got 80%."**
 Results vary by repo structure. Flat script collections (e.g., a repository of hundreds

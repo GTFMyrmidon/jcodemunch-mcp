@@ -43,8 +43,11 @@ FAITHFUL-MIRROR CAVEATS (documented, not hidden)
     which chunks land in the top-k, but the token COST of k chunks is identical.
     Retrieval relevance is reported separately via a term-overlap heuristic so a
     reorder shows up as a quality delta, not a hidden token delta.
-  * jCodeMunch figures come from run_benchmark.py (measure_jmunch) against the
-    same jCodeMunch IndexStore content -- both sides read byte-identical source.
+  * jCodeMunch figures are read from benchmarks/jcm_reference.json, written by
+    run_benchmark.py --reference (measure_jmunch) against the same jCodeMunch
+    IndexStore content -- both sides read byte-identical source. When the index
+    state behind the artifact differs from the one measured here, the affected
+    rows are marked cross-run rather than silently divided against each other.
 
 USAGE
 -----
@@ -67,7 +70,7 @@ from typing import List
 # ---------------------------------------------------------------------------
 # Reuse the proven plumbing from run_rag_baseline.py (same dir): tokenizer,
 # serialization, jCodeMunch IndexStore document loading, embedding model,
-# FAISS/Document imports, task corpus, and the published jCodeMunch numbers.
+# FAISS/Document imports, task corpus, and the loaded jCodeMunch reference artifact.
 # Importing it also enforces the same requirements-rag-bench.txt dependency set.
 # ---------------------------------------------------------------------------
 _HARNESS_DIR = Path(__file__).resolve().parent
@@ -80,7 +83,9 @@ from run_rag_baseline import (  # noqa: E402
     FAISS,
     HuggingFaceEmbeddings,
     EMBED_MODEL,
-    JCODEMUNCH_PER_REPO,
+    _REFERENCE,
+    reference_drift,
+    reference_entry,
     count_tokens,
     _serialize,
     _ensure_indexed,
@@ -257,8 +262,10 @@ def render_markdown(all_results: list[dict]) -> str:
         f"(char/sentence, size={ODYSSEUS_CHUNK_SIZE} chars, overlap={ODYSSEUS_OVERLAP}); "
         f"retrieval `search(k={ODYSSEUS_K})`.",
         "",
-        "**jCodeMunch figures** are from `run_benchmark.py` (`measure_jmunch`) on the",
-        "same IndexStore content -- both sides read byte-identical source.",
+        "**jCodeMunch figures** are read from `benchmarks/jcm_reference.json`, written by",
+        "`run_benchmark.py --reference` (`measure_jmunch`) against the same IndexStore",
+        "content -- both sides read byte-identical source. A repo the artifact does not",
+        "cover gets no jCodeMunch number; nothing here is estimated.",
         "",
         "**Read the two axes together.** Token count alone is a trap: Odysseus's",
         "rag_server returns fixed ~1000-char fragments, so on repos with large",
@@ -275,6 +282,8 @@ def render_markdown(all_results: list[dict]) -> str:
         "|------|------:|----------------------:|--------------------:|------------:|:-------------------:|:----------------:|:--------------------:|",
     ]
 
+    cross_run_notes: list[str] = []
+
     for res in all_results:
         repo = res["repo"]
         if "error" in res:
@@ -286,13 +295,24 @@ def render_markdown(all_results: list[dict]) -> str:
         terms_avg = sum(t["chunks_with_terms"] for t in valid) / n
         comp_avg = sum(t["chunks_complete"] for t in valid) / n
         split_avg = sum(t["chunks_split"] for t in valid) / n
-        jcm_avg = JCODEMUNCH_PER_REPO.get(repo)
+        entry = reference_entry(_REFERENCE, repo)
+        jcm_avg = entry["avg_tokens_per_query"] if entry else 0
+        drift = reference_drift(entry, res.get("file_count", 0), res.get("baseline_tokens", 0))
+        if drift:
+            cross_run_notes.append(f"- `{repo}`: {drift}")
         if jcm_avg:
-            ratio = ody_avg / jcm_avg if jcm_avg else float("inf")
-            delta = f"jcm **{ratio:.1f}x leaner**" if ratio >= 1 else f"RAG {1 / ratio:.1f}x leaner*"
-            jcm_col = f"{jcm_avg:,}"
+            marker = "†" if drift else ""
+            ratio = ody_avg / jcm_avg
+            delta = (
+                f"jcm **{ratio:.1f}x leaner**{marker}"
+                if ratio >= 1
+                else f"RAG {1 / ratio:.1f}x leaner*{marker}"
+            )
+            jcm_col = f"{jcm_avg:,}{marker}"
         else:
-            delta = "(run run_benchmark.py)"
+            # No estimate. A repo the reference artifact does not cover has no
+            # jCodeMunch number, and the table says so.
+            delta = "not measured"
             jcm_col = "n/a"
         L.append(
             f"| {repo} | {res['file_count']:,} | {ody_avg:,.0f} | {jcm_col} | {delta} "
@@ -306,6 +326,16 @@ def render_markdown(all_results: list[dict]) -> str:
         "are whole symbols. Cheaper context that is cut mid-function is not cheaper "
         "to reason over.*",
     ]
+
+    if cross_run_notes:
+        L += [
+            "",
+            "† *Cross-run comparison: the Odysseus column was measured against the index "
+            "state in this run and the jCodeMunch column against a different one, so the "
+            "ratio mixes two corpora. Re-run `run_benchmark.py --reference` to put both "
+            "sides on the same index.*",
+            "",
+        ] + cross_run_notes
 
     L += [
         "",

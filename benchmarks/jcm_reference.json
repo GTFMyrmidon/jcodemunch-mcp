@@ -1,0 +1,39 @@
+{
+  "schema": "jcm-benchmark-reference/v1",
+  "captured_at": "2026-07-29T11:14:04-0500",
+  "jcodemunch_version": "1.108.199",
+  "tokenizer": "cl100k_base",
+  "workflow": "search_symbols(max_results=5) + get_symbol_source x3",
+  "baseline_definition": "all indexed source files concatenated",
+  "grand": {
+    "baseline_tokens": 5657930,
+    "jmunch_tokens": 25090,
+    "task_runs": 15
+  },
+  "repos": {
+    "expressjs/express": {
+      "avg_tokens_per_query": 985,
+      "jmunch_total_tokens": 4924,
+      "queries": 5,
+      "baseline_tokens": 155960,
+      "file_count": 185,
+      "symbol_count": 200
+    },
+    "fastapi/fastapi": {
+      "avg_tokens_per_query": 2494,
+      "jmunch_total_tokens": 12468,
+      "queries": 5,
+      "baseline_tokens": 823784,
+      "file_count": 1000,
+      "symbol_count": 6722
+    },
+    "gin-gonic/gin": {
+      "avg_tokens_per_query": 1540,
+      "jmunch_total_tokens": 7698,
+      "queries": 5,
+      "baseline_tokens": 151842,
+      "file_count": 98,
+      "symbol_count": 1179
+    }
+  }
+}

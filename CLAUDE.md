@@ -448,7 +448,24 @@ thing they do.
    minimum `logger.debug("...", exc_info=True)`. For user-facing fallbacks (AI
    summarizer, index load), use `logger.warning(...)`.
 3. **CHANGELOG.md** is the authoritative version history — update it with every release.
-4. **Keep `Current State` to the 3 newest releases.** It is a pointer, not a second
+4. **Never hand-type a jCodeMunch benchmark number.** The comparison harnesses
+   (`run_rag_baseline.py`, `run_odysseus_compare.py`) read
+   `benchmarks/jcm_reference.json`, written by `run_benchmark.py --reference`.
+   ⚠ **The failure this closes was invisible for four months:** our side was a
+   2026-03-28 constant while the other side of every ratio was re-measured each
+   run, so published ratios drifted on their own. Re-measuring moved all three
+   per-repo figures AGAINST us and flipped a published winner (gin: `jcm 1.2x
+   leaner` → `RAG 1.1x leaner`). ⚠ **A repo outside the artifact renders "not
+   measured" — there is deliberately no estimator.** The removed one allocated
+   our cost proportionally to repo size, i.e. it assumed the opposite of what we
+   claim. `tests/test_benchmark_reference.py` fails on a returning `JCODEMUNCH_*`
+   constant and asserts the estimator absent BY NAME. ⚠ **FOUR artifacts mirror
+   one run** — `results.md`, `METHODOLOGY.md`, README, and
+   `benchmarks/provenance/measured.json`. Re-syncing three and missing the
+   fourth failed `test_provenance.py`, **inside the known 12 local-ONNX env
+   failures**. `--reference` now rewrites the provenance block itself; two
+   committed artifacts disagreeing is the same defect in a different costume.
+5. **Keep `Current State` to the 3 newest releases.** It is a pointer, not a second
    changelog. On each release, add the new entry and drop the 4th-oldest — the detail
    already lives in CHANGELOG.md. (2026-07-25: this section had grown to 157 entries /
    ~233k chars, loading ~58k est. tokens into every session under this directory.)
