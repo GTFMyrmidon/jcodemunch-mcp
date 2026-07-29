@@ -79,6 +79,15 @@ def _working_tree_reading(source_root: Optional[str]) -> Optional[tuple[str, tup
     command failed) and must never be compared as equality with a real reading —
     unknown is not unchanged. TTL-cached so a burst of searches shares one
     subprocess.
+
+    ``stdin=subprocess.DEVNULL`` is load-bearing, not tidiness (jcm#392,
+    @rknighton). This probe runs inside the MCP server process, whose stdin IS
+    the live JSON-RPC channel. Without it Git for Windows inherits that stdin,
+    and the wrapper's child can outlive the ``timeout=`` that kills the
+    immediate process — leaving the captured stdout/stderr pipes open and Python
+    blocked in the follow-up ``communicate()`` long past the deadline (observed:
+    225-300s on a zero-result ``search_text``). Every other in-server git probe
+    already passes it; this one was added later and missed the convention.
     """
     if not source_root:
         return None
@@ -94,6 +103,7 @@ def _working_tree_reading(source_root: Optional[str]) -> Optional[tuple[str, tup
             capture_output=True,
             timeout=10,
             check=False,
+            stdin=subprocess.DEVNULL,
         )
         if out.returncode == 0:
             reading = (

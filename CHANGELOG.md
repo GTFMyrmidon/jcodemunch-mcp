@@ -2,6 +2,123 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.199] - 2026-07-29 - a convention everybody followed and nothing enforced
+
+Three findings from @rknighton, each root-caused to a line in his own report.
+
+### The zero-result search that blocked the server (#392)
+
+`search_text` returning zero results made the working-tree probe in
+`retrieval/subject_state.py` launch `git status` **without `stdin=`**. Inside the
+MCP server that stdin is the live JSON-RPC channel, so Git for Windows inherits
+it, blocks reading a pipe nobody will write to, and its wrapper child can outlive
+the `timeout=10` that kills the immediate process - leaving Python blocked in the
+follow-up `communicate()` with the captured pipes still open.
+
+Reproduced here independently before fixing, against the same 1.108.198, and the
+measurement came out **worse than reported**. It is not only a rare tail:
+
+| zero-result `search_text` | unfixed | fixed |
+| --- | --- | --- |
+| call 1 | 10.354 s | 3.540 s |
+| call 2 | 10.485 s | 0.443 s |
+| call 3 | 10.364 s | 0.326 s |
+
+Every zero-result call pays the probe's full 10-second timeout, deterministically,
+because Git sits on the inherited stdin until it is killed. The unbounded block
+@rknighton measured at 225-300 s (and one call observed here at ~25 minutes) is
+the tail on top of that floor. Positive controls were unaffected throughout,
+which is what made the cost invisible - a search that finds something never
+touches this path.
+
+⚠ **The convention was already universal and entirely unenforced.** Every other
+in-server git probe - `freshness`, `git_root`, `index_store`, `git_blame`,
+`hook_event`, and eleven tools - already passed `stdin=subprocess.DEVNULL`, and
+`git_root.py` carries a comment naming this exact deadlock from the jcm#303
+follow-up (also @rknighton). Nothing checked it, so a call site added later
+silently opted out. **The fix is one keyword argument; the durable part is the
+structural test** that walks every `subprocess` spawn in `src/` and fails on any
+server-path call without `stdin=`. CLI and installer modules are exempt **by
+name**, so a new server-path module cannot inherit an exemption by accident, and
+a second test fails if an exemption entry stops spawning anything - a stale
+exemption is a hole nobody can see.
+
+### `config --check` reported the environment, not your configuration (#393)
+
+The `use_ai_summaries` and `summarizer_provider` rows read `os.environ` behind
+hardcoded `"true"` / `""` defaults instead of the loaded config. With
+`use_ai_summaries: false` and `summarizer_provider: "none"` in `config.jsonc`,
+the command printed `true` and `(auto-detect)`.
+
+⚠ **The value was wrong while the source tag was right.** `_detect_source` found
+the key in the file and printed `[config]`, so the row asserted "this is what
+your file says" about a value the file never contained. Runtime behaviour was
+always correct - only the diagnostic lied, which is the worst place for it: this
+command exists to be believed when the runtime is in doubt.
+
+Both rows now read the merged config shim, which already folds the env-var
+fallback in at load time with the config file winning - so there is exactly one
+resolution path, not a second parallel one. `use_ai_summaries` is tri-state
+(`true` / `false` / `"auto"`); the row renders the configured value and, for
+`auto`, which way it resolved, instead of collapsing it to a bool it cannot
+represent.
+
+Two things the report did not have to name fell out of the same read:
+
+- The **`AI summaries disabled` banner** branched on the same env-only value, so
+  a config-disabled summarizer printed an `Active provider` line instead. A user
+  checking whether they had turned it off was told twice that they had not.
+- The `Active provider` suffix hardcoded `JCODEMUNCH_SUMMARIZER_PROVIDER=<x>`,
+  which would now name the env var for a pin that came from `config.jsonc`. It
+  reports the real source.
+
+⚠ `summarizer_model`, two rows below these, was fixed exactly this way in
+#300/#304 and its neighbours were left on the old path. The pattern survives
+review, so a structural test now pins it.
+
+### `find_references` did work it threw away (#394)
+
+The per-file enrichment loops ran over the complete match set and `max_results`
+was applied only in the return statement. Since results are sorted before those
+loops, the rows that ship are already determined - so on `django/django` the tool
+read 1,575 files to return 50 and discarded 1,525 of them.
+
+Slicing before enrichment produces a byte-identical response. @rknighton's
+measurements, warm index, `max_results=50`, cache cleared between runs:
+
+| repository | `reference_count` | current | slice first | speedup |
+| --- | --- | --- | --- | --- |
+| expressjs/express | 80 | 96.9 ms | 63.8 ms | 1.5x |
+| gin-gonic/gin | 63 | 89.2 ms | 75.2 ms | 1.2x |
+| fastapi/fastapi | 832 | 1553.8 ms | 249.5 ms | 6.2x |
+| django/django | 1,575 | 3519.3 ms | 950.5 ms | 3.7x |
+
+**Stated limits, from the report and kept here:** the gain tracks
+`reference_count / max_results`, so identifiers matching fewer files than the
+limit see no change at all - which is most identifiers in most repositories - and
+the saving lands on cache misses only. It is the difference between a
+multi-second first call and a sub-second one, not a repo-wide speedup.
+
+`reference_count` and `_meta.truncated` are still computed from the full match
+set, which is the invariant that makes the slice safe and which has its own test:
+if they ever start reading the slice, the tool would report 50 references in a
+repo with 1,575 and nothing would look wrong. Tests assert **work**, not timing -
+a stubbed store counts file reads exactly, since a timing gate would pass on a
+fast box with the bug present. The `include_call_chain=True` pass is a second
+loop over the same list and is covered separately; fixing only the first would
+have halved the waste and left the shape.
+
+Batch mode already sliced correctly (it does no per-file enrichment), and SCIP
+attachment was always applied to the served slice, so neither changes.
+
+Also from #394, **not** acted on and recorded so it is not re-derived: batch
+`get_file_outline` has a similar shape, but @rknighton measured it at 0.72x-1.52x
+with no clean trend, and a single-file batch reliably slower. He did not think the
+numbers supported acting on it. Neither do we.
+
+Tests: 13 new, 8 of which fail on revert. The other five are invariant and no-op
+guards that pass on revert by design, and their docstrings say so.
+
 ## [1.108.198] - 2026-07-28 - the transitional fallbacks outlived their transition
 
 Audit WS-8 (V12) shipped the license-key transport move in 1.108.163: validate.php

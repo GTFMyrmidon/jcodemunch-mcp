@@ -7771,15 +7771,54 @@ def _run_config(check: bool = False, init: bool = False, upgrade: bool = False) 
 
     # ── AI Summarizer ─────────────────────────────────────────────────────
     section("AI Summarizer")
-    use_ai_raw, use_ai_d = env("JCODEMUNCH_USE_AI_SUMMARIES", "true")
-    use_ai = use_ai_raw.lower() not in ("false", "0", "no", "off")
-    row("use_ai_summaries", str(use_ai).lower(), "env" if not use_ai_d else _detect_source("use_ai_summaries", True))
-    provider, provider_d = env("JCODEMUNCH_SUMMARIZER_PROVIDER", "")
+    # These two rows read the LOADED config, not the raw environment (#393,
+    # @rknighton). They used to call env() with hardcoded "true"/"" defaults, so
+    # a config.jsonc setting `use_ai_summaries: false` was reported as `true`,
+    # and `summarizer_provider: "none"` as `(auto-detect)` — while _detect_source
+    # correctly tagged the row `[config]`. A wrong value wearing an authoritative
+    # source tag is worse than no row at all: it says "this is what your file
+    # says" about a number the file never contained. Runtime behaviour was always
+    # correct; only the diagnostic lied. `summarizer_model` two rows down was
+    # already fixed this way for the same reason (#300/#304, @slazarov) — the
+    # neighbours were left behind.
+    #
+    # env-var fallback is already folded into _cfg at load time (config file wins
+    # over env), so _cfg.get() IS the effective value and _detect_source() names
+    # where it came from. Do not reintroduce a second, parallel resolution here.
+    _use_ai_raw = _cfg.get("use_ai_summaries", "auto")
+    # Tri-state: True / False / "auto". Render the configured value, then the
+    # resolved gate when "auto" hides which way it landed.
+    if isinstance(_use_ai_raw, bool):
+        _use_ai_display = str(_use_ai_raw).lower()
+    else:
+        _use_ai_display = str(_use_ai_raw).strip().lower()
+        if _use_ai_display == "auto":
+            _use_ai_display = f"auto {dim('(resolves to ' + str(_default_use_ai_summaries()).lower() + ')')}"
+    row("use_ai_summaries", _use_ai_display, _detect_source("use_ai_summaries", "auto"))
+    # The gate the rest of this section branches on — same resolver the server
+    # itself uses. Previously the env-only read, which is why a config-disabled
+    # summarizer ALSO skipped the "AI summaries disabled" banner below and
+    # printed an Active provider line instead.
+    use_ai = _default_use_ai_summaries()
+    provider = (_cfg.get("summarizer_provider", "") or "").strip()
+    _provider_src = _detect_source("summarizer_provider", "")
     row(
         "summarizer_provider",
         provider if provider else dim("(auto-detect)"),
-        "env" if not provider_d else "default",
+        _provider_src,
     )
+
+    def _provider_pinned_by(name: str) -> str:
+        """Explain WHERE an explicit provider pin came from.
+
+        `provider` now reads the merged config, so the old hardcoded
+        `JCODEMUNCH_SUMMARIZER_PROVIDER=<x>` suffix would name the env var for a
+        pin that actually came from config.jsonc — the same misattribution #393
+        is about, one line further down.
+        """
+        if _provider_src == "env":
+            return f"JCODEMUNCH_SUMMARIZER_PROVIDER={name}"
+        return f"summarizer_provider={name} [{_provider_src}]"
 
     # summarizer_model display (surfaced by @slazarov on #300, runtime fix #304).
     # As of v1.108.18, batch_summarize.py threads `repo=` through every
@@ -7799,7 +7838,7 @@ def _run_config(check: bool = False, init: bool = False, upgrade: bool = False) 
     if not use_ai:
         print(f"  {yellow('AI summaries disabled')} — signature fallback active")
     elif provider_name == "anthropic":
-        suffix = "JCODEMUNCH_SUMMARIZER_PROVIDER=anthropic" if provider == "anthropic" else "ANTHROPIC_API_KEY set"
+        suffix = _provider_pinned_by("anthropic") if provider == "anthropic" else "ANTHROPIC_API_KEY set"
         print(f"  Active provider:  {green('Anthropic')}  ({suffix})")
         # Runtime: summarizer_model (config; project-aware as of #304) > ANTHROPIC_MODEL env > default
         if _sm_effective:
@@ -7808,7 +7847,7 @@ def _run_config(check: bool = False, init: bool = False, upgrade: bool = False) 
             model, d = env("ANTHROPIC_MODEL", "claude-haiku-*")
             row("  ANTHROPIC_MODEL", model, "env" if not d else "default")
     elif provider_name == "gemini":
-        suffix = "JCODEMUNCH_SUMMARIZER_PROVIDER=gemini" if provider == "gemini" else "GOOGLE_API_KEY set"
+        suffix = _provider_pinned_by("gemini") if provider == "gemini" else "GOOGLE_API_KEY set"
         print(f"  Active provider:  {green('Google Gemini')}  ({suffix})")
         if _sm_effective:
             row("  GOOGLE_MODEL", _sm_effective, _detect_source("summarizer_model", ""))
@@ -7817,7 +7856,7 @@ def _run_config(check: bool = False, init: bool = False, upgrade: bool = False) 
             row("  GOOGLE_MODEL", model, "env" if not d else "default")
     elif provider_name == "openai":
         base_label = openai_base or "https://api.openai.com/v1"
-        suffix = "JCODEMUNCH_SUMMARIZER_PROVIDER=openai" if provider == "openai" else "OPENAI_API_BASE set"
+        suffix = _provider_pinned_by("openai") if provider == "openai" else "OPENAI_API_BASE set"
         print(f"  Active provider:  {green('OpenAI-compatible')}  ({suffix})")
         row("  OPENAI_API_BASE", base_label, "env" if openai_base else "default")
         if _sm_effective:
@@ -7835,17 +7874,17 @@ def _run_config(check: bool = False, init: bool = False, upgrade: bool = False) 
         v, d = env("OPENAI_MAX_TOKENS", "500")
         row("  OPENAI_MAX_TOKENS", v, "env" if not d else "default")
     elif provider_name == "minimax":
-        suffix = "JCODEMUNCH_SUMMARIZER_PROVIDER=minimax" if provider == "minimax" else "MINIMAX_API_KEY set"
+        suffix = _provider_pinned_by("minimax") if provider == "minimax" else "MINIMAX_API_KEY set"
         print(f"  Active provider:  {green('MiniMax')}  ({suffix})")
         row("  OPENAI_API_BASE", "https://api.minimax.io/v1", "default")
         row("  OPENAI_MODEL", _sm_effective or "minimax-m2.7", _detect_source("summarizer_model", "") if _sm_effective else "default")
     elif provider_name == "glm":
-        suffix = "JCODEMUNCH_SUMMARIZER_PROVIDER=glm" if provider == "glm" else "ZHIPUAI_API_KEY set"
+        suffix = _provider_pinned_by("glm") if provider == "glm" else "ZHIPUAI_API_KEY set"
         print(f"  Active provider:  {green('GLM-5')}  ({suffix})")
         row("  OPENAI_API_BASE", "https://api.z.ai/api/paas/v4/", "default")
         row("  OPENAI_MODEL", _sm_effective or "glm-5", _detect_source("summarizer_model", "") if _sm_effective else "default")
     elif provider_name == "openrouter":
-        suffix = "JCODEMUNCH_SUMMARIZER_PROVIDER=openrouter" if provider == "openrouter" else "OPENROUTER_API_KEY set"
+        suffix = _provider_pinned_by("openrouter") if provider == "openrouter" else "OPENROUTER_API_KEY set"
         print(f"  Active provider:  {green('OpenRouter')}  ({suffix})")
         row("  OPENAI_API_BASE", "https://openrouter.ai/api/v1", "default")
         row("  OPENAI_MODEL", _sm_effective or "meta-llama/llama-3.3-70b-instruct:free", _detect_source("summarizer_model", "") if _sm_effective else "default")
