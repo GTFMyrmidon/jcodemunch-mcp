@@ -78,6 +78,13 @@ in the file, and prints the remaining prose mirrors that must move with it. A
 new guard pins the artifact to the reference totals directly rather than only
 through the prose.
 
+`tiktoken` joins the dev dependency group so the three loader tests
+(`load_reference` schema rejection, the uncovered-repo path, drift detection)
+**run** in CI instead of `importorskip`-ing. They were the only part of the new
+guard CI could not see, and a harness edited by people who are not running it is
+precisely how its constants went stale in the first place. It is a test-time
+dependency only - the package itself still does not require it.
+
 ## [1.108.199] - 2026-07-29 - a convention everybody followed and nothing enforced
 
 Three findings from @rknighton, each root-caused to a line in his own report.
