@@ -17,10 +17,11 @@ Nothing on this page is rejected. Everything here has been reviewed, agreed to,
 and given a close condition. When work begins, the entry gets an issue and this
 page links to it.
 
-The design work below is [@mightydanp](https://github.com/mightydanp)'s,
-proposed in [this comment](https://github.com/jgravelle/jcodemunch-mcp/issues/377#issuecomment-5076253159)
+The evidence-arc design (Phases 2, 4, 5 and 6 below) is
+[@mightydanp](https://github.com/mightydanp)'s, proposed in
+[this comment](https://github.com/jgravelle/jcodemunch-mcp/issues/377#issuecomment-5076253159)
 on [#377](https://github.com/jgravelle/jcodemunch-mcp/issues/377) and accepted
-as written.
+as written. Entries outside that arc carry their own provenance line.
 
 ---
 
@@ -172,6 +173,56 @@ deliverable.
 **Sequencing.** Depends on Phase 2 (exact evidence) and Phase 5 (corpus
 identity). A path witness that cannot say which corpus it was traced over, or
 cannot cite an exact evidence object per step, is not worth citing.
+
+---
+
+## Retrieval benchmark integrity — leakage split and size buckets
+
+Not part of the evidence arc above. Proposed and accepted by the maintainers,
+2026-07-29.
+
+**The problem.** A retrieval score measured over queries that contain their own
+answer's name is partly a measure of name matching, not of retrieval. We ship
+exact seeding — `retrieval/query_shape.py` pins exact symbol-name matches ahead
+of ranked matches in `get_ranked_context` — so a query corpus of that shape
+flatters the feature by construction.
+
+Our own authored fixture is the extreme case and is deliberately so:
+`benchmarks/calibration/planted_queries.json` records that planted names are
+slug-unique "so hit/miss is unambiguous and immune to corpus drift." That is
+correct for what it measures — whether the verdict reports found when the
+subject was found — and wrong for anything that reads it as retrieval quality.
+Nothing in the repo says so where a reader would need to see it.
+
+`benchmarks/goldset/gold.json` is **not** affected and needs no change. Its
+targets are symbol identities rather than natural-language queries, and its
+authored false-positive traps (module homonyms, same-name-different-domain
+methods, substring decorator matches) already do the equivalent job.
+
+**Scope**
+
+- A deterministic leakage criterion over a query corpus: a task leaks when the
+  tokenized query shares a stemmed token with the tokenized basenames or symbol
+  names of its expected results.
+- A `split` field per task (`easy` default, `hard`) and a corpus validator that
+  exits non-zero when a `hard` task leaks, so CI can gate it.
+- hit@k and MRR reported per split **and** per repository-size bucket, beside
+  the overall figure rather than instead of it.
+- A stated-limit line wherever a leakage-free number is published, naming n per
+  split.
+- An explicit note on `planted_queries.json` that it measures verdict coverage
+  and is not a retrieval score.
+
+**Close condition.** No retrieval number is published from this repository
+without its split and its size bucket attached.
+
+**Sequencing.** Bundled with the neutral third-party retrieval benchmark run.
+Split machinery built before there is a corpus to split is a validator with
+nothing to validate; the benchmark run without it produces a number that has to
+be re-qualified afterwards. Size buckets are expected to cost us — large-repo
+retrieval is our weakest measured cell, and the bucket that exposes it is the
+one we would most like to leave out. That is the reason to build it into the
+harness rather than decide per publication.
 
 ---
 
