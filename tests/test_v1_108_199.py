@@ -36,8 +36,18 @@ _NOT_SERVER_PATH = {
     "groq/explainer.py",
 }
 
-# lsp_bridge speaks LSP over the child's stdin — subprocess.PIPE is the point.
-_INTENTIONAL_PIPE = {"enrichment/lsp_bridge.py"}
+# Sites that deliberately pass a stdin OTHER than DEVNULL, with the reason each
+# one is safe. Both hand the child a source that terminates on its own, which is
+# what #392's inherited-and-never-written JSON-RPC pipe does not.
+_INTENTIONAL_PIPE = {
+    # Speaks LSP over the child's stdin; PIPE is the entire point.
+    "enrichment/lsp_bridge.py",
+    # Feeds the .mmd file to the viewer over stdin from an open REGULAR FILE
+    # handle, not the server's stdin. A real file reaches EOF, so the child
+    # cannot block on it the way #392's child blocked on the JSON-RPC channel.
+    # Surfaced by the DEVNULL check when this guard was ported to jdoc/jdata.
+    "tools/mermaid_viewer.py",
+}
 
 
 def _spawn_sites() -> list[tuple[str, int, bool]]:
@@ -109,6 +119,57 @@ def test_no_server_path_subprocess_inherits_stdin():
         "these run inside the MCP server process and must pass stdin=subprocess.DEVNULL "
         f"(#392): {offenders}"
     )
+
+
+def test_stdin_guard_is_not_vacuous():
+    """The walker must actually find server-path spawns.
+
+    Back-ported from the jdoc/jdata port of this guard. Without it, the check
+    above passes trivially if the AST walk stops matching, if the package moves,
+    or if every spawn migrates behind a helper it cannot see. A structural test
+    that cannot fail reads as coverage and provides none.
+    """
+    covered = [
+        s for s in _spawn_sites()
+        if s[0] not in _NOT_SERVER_PATH and s[0] not in _INTENTIONAL_PIPE
+    ]
+    assert covered, (
+        "no server-path subprocess spawns found in src/jcodemunch_mcp. Either the "
+        "AST walker stopped matching or the spawns moved. Fix the walker rather "
+        "than deleting this file."
+    )
+
+
+def test_server_path_stdin_is_devnull():
+    """`stdin=` alone isn't enough: PIPE would reintroduce a blocking child.
+
+    Also back-ported from the jdoc port. `_INTENTIONAL_PIPE` is the one place
+    PIPE is correct (lsp_bridge speaks LSP over the child's stdin); everywhere
+    else DEVNULL is the only value that closes #392.
+    """
+    wrong: list[str] = []
+    for path in sorted(SRC_ROOT.rglob("*.py")):
+        rel = path.relative_to(SRC_ROOT).as_posix()
+        if rel in _NOT_SERVER_PATH or rel in _INTENTIONAL_PIPE:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not (
+                isinstance(func, ast.Attribute)
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "subprocess"
+                and func.attr in _SPAWNERS
+            ):
+                continue
+            for kw in node.keywords:
+                if kw.arg == "stdin" and not (
+                    isinstance(kw.value, ast.Attribute) and kw.value.attr == "DEVNULL"
+                ):
+                    wrong.append(f"{rel}:{node.lineno}")
+    assert not wrong, f"server-path stdin must be subprocess.DEVNULL: {wrong}"
 
 
 def test_exemption_lists_have_no_dead_entries():
