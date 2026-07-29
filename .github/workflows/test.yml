@@ -22,14 +22,19 @@ jobs:
         with:
           # Pin uv to skip the version-manifest fetch from
           # raw.githubusercontent.com that intermittently fails and takes
-          # down the whole matrix (see run 25292200582). Bump as needed.
-          version: "0.6.5"
+          # down the whole matrix (see run 25292200582).
+          #
+          # The pin must be able to READ uv.lock. 0.6.5 could not: the lock is
+          # `revision = 3`, and rather than erroring 0.6.5 silently re-resolved,
+          # so `uv sync` resolved fresh on every job and the committed lock
+          # pinned nothing here. Bump this and re-lock together, never one alone.
+          version: "0.9.5"
 
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --group dev --extra watch
+        run: uv sync --locked --group dev --extra watch
 
       - name: Run tests
         run: uv run pytest tests/ -v --tb=short --cov=src --cov-report=term-missing --cov-fail-under=74
@@ -60,13 +65,14 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7
         with:
-          version: "0.6.5"
+          # Keep identical to the test job's pin; see the note there.
+          version: "0.9.5"
 
       - name: Set up Python
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --locked --group dev
 
       - name: Ruff lint (src/)
         # Rule selection + grandfathered ignores live in [tool.ruff.lint] in

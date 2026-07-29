@@ -85,6 +85,23 @@ guard CI could not see, and a harness edited by people who are not running it is
 precisely how its constants went stale in the first place. It is a test-time
 dependency only - the package itself still does not require it.
 
+### CI was not using the lockfile at all
+
+Adding that dependency surfaced it. `uv.lock` is `revision = 3`, written by a
+modern uv; `test.yml` pinned uv **0.6.5**, which cannot read that revision and
+responds by silently re-resolving rather than erroring. So `uv sync` resolved
+fresh on every job and the committed lock pinned nothing in CI. `replay.yml`
+pinned no version at all, so it took whatever uv was current that day.
+
+Both workflows now pin the same uv (0.9.5, which reads `revision = 3`) and pass
+`--locked`, so a lock that disagrees with `pyproject.toml` fails the build
+instead of being quietly ignored. The lock itself is re-locked with a matching
+uv: 66 insertions, 3 deletions, tiktoken plus a stale project version, no
+resolution churn and no loss of the `upload-time` provenance fields.
+
+⚠ The pin and the lock are now coupled by construction. Bump one and re-lock in
+the same change, never one alone.
+
 ## [1.108.199] - 2026-07-29 - a convention everybody followed and nothing enforced
 
 Three findings from @rknighton, each root-caused to a line in his own report.
