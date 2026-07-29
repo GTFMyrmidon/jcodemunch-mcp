@@ -102,6 +102,26 @@ resolution churn and no loss of the `upload-time` provenance fields.
 ⚠ The pin and the lock are now coupled by construction. Bump one and re-lock in
 the same change, never one alone.
 
+### The "unrealistic baseline" FAQ answered the wrong objection
+
+`METHODOLOGY.md` anticipated "the baseline is unrealistic" and replied that a
+read-everything agent would actually read *more*, so 99.6% is a conservative
+floor. That is true, and it is an answer to a question nobody asked. The real
+objection is that **nobody reads the whole repository**: a competent agent greps
+or runs its own retrieval step, and measured against that agent the baseline is
+an **upper** bound, not a lower one. Answering the adjacent question is what made
+the section read as settled.
+
+Rewritten to concede that first, state what 99.6% actually measures (the ceiling
+on what symbol-level retrieval avoids relative to loading the corpus, not a
+prediction of anyone's bill), and put the single-digit multiples against
+selective-retrieval comparators in the same table - including the two cells where
+a comparator injects **fewer** tokens than jCodeMunch. The original conservatism
+point is kept, scoped explicitly to the read-everything comparison class it
+belongs to.
+
+The headline claim is unchanged.
+
 ## [1.108.199] - 2026-07-29 - a convention everybody followed and nothing enforced
 
 Three findings from @rknighton, each root-caused to a line in his own report.

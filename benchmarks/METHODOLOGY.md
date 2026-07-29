@@ -198,7 +198,35 @@ was applied. The harness (`benchmarks/harness/run_benchmark.py`) and query corpu
 (`benchmarks/tasks.json`) are open source — run them yourself and publish the results.
 
 **"The baseline is unrealistic."**
-The baseline intentionally represents the *minimum* cost for a "read everything"
-agent — one pass through all files, counted once. Real agents re-read files, branch
-across sessions, and load documentation. Actual production baseline costs are higher,
-making our reported savings a conservative lower bound.
+If you mean *nobody reads the whole repository*, that is correct, and it is the
+objection worth answering. A competent agent greps, or runs a retrieval step of its
+own. Measured against that agent rather than against a read-everything one, this
+baseline is an **upper** bound, and 99.6% is not the number you would see.
+
+So the honest framing is that 99.6% measures **what symbol-level retrieval avoids
+relative to loading the corpus**. It is a ceiling on the waste this tool removes, and
+it is the right number for "how much of a repository does an agent actually need in
+context." It is not a prediction of anyone's bill, because it does not model an agent
+that was already retrieving selectively.
+
+Against comparators that *do* retrieve selectively, the margins are single-digit
+multiples, and both sides are measured on the same corpus in the same run:
+
+| Comparator | express | fastapi | gin | Report |
+|---|--:|--:|--:|---|
+| Tuned RAG pipeline, best chunk size | 3.2x | 1.3x | 2.5x | [`rag_baseline_results.md`](rag_baseline_results.md) |
+| Embedding retrieval layer (chunk-based) | 1.2x | **0.2x** | **0.9x** | [`odysseus_compare_results.md`](odysseus_compare_results.md) |
+
+The bolded cells are ones where the comparator injects **fewer** tokens than
+jCodeMunch, and they are published rather than dropped. Read them next to that
+report's `complete/5` and `split/5` columns: chunk-based retrieval buys its token
+saving by returning fragments cut mid-definition, where jCodeMunch returns whole
+symbols. Cheaper context that stops mid-function is not automatically better context,
+but it is genuinely cheaper, and the table says so.
+
+There is a narrower sense in which the baseline is conservative, and it only applies
+*within* the read-everything comparison: we count one pass through each file. A real
+agent that reads broadly re-reads files, branches across sessions, and loads
+documentation, so its true cost is higher than the figure here. That makes 99.6% a
+floor **for that class of agent** — which is a different claim from a floor in
+general, and it should not be read as one.
