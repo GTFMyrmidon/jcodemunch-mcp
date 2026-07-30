@@ -8,7 +8,7 @@
 - **INDEX_VERSION:** 17
 - **Tests:** 6260 passed, 7 skipped (1.108.199) + the KNOWN 12 local-ONNX `test_semantic_search` env failures (green in CI on all 4 ubuntu jobs — never read them as a regression). ⚠ **Do not eyeball the COUNT — .197 had one real failure hiding inside those 12.** Diff the FAILED names against the same tree with your changes stashed; for .199 that diff was empty.
 - **Python:** >=3.10
-- **Tool count:** 90 in `full` (front door hidden; +1 v1.108.111 `get_parity_map`, +1 v1.108.112 `get_decorator_census`, +1 v1.108.113 `get_architecture_metrics`); `tool_surface=counter` exposes a 3-tool front door (`order`/`menu`/`route`) instead
+- **Tool count:** 91 visible in `full` / 94 in catalog (front door hidden; counts verified 2026-07-30 from `jcodemunch-mcp surface`, which is the only place to get them — do NOT hand-type this; +1 v1.108.111 `get_parity_map`, +1 v1.108.112 `get_decorator_census`, +1 v1.108.113 `get_architecture_metrics`); `tool_surface=counter` exposes a 3-tool front door (`order`/`menu`/`route`) instead
 
 ## Key Files
 ```

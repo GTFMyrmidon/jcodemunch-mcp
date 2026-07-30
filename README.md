@@ -803,7 +803,7 @@ When `adaptive_tiering` is false, `plan_turn(model=...)` and `announce_model(...
 
 #### The Counter — collapse to a 3-tool front door (`tool_surface`)
 
-`tool_surface` goes further than tiering: it collapses the resident tool list to a **three-tool front door** that fronts the entire catalog without losing any capability. Every turn the host serializes each resident tool's schema into context; the front door shrinks that fixed per-turn cost (≈21.6k → ≈0.9k tokens, ~24×) and removes the "pick one of N" dispatch dilution.
+`tool_surface` goes further than tiering: it collapses the resident tool list to a **three-tool front door** that fronts the entire catalog without losing any capability. Every turn the host serializes each resident tool's schema into context; the front door shrinks that fixed per-turn cost and removes the "pick one of N" dispatch dilution. Measured on v1.108.199: **25,801 → 1,038 estimated schema tokens, ~25×**. That figure is an estimate at `bytes/4`, not a tokenizer count, and it moves as the catalog grows — so don't take ours. Run `jcodemunch-mcp surface` for your own install's number.
 
 **New installs default to `counter`** so a first-time user gets maximal token savings out of the box, with every tool one `menu()` / `route()` call away. This default is applied only to a genuinely first-ever install: an **existing install keeps its surface across upgrades** — if you never set `tool_surface`, a package update leaves you on `full` exactly as before, never silently collapsing your tool list. Set it explicitly any time:
 
