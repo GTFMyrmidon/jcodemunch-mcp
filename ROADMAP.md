@@ -88,7 +88,37 @@ declaration rather than against whatever happened to be retrieved.
 Accepted at design time, deferred with Phase 2 P2. Never tracked as work in
 progress.
 
-**Close condition.** As accepted in the original design comment.
+**Result vocabulary.** Per requirement, finalization must report exactly one of
+five states, proposed by @mightydanp on #377 (comment 5124590663) and adopted
+verbatim:
+
+```text
+measured and satisfied
+measured and unsatisfied
+not measured
+unsupported at that precision
+failed while measuring
+```
+
+The last three are what make this worth having as a vocabulary rather than a
+boolean. `not measured` stops a declared requirement from being read as a
+negative result. `unsupported at that precision` is the honest answer #339
+needed, where the fix was to fail closed rather than imply a per-file precision
+the tool did not have. `failed while measuring` separates a delegate that errored
+from a signal that came back empty, which is the distinction
+jgravelle/jdocmunch-mcp#69 was missing when unmeasured signals scored as zero.
+
+This is a vocabulary we have already had to invent three times in narrower
+places, which is the argument for building it once: `FreshnessProbe.
+repo_freshness` became four-state in 1.108.180 because a boolean had nowhere to
+put "I could not find out", `coverage.complete` is tri-state with a null, and
+`retrieval/ledger_trust.py` puts an unclassifiable telemetry row in a third
+bucket rather than folding it into the negative group.
+
+**Close condition.** As accepted in the original design comment, plus: every
+requirement in a finalized handoff resolves to exactly one of the five states
+above, and no state is reachable by defaulting. A requirement that was never
+evaluated reports `not measured` and must not render as unsatisfied.
 
 **Sequencing.** After the Phase 2 P3 remainder. Requirement coverage that cites
 evidence with an unsettled lifetime inherits the unsettled lifetime.
