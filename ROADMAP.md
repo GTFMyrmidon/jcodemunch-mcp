@@ -305,6 +305,45 @@ harness rather than decide per publication.
 
 ---
 
+## `install-pack --from`: install an index your own CI built
+
+`install-pack` fetches the pack catalog and pre-built indexes from one hardcoded
+host (`STARTER_PACK_API`, `cli/install_pack.py:14`). The mechanism is general;
+only the destination is fixed. A team that indexes its own private repo in CI has
+no supported way to hand that artifact to the rest of the team, so every seat
+re-indexes the same code independently.
+
+That duplication is not only CPU. With `use_ai_summaries` on, summary generation
+spends provider tokens at index time, and N seats indexing one repo pay for the
+same summaries N times. A pack built once with summaries already in it removes
+that cost for everyone downstream of the build.
+
+**Scope.** A `--from <url>` (and matching catalog override) pointing at a
+catalog the customer hosts, with auth for a private endpoint, reusing the
+existing archive layout and extraction path unchanged.
+
+⚠ **Known blocker, verified rather than assumed: symbol bodies do not travel in
+the `.db`.** `get_symbol_content` seeks `byte_offset` into a file under a separate
+content directory and returns `None` when that file is absent
+(`storage/sqlite_store.py`), and `build_pack.py` packages `.db` files only. So a
+pack delivers search, outlines and signatures, while `get_symbol_source` comes
+back empty unless the content cache ships too. Any design here settles that first,
+because it changes the artifact's size profile.
+
+**Close condition.** A seat installs an index built by a CI job it controls, from
+a host it controls, and every tool that works against a locally built index works
+against the installed one. Where that is not true (see the content-cache blocker),
+the gap is reported by the tool rather than surfacing as an empty result.
+
+**Provenance.** Fell out of the jCodeMunch Enterprise review (2026-07-30), which
+concluded that no token-level saving requires a running shared component: every
+win available is a build-time artifact property. This is the artifact channel
+pointed at a private repo instead of our public catalog. Independently useful to a
+solo developer with two machines, which is why it belongs to jcm rather than to
+any enterprise layer.
+
+---
+
 ## Conventions
 
 - Entries here are **accepted**, not speculative. A rejected proposal gets a
