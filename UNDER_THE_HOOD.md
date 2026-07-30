@@ -243,6 +243,9 @@ or executes SQL against your repo.
 Both keep the read-only charter intact: the strong evidence enters through a file
 you hand the tool, produced by systems you already run, on your terms.
 
+Per-language recipes, the CI ordering that avoids a high `unmapped` count, and
+what the `stale` flag actually compares are in [SCIP.md](SCIP.md).
+
 ---
 
 *Corrections welcome — if a claim in this manual doesn't match the source, that's a
