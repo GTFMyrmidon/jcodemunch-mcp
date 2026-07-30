@@ -81,8 +81,8 @@ touch.** On each read it checks both.
 
 A moved HEAD is necessary for the evidence to be stale, but not sufficient. If
 the commits since your import didn't change any file SCIP covers, the evidence
-still describes the tree and is not flagged. Only a change to a covered file —
-or its deletion — marks it stale, with a re-import hint.
+still describes the tree and is not flagged. Only a change to a covered file,
+or its deletion, marks it stale, with a re-import hint.
 
 That refinement matters more than it sounds. Under a HEAD-only comparison a
 single commit anywhere marked *everything* stale, and a warning that fires on

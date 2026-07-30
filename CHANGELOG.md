@@ -124,7 +124,7 @@ The headline claim is unchanged.
 
 ## [1.108.200] - 2026-07-30
 
-### SCIP P3 — a staleness warning that fires on nearly every read protects nothing
+### SCIP P3: a staleness warning that fires on nearly every read protects nothing
 
 **Per-file stale degradation.** `scip_meta_and_stale` decided staleness by
 comparing the git HEAD at ingest against the index's current HEAD. That is
@@ -153,7 +153,7 @@ protecting nothing.
   the refinement reaches them without touching any of them.
 
 **Digest line.** `digest` had no SCIP reference at all, so an agent orienting on
-a repo could not tell that compiler-verified references were available — the one
+a repo could not tell that compiler-verified references were available, which is the one
 fact that changes how far to trust `find_references` and `check_delete_safe`.
 The briefing now carries an edge count, the indexer that produced it, and
 whether it is current. Absent entirely on repos with no SCIP ingest, so those
