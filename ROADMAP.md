@@ -115,10 +115,59 @@ put "I could not find out", `coverage.complete` is tri-state with a null, and
 `retrieval/ledger_trust.py` puts an unclassifiable telemetry row in a third
 bucket rather than folding it into the negative group.
 
+**Aggregates must not flatten their children.** Refined by @mightydanp on #377
+(comment 5134935796). The five states describe a single measurement; an
+aggregate requirement is where they get lost, because a conclusive top-level
+answer reads as complete whether or not every child was actually evaluated.
+
+An aggregate retains a record per mandatory child:
+
+```text
+child requirement or signal id
+requested scope and precision
+actual scope and precision
+result state
+evidence refs
+producer identity
+failure or unsupported reason
+```
+
+Conclusiveness is asymmetric between the two combinators, and the asymmetry is
+the operative detail:
+
+- `all` is satisfied only when every mandatory child is measured and satisfied.
+- `all` may be conclusively unsatisfied on a single measured failure, but the
+  children that failed or were unsupported still have to be disclosed. A
+  conclusive verdict is not a licence to drop the rest of the report.
+- `any` may be conclusively satisfied on one measured child, and failures among
+  the other attempted children still remain visible.
+- When failed, unsupported, or absent children prevent a conclusive result, the
+  aggregate reports the applicable non-measured state rather than guessing.
+
+The aggregate result never replaces the child states. Otherwise a conclusive
+top-level answer can still hide that part of the requested audit was unsupported
+or failed, which is the same false-completeness hazard as a zero standing in for
+an unmeasured signal, one level up.
+
 **Close condition.** As accepted in the original design comment, plus: every
 requirement in a finalized handoff resolves to exactly one of the five states
 above, and no state is reachable by defaulting. A requirement that was never
-evaluated reports `not measured` and must not render as unsatisfied.
+evaluated reports `not measured` and must not render as unsatisfied. For
+aggregates: every mandatory child keeps its own record and its own state, and no
+aggregate verdict is reported that its retained child states do not support.
+
+> A measured result requires affirmative proof that the measurement occurred.
+> Missing data describes the measurement process, not the subject being measured.
+>
+> -- @mightydanp, #377
+
+**Provenance binding.** Recorded as a stated direction, not scheduled: running
+producer version, runtime and session identity, index schema version, index
+generation, and producer capability fingerprint, bound into corpus and proof
+identity. The adjacent case that motivated it (a future-version index imitating
+absence) did not reproduce and is now pinned by
+`tests/test_future_version_no_false_absence.py`, so this is about making
+provenance legible rather than closing a known defect.
 
 **Sequencing.** After the Phase 2 P3 remainder. Requirement coverage that cites
 evidence with an unsettled lifetime inherits the unsettled lifetime.
