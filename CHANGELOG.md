@@ -122,6 +122,45 @@ belongs to.
 
 The headline claim is unchanged.
 
+## [1.108.200] - 2026-07-30
+
+### SCIP P3 — a staleness warning that fires on nearly every read protects nothing
+
+**Per-file stale degradation.** `scip_meta_and_stale` decided staleness by
+comparing the git HEAD at ingest against the index's current HEAD. That is
+repo-global: a single commit touching one file SCIP never covered marked *every*
+edge stale, on every read, in all five consumers (`find_references`,
+`get_blast_radius`, `get_call_hierarchy`, `find_implementations`,
+`check_edit_safe` / `check_delete_safe`).
+
+A moved HEAD is necessary for the evidence to be stale, not sufficient. The
+ingest now records the content hash of every file its edges actually touch, and
+staleness requires that a covered file has changed. This is the same reasoning
+that narrowed the working-tree gate in 1.108.181: a refusal that appears on
+almost every answer is one people learn to click past, at which point it is
+protecting nothing.
+
+- Stored as one JSON value under a new key in the **existing** `scip_meta`
+  key-value table. No new table, no new column, so **no `INDEX_VERSION` bump**
+  and no observatory cache-key bump.
+- Covered files are derived from symbol-id path prefixes, both endpoints of
+  every edge, since `scip_edges` carries no file column.
+- **Fails toward stale.** An ingest predating this release has no hash map, and
+  that keeps the old head-only answer rather than reporting fresh. An
+  unreadable map, an empty map, or a failed lookup do the same. Absence of
+  provenance is unknown, never clean.
+- **No consumer changed.** All five read staleness through the one function, so
+  the refinement reaches them without touching any of them.
+
+**Digest line.** `digest` had no SCIP reference at all, so an agent orienting on
+a repo could not tell that compiler-verified references were available — the one
+fact that changes how far to trust `find_references` and `check_delete_safe`.
+The briefing now carries an edge count, the indexer that produced it, and
+whether it is current. Absent entirely on repos with no SCIP ingest, so those
+digests are byte-identical.
+
+Docs for generating and importing a `.scip` shipped separately in `SCIP.md`.
+
 ## [1.108.199] - 2026-07-29 - a convention everybody followed and nothing enforced
 
 Three findings from @rknighton, each root-caused to a line in his own report.

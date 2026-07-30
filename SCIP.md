@@ -76,12 +76,22 @@ import, because the compiler saw a caller the AST did not.
 ## 4. Staleness is reported, not assumed
 
 SCIP evidence is a snapshot of one commit. jCodeMunch records the `git_head` it
-was ingested at and compares it against the index's current head on every read.
-When they differ, results carry a `stale` flag and a re-import hint rather than
-posing as current truth.
+was ingested at, **and the content hash of every file the edges actually
+touch.** On each read it checks both.
 
-That is the entire freshness model, and it is deliberately conservative: the
-evidence is *older*, not *wrong*, and the flag says which.
+A moved HEAD is necessary for the evidence to be stale, but not sufficient. If
+the commits since your import didn't change any file SCIP covers, the evidence
+still describes the tree and is not flagged. Only a change to a covered file —
+or its deletion — marks it stale, with a re-import hint.
+
+That refinement matters more than it sounds. Under a HEAD-only comparison a
+single commit anywhere marked *everything* stale, and a warning that fires on
+nearly every read is one people learn to ignore.
+
+The check is deliberately conservative in one direction: the evidence is
+*older*, never silently *wrong*. An index imported before v1.108.200 carries no
+hash map, and that falls back to the HEAD comparison rather than reporting
+fresh. Missing provenance is unknown, not clean.
 
 Re-import after any merge you care about. In CI, that means regenerating and
 re-importing in the same job that indexes, so the two heads always match.

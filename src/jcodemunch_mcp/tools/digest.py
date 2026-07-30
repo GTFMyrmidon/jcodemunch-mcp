@@ -174,6 +174,11 @@ def compose_digest(
     if regret:
         structured["regret"] = regret
 
+    # Section 5: compile-time evidence (only when SCIP has been ingested)
+    scip = _compose_scip(store, owner, name)
+    if scip:
+        structured["scip"] = scip
+
     briefing = _render_markdown(structured)
 
     # Persist current state so the next call computes a fresh delta.
@@ -275,6 +280,39 @@ def _compose_dead_code(
         return []
 
 
+def _compose_scip(store, owner: str, name: str) -> Optional[dict]:
+    """One-line compile-time-evidence summary. Returns None when no SCIP index
+    has been ingested, so a repo without it keeps the digest it had before.
+
+    An agent orienting on a repo could not previously tell that compiler-verified
+    references were available at all, which is the one fact that changes how much
+    to trust `find_references` and `check_delete_safe`.
+    """
+    try:
+        from ._scip_consume import open_scip_reader, scip_meta_and_stale  # noqa: PLC0415
+
+        conn = open_scip_reader(store, owner, name)
+        if conn is None:
+            return None
+        try:
+            meta, stale = scip_meta_and_stale(conn)
+            row = conn.execute("SELECT COUNT(*) AS n FROM scip_edges").fetchone()
+            edges = int(row["n"]) if row else 0
+        finally:
+            conn.close()
+        if not edges:
+            return None
+        return {
+            "edges": edges,
+            "tool": meta.get("tool") or "",
+            "ingested_at": meta.get("ingested_at") or "",
+            "stale": bool(stale),
+        }
+    except Exception:
+        logger.debug("compose_scip failed", exc_info=True)
+        return None
+
+
 def _compose_regret(repo: str, storage_path: Optional[str]) -> Optional[dict]:
     """One-line retrieval-regret summary from the ranking ledger. Returns None
     when telemetry is off or no regret clusters cross threshold (so the digest
@@ -365,6 +403,22 @@ def _render_markdown(s: dict) -> str:
             f"top: {regret['top_signal']} ({regret['top_severity']}). "
             f"Run `reflect` for suggested fixes."
         )
+
+    scip = s.get("scip")
+    if scip:
+        _tool = f" from {scip['tool']}" if scip.get("tool") else ""
+        if scip.get("stale"):
+            lines.append(
+                f"\n**Compile-time evidence:** {scip['edges']:,} SCIP edges{_tool}, "
+                "but a covered file has changed since ingest. Re-run "
+                "`import-scip` to restore compiler-verified references."
+            )
+        else:
+            lines.append(
+                f"\n**Compile-time evidence:** {scip['edges']:,} SCIP edges{_tool}, "
+                "current. `find_references` and `check_delete_safe` are "
+                "compiler-backed on this repo."
+            )
 
     lines.append(
         "\n_Composed from get_changed_symbols + get_hotspots + find_dead_code. "

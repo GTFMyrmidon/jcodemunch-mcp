@@ -14,6 +14,7 @@ counts, so the result cache is safe.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import Optional
 
@@ -46,8 +47,20 @@ def open_scip_reader(store, owner: str, name: str) -> Optional[sqlite3.Connectio
 
 
 def scip_meta_and_stale(conn: sqlite3.Connection) -> tuple[dict, bool]:
-    """Read the ``scip_meta`` rows and decide staleness: SCIP was ingested at a
-    git HEAD that no longer matches the index's current HEAD."""
+    """Read the ``scip_meta`` rows and decide staleness.
+
+    A moved git HEAD is NECESSARY for SCIP evidence to be stale but not
+    SUFFICIENT. v1.108.200 adds the second half: when the ingest recorded
+    per-file hashes, the evidence is stale only if a file it actually covers
+    has changed since. A commit touching one unrelated file used to mark every
+    edge stale on every read across all five consumers, and a warning that
+    fires on nearly every answer is one people learn to click past — the same
+    reasoning that narrowed the v1.108.181 working-tree gate.
+
+    ⚠ Fails toward STALE. An ingest that predates the hash map, an unreadable
+    map, or a failed lookup all keep the old head-only answer. Absence of the
+    provenance is unknown, never clean.
+    """
     scip_meta = {
         row["key"]: row["value"]
         for row in conn.execute("SELECT key, value FROM scip_meta").fetchall()
@@ -58,7 +71,32 @@ def scip_meta_and_stale(conn: sqlite3.Connection) -> tuple[dict, bool]:
     live_head = head_row["value"] if head_row and head_row["value"] else ""
     ingest_head = scip_meta.get("git_head", "")
     stale = bool(ingest_head and live_head and ingest_head != live_head)
-    return scip_meta, stale
+    if not stale:
+        return scip_meta, False
+
+    raw = scip_meta.get("file_hashes") or ""
+    if not raw:
+        return scip_meta, True
+    try:
+        ingested = json.loads(raw)
+    except (ValueError, TypeError):
+        return scip_meta, True
+    if not isinstance(ingested, dict) or not ingested:
+        return scip_meta, True
+    try:
+        current = {
+            row["path"]: row["hash"]
+            for row in conn.execute("SELECT path, hash FROM files")
+        }
+    except sqlite3.Error:
+        return scip_meta, True
+
+    for path, hashed_at_ingest in ingested.items():
+        # A covered file that is gone, or whose bytes moved, invalidates the
+        # edges that rest on it. A missing current hash counts as changed.
+        if current.get(path) != hashed_at_ingest:
+            return scip_meta, True
+    return scip_meta, False
 
 
 def scip_reference_files(store, owner: str, name: str, target_id: str):

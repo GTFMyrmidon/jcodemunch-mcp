@@ -18,6 +18,7 @@ Deliberate skips (counted, not silent):
                       edges to whole files rather than enclosing symbols
 """
 
+import json
 import logging
 import sqlite3
 from datetime import datetime, timezone
@@ -68,6 +69,22 @@ CREATE TABLE IF NOT EXISTS scip_meta (
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _covered_files(edges: dict) -> set:
+    """Repo-relative paths the ingested edges actually touch.
+
+    ``scip_edges`` stores no file column, but a symbol id carries its path as
+    the prefix before ``::``. Both endpoints count: an edge is evidence about
+    the caller's file and the callee's file alike, so a change to either can
+    invalidate it.
+    """
+    files = set()
+    for key in edges:
+        for symbol_id in (key[0], key[1]):
+            if symbol_id and "::" in symbol_id:
+                files.add(symbol_id.split("::", 1)[0])
+    return files
 
 
 def _ensure_scip_tables(conn: sqlite3.Connection) -> None:
@@ -265,14 +282,41 @@ def _persist(
         # against the live meta git_head and flag the evidence stale.
         row = conn.execute("SELECT value FROM meta WHERE key = 'git_head'").fetchone()
         git_head_at_ingest = row["value"] if row and row["value"] else ""
+        meta_rows = [
+            ("tool", index_tool),
+            ("project_root", project_root),
+            ("ingested_at", now),
+            ("git_head", git_head_at_ingest),
+        ]
+        # v1.108.200: per-file provenance so staleness can degrade per file
+        # instead of repo-wide. A HEAD that moved is NECESSARY for the evidence
+        # to be stale but not SUFFICIENT — a commit touching one unrelated file
+        # used to mark every edge stale on every read, and a warning that fires
+        # on nearly every answer is one people learn to click past (the same
+        # reasoning that narrowed the v1.108.181 working-tree gate).
+        #
+        # Stored as one JSON value in the EXISTING scip_meta key-value table on
+        # purpose: no new table, no new column, so no INDEX_VERSION bump and no
+        # observatory cache-key bump. Consumers read it through
+        # ``scip_meta_and_stale``, so no consumer changes either.
+        covered = _covered_files(edges)
+        if covered:
+            ingest_hashes: dict[str, str] = {}
+            try:
+                for frow in conn.execute("SELECT path, hash FROM files"):
+                    if frow["path"] in covered and frow["hash"]:
+                        ingest_hashes[frow["path"]] = frow["hash"]
+            except sqlite3.Error:
+                ingest_hashes = {}
+            # An empty map is NOT written. Absence means "unknown", which makes
+            # the reader fall back to the head comparison — never to "fresh".
+            if ingest_hashes:
+                meta_rows.append(
+                    ("file_hashes", json.dumps(ingest_hashes, sort_keys=True))
+                )
         conn.executemany(
             "INSERT OR REPLACE INTO scip_meta (key, value) VALUES (?, ?)",
-            [
-                ("tool", index_tool),
-                ("project_root", project_root),
-                ("ingested_at", now),
-                ("git_head", git_head_at_ingest),
-            ],
+            meta_rows,
         )
         evicted = _apply_fifo_eviction(conn, max_rows)
         conn.execute("COMMIT")
