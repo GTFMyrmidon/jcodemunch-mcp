@@ -2,8 +2,14 @@
 `org-report`, or — later — an HTTP ingest route) write seat reports here; the
 org host aggregates with ``org_rollup``.
 
-Data is deliberately minimal — per-seat token/dollar/call counts by day. No
-code, no content, no file paths leave a seat; only aggregate savings numbers.
+Data is deliberately minimal: per-seat token/dollar/call counts by day. No code,
+no content, no file paths, no queries and no repo names leave a seat.
+
+``seat_id`` is the one exception worth naming, because "only aggregate savings
+numbers" reads more anonymous than it is: it defaults to the machine's hostname
+(see ``report._seat_id``), and hostnames frequently carry a person's name. Set
+``JCODEMUNCH_CLIENT_ID`` to choose the identifier instead. Disclosed in the
+README's background-behaviour section.
 """
 
 from __future__ import annotations
