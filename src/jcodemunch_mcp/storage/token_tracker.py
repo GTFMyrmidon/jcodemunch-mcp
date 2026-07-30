@@ -130,6 +130,11 @@ class _State:
         # which is the shape that actually costs.
         self._delivered: OrderedDict = OrderedDict()
         self._redelivered_tokens: int = 0
+        # One id per PROCESS, so the session_yield sink can upsert a single row
+        # per session instead of appending a partial row on every flush. Random
+        # and never transmitted; it exists only to identify the row to update.
+        self._session_uid: str = uuid.uuid4().hex
+        self._session_started: float = time.time()
         # Estimate-vs-actual calibration (v1.108.148; process lifetime only).
         # plan_turn opens an estimate; the next plan_turn closes it against
         # the response tokens actually served in between.
@@ -592,6 +597,18 @@ class _State:
             # v1.78.0 — ranking ledger (data-collection only; consumed by
             # the online weight tuner in v1.79.0).
             conn.execute("""
+                CREATE TABLE IF NOT EXISTS session_yield (
+                    session_uid            TEXT PRIMARY KEY,
+                    started_at             REAL NOT NULL,
+                    updated_at             REAL NOT NULL,
+                    deliveries             INTEGER NOT NULL,
+                    distinct_symbols       INTEGER NOT NULL,
+                    redelivered_symbols    INTEGER NOT NULL,
+                    redelivered_tokens_est INTEGER NOT NULL,
+                    full_source_symbols    INTEGER NOT NULL
+                )
+            """)
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS ranking_events (
                     ts             REAL NOT NULL,
                     repo           TEXT,
@@ -620,6 +637,67 @@ class _State:
             if base_path is None:
                 self._perf_db_failed = True
             return None
+
+    def _persist_session_yield_locked(self, base_path: Optional[str] = None) -> None:
+        """Upsert this session's delivery counts into the perf db. Lock held.
+
+        Why RAW COUNTS and not just the rate: a representative redelivery figure
+        pools numerators and denominators across sessions. Averaging per-session
+        rates would weight a 3-delivery session the same as a 300-delivery one
+        and is simply the wrong statistic, so the aggregate must be recomputable
+        from these columns.
+
+        One row per process, upserted on every flush rather than appended once at
+        exit: a SIGKILL'd server still leaves its latest counts behind, and no
+        session is ever represented twice.
+        """
+        if not _config.get("perf_telemetry_enabled", False):
+            return
+        if not self._delivered:
+            return
+        try:
+            conn = self._ensure_perf_db_locked(base_path)
+            if conn is None:
+                return
+            try:
+                deliveries = sum(r["count"] for r in self._delivered.values())
+                distinct = len(self._delivered)
+                redelivered = sum(
+                    1 for r in self._delivered.values() if r["count"] > 1
+                )
+                full_source = sum(
+                    1 for r in self._delivered.values() if r.get("full_source")
+                )
+                conn.execute(
+                    "INSERT INTO session_yield (session_uid, started_at, updated_at,"
+                    " deliveries, distinct_symbols, redelivered_symbols,"
+                    " redelivered_tokens_est, full_source_symbols)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                    " ON CONFLICT(session_uid) DO UPDATE SET"
+                    "   updated_at=excluded.updated_at,"
+                    "   deliveries=excluded.deliveries,"
+                    "   distinct_symbols=excluded.distinct_symbols,"
+                    "   redelivered_symbols=excluded.redelivered_symbols,"
+                    "   redelivered_tokens_est=excluded.redelivered_tokens_est,"
+                    "   full_source_symbols=excluded.full_source_symbols",
+                    (
+                        self._session_uid,
+                        self._session_started,
+                        time.time(),
+                        deliveries,
+                        distinct,
+                        redelivered,
+                        int(self._redelivered_tokens),
+                        full_source,
+                    ),
+                )
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+        except Exception:
+            logger.debug("session_yield persist failed", exc_info=True)
 
     def record_ranking_event(
         self,
@@ -806,6 +884,8 @@ class _State:
         self._unflushed = 0
         self._call_count = 0
         self._write_session_stats_locked(self._build_stats_locked())
+        # Opt-in and local-only; no-ops entirely unless perf telemetry is on.
+        self._persist_session_yield_locked()
 
     def flush(self) -> None:
         """Public flush — called at atexit."""

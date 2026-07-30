@@ -122,6 +122,38 @@ belongs to.
 
 The headline claim is unchanged.
 
+## [1.108.201] - 2026-07-30
+
+### A measurement that was never written down
+
+v1.108.167 shipped `redelivery_rate` on the yield block and the delivery ledger
+behind it. The figure was computed correctly and then thrown away: `_delivered`
+is process memory, and the only reader was `get_session_stats`. Nothing wrote it
+anywhere, so every session discarded its own number and no corpus could ever
+accumulate. The F-15 P2 decision has been gated since 2026-07-24 on a
+measurement that no session was able to contribute to.
+
+`session_yield` closes that. One row per server process, upserted on each flush
+rather than appended, so a hard-killed server still leaves its latest counts and
+no session is ever counted twice. It stores raw counts rather than the rate:
+pooling numerators and denominators is the only correct way to aggregate this,
+since averaging per-session rates would weight a three-delivery session the same
+as a three-hundred-delivery one.
+
+Opt-in behind the existing `perf_telemetry_enabled`, which is off by default.
+No new switch, no new default-on behaviour, and the database never leaves your
+machine. Disclosed in the README's background-behaviour section.
+
+`benchmarks/anchor/measure.py` pools the rows into the P0 artifact and applies
+the decision rule that was pre-registered before any data existed. Below 200
+deliveries over 5 sessions it reports `insufficient_data` and refuses to return
+a verdict, because too little data is its own state and must not read as "under
+ten percent, kill the feature."
+
+There is deliberately no synthetic corpus. Redelivery measures whether an agent
+re-fetches what it already holds, so a scripted session would encode the answer
+in the script. The harness reads observed sessions only.
+
 ## [1.108.200] - 2026-07-30
 
 ### SCIP P3: a staleness warning that fires on nearly every read protects nothing
