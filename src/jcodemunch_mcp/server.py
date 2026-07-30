@@ -6644,7 +6644,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent] | CallToolR
                 # handed bytes it already bought this session. Advisory only —
                 # the response body is unchanged (P1 of
                 # docs/prd-cue-anchored-delivery.md).
-                _repeats = _budget_tracker.note_delivered(_delivery_entries(name, result))
+                _repeats = _budget_tracker.note_delivered(
+                    _delivery_entries(name, result),
+                    base_path=arguments.get("storage_path"),
+                )
                 if _repeats:
                     result.setdefault("_meta", {})["already_delivered"] = {
                         "count": len(_repeats),

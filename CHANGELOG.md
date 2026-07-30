@@ -122,6 +122,32 @@ belongs to.
 
 The headline claim is unchanged.
 
+## [1.108.202] - 2026-07-30
+
+### The new writer had the bug the last one was fixed for
+
+v1.108.201's `session_yield` sink passed no base path, so it resolved through
+`_base_path` and landed in `~/.code-index` whatever `storage_path` the caller was
+handed. Found by driving the installed build against a `CODE_INDEX_PATH` store one
+hour after release: the row was correct, and it was written to the wrong database.
+
+This is exactly what v1.108.188 corrected for `ranking_events` and `tool_calls`.
+Every reader of the perf db takes a base path; a writer that passes none writes to
+one database while the aggregator reads another. Same defect, new writer, six days
+later.
+
+`note_delivered` now takes the caller's `storage_path` from the dispatcher and the
+row is filed there. Passing nothing still resolves to the previous default, so the
+fallback is a location change and never a dropped row.
+
+The ledger itself stays session-global. Redelivery is a property of the session,
+and partitioning it per store would change the `already_delivered` advisory shipped
+in v1.108.167. A process serving two stores files its one row under the most recent
+one, which is disclosed in the code rather than silently split.
+
+Only installs using a non-default store were affected, and only for rows written
+since v1.108.201 this morning.
+
 ## [1.108.201] - 2026-07-30
 
 ### A measurement that was never written down

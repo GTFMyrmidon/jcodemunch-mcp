@@ -135,6 +135,7 @@ class _State:
         # and never transmitted; it exists only to identify the row to update.
         self._session_uid: str = uuid.uuid4().hex
         self._session_started: float = time.time()
+        self._delivery_base_path: Optional[str] = None
         # Estimate-vs-actual calibration (v1.108.148; process lifetime only).
         # plan_turn opens an estimate; the next plan_turn closes it against
         # the response tokens actually served in between.
@@ -371,7 +372,7 @@ class _State:
             for sid in [s for s in self._delivered if _touched(s)]:
                 del self._delivered[sid]
 
-    def note_delivered(self, entries) -> list:
+    def note_delivered(self, entries, base_path: Optional[str] = None) -> list:
         """Record symbol deliveries; return the ids already delivered before now.
 
         `entries` yields ``(symbol_id, est_tokens, full_source)``. The returned
@@ -385,6 +386,21 @@ class _State:
         """
         repeats: list = []
         with self._lock:
+            # v1.108.202. Route the session_yield row to the store the CALLER
+            # named, the same correction v1.108.188 made for ranking_events and
+            # tool_calls: every reader takes a base path, so a writer that passes
+            # none lands in ~/.code-index no matter what storage_path the tool was
+            # handed, and the row is written to one database while measure.py
+            # reads another.
+            #
+            # Last explicit base wins. The ledger itself stays session-global
+            # because redelivery is a property of the SESSION, and partitioning it
+            # per store would change the shipped v1.108.167 already_delivered
+            # advisory. A process serving two stores therefore files its one row
+            # under the most recent one; that is disclosed rather than silently
+            # split.
+            if base_path:
+                self._delivery_base_path = base_path
             for sid, tokens, full_source in entries:
                 if not sid:
                     continue
@@ -885,7 +901,7 @@ class _State:
         self._call_count = 0
         self._write_session_stats_locked(self._build_stats_locked())
         # Opt-in and local-only; no-ops entirely unless perf telemetry is on.
-        self._persist_session_yield_locked()
+        self._persist_session_yield_locked(self._delivery_base_path)
 
     def flush(self) -> None:
         """Public flush — called at atexit."""
@@ -1339,9 +1355,9 @@ def note_edited_files(file_paths) -> None:
     _state.note_edited_files(file_paths)
 
 
-def note_delivered(entries) -> list:
+def note_delivered(entries, base_path: Optional[str] = None) -> list:
     """Record symbol deliveries; return ids already delivered this session."""
-    return _state.note_delivered(entries)
+    return _state.note_delivered(entries, base_path=base_path)
 
 
 def note_call_signature(tool_name: str, args_hash: str) -> None:

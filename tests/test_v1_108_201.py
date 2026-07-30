@@ -190,3 +190,52 @@ def test_verdict_bands(tmp_path):
         _seed(db, [(deliveries // 5, distinct // 5)] * 5)
         art = measure.collect(db)
         assert art["verdict"] == expected, art
+
+
+# ---- v1.108.202: route the row to the store the caller named ---------------
+
+
+def test_row_lands_in_the_caller_named_store(tmp_path, monkeypatch):
+    """v1.108.188's correction, applied to this writer.
+
+    Every reader takes a base path. A writer that passes none resolves through
+    _base_path -- usually None, so ~/.code-index -- and the row is written to one
+    database while the aggregator reads another. Found live: a session against a
+    CODE_INDEX_PATH store filed its row in the default store instead.
+    """
+    from jcodemunch_mcp.storage import token_tracker as tt
+
+    importlib.reload(tt)
+    monkeypatch.setattr(
+        tt._config, "get",
+        lambda key, default=None: True if key == "perf_telemetry_enabled" else default,
+    )
+    named = tmp_path / "named"
+    default = tmp_path / "default"
+    st = tt._State()
+    st._base_path = str(default)          # what _ensure_loaded would have pinned
+
+    st.note_delivered([_d("a.py::f#function")], base_path=str(named))
+    with st._lock:
+        st._persist_session_yield_locked(st._delivery_base_path)
+
+    assert _rows(named / "telemetry.db"), "row did not reach the caller-named store"
+    assert not (default / "telemetry.db").exists(), "row leaked to the default store"
+
+
+def test_no_explicit_base_still_uses_the_default(tmp_path, monkeypatch):
+    """The fallback must not become a dropped row."""
+    from jcodemunch_mcp.storage import token_tracker as tt
+
+    importlib.reload(tt)
+    monkeypatch.setattr(
+        tt._config, "get",
+        lambda key, default=None: True if key == "perf_telemetry_enabled" else default,
+    )
+    st = tt._State()
+    st._base_path = str(tmp_path)
+    st.note_delivered([_d("a.py::f#function")])
+    assert st._delivery_base_path is None
+    with st._lock:
+        st._persist_session_yield_locked(st._delivery_base_path)
+    assert _rows(tmp_path / "telemetry.db")
