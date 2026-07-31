@@ -14,6 +14,32 @@ from jcodemunch_mcp.tools.search_symbols import search_symbols, _cosine_similari
 from jcodemunch_mcp.tools.embed_repo import embed_repo, _detect_provider, _sym_text
 
 
+# ── Fixtures ─────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def no_local_onnx():
+    """Force the bundled ONNX encoder unavailable for every test in this file.
+
+    Priority 0 of `_detect_provider` is `local_onnx`, and it wins whenever
+    onnxruntime is importable and the model is on disk. Every test below is
+    about the env-var-selected providers, so on a machine with the
+    `[local-embed]` extra installed they would all see `local_onnx` instead of
+    the provider they set up -- the module docstring's "without any optional
+    dependencies installed" was an assumption about the machine, not something
+    the tests enforced. CI has no onnxruntime, so this only ever failed for
+    developers. The ONNX branch has its own coverage in
+    `test_paid_embeddings_optin.py` and `test_local_encoder.py`.
+    """
+    with patch(
+        "jcodemunch_mcp.embeddings.local_encoder.is_model_available", return_value=False
+    ), patch(
+        "jcodemunch_mcp.embeddings.local_encoder.is_onnxruntime_available",
+        return_value=False,
+    ):
+        yield
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _make_symbol(id_, name, signature="", summary="", kind="function", file="src/a.py"):
