@@ -122,6 +122,40 @@ belongs to.
 
 The headline claim is unchanged.
 
+## [1.108.207] - 2026-07-31
+
+### The first native embedding import has to happen on the main thread
+
+Ported from jdatamunch-mcp#3, reported by @MotoMato85 against jDataMunch with
+the root cause and the fix both isolated in the report. Reproduced here before
+porting, rather than assumed from the family resemblance.
+
+Over stdio on Windows, `check_embedding_drift` and `embed_repo` never returned.
+The lazy `import onnxruntime` / `import sentence_transformers` runs inside the
+`asyncio.to_thread` worker that `call_tool` dispatches into, so native DLLs load
+off the main thread while the main thread is servicing the transport. That is a
+Windows loader-lock deadlock: no error, no timeout, the call simply never
+completes. Measured with a standalone stdio `ClientSession` probe: before, no
+return past a 90s timeout; after, 1.17s.
+
+**jCodeMunch's trigger is `local_onnx`, the zero-config priority-0 provider, so
+no env var was needed to hit it** — every Windows install with the
+`[local-embed]` extra was exposed on its first semantic operation.
+
+`main()` now calls the new `warm_up_embedding_backend()` above both serve
+dispatch branches, so every transport is covered once. It imports whichever
+native backend `_detect_provider` selects, on the main thread, before any event
+loop starts. The network-backed providers load no native code and stay lazy. It
+never raises — a broken onnxruntime must not stop the server from starting — and
+`JCODEMUNCH_EAGER_EMBED_IMPORT=0` opts out. The startup cost is disclosed in the
+README's background-behavior section.
+
+jDocMunch was checked and is **not** affected: it already imports its backend
+during `initialize`, on the main thread.
+
+Tests: `tests/test_v1_108_207.py` (10), including an AST guard that the warm-up
+precedes every serve-transport dispatch.
+
 ## [1.108.206] - 2026-07-31
 
 ### `init` wrote a policy for a decision it had not made yet (#397)

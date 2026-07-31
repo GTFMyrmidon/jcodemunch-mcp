@@ -59,6 +59,51 @@ def _detect_provider() -> Optional[tuple[str, str]]:
     return None
 
 
+# ── Eager backend warm-up (Windows loader-lock guard) ──────────────────────
+
+
+def warm_up_embedding_backend() -> Optional[str]:
+    """Import the active provider's native backend on the *calling* thread.
+
+    onnxruntime and sentence-transformers/torch load native DLLs. On Windows,
+    loading those from an ``asyncio.to_thread`` worker while the main thread is
+    servicing its transport deadlocks on the loader lock: the first
+    ``embed_repo`` / ``check_embedding_drift`` call never returns
+    (jdatamunch-mcp#3, reproduced here). Doing that first import up front, on
+    the main thread before the event loop starts, sidesteps it.
+
+    Costs a few seconds of startup, so it only runs for the two providers that
+    load native code. The network-backed providers stay lazy. Set
+    ``JCODEMUNCH_EAGER_EMBED_IMPORT=0`` to opt out.
+
+    Returns the provider warmed, or None. Never raises — a missing or broken
+    install must not stop the server from starting.
+    """
+    if os.environ.get("JCODEMUNCH_EAGER_EMBED_IMPORT", "").strip() == "0":
+        return None
+
+    try:
+        detected = _detect_provider()
+    except Exception as exc:  # pragma: no cover - detection is defensive
+        logger.debug("embedding warm-up: provider detection failed: %s", exc)
+        return None
+    if detected is None:
+        return None
+
+    provider = detected[0]
+    try:
+        if provider == "local_onnx":
+            import onnxruntime  # noqa: F401
+        elif provider == "sentence_transformers":
+            import sentence_transformers  # noqa: F401
+        else:
+            return None
+    except Exception as exc:  # pragma: no cover - depends on local install
+        logger.debug("embedding warm-up skipped for %s: %s", provider, exc)
+        return None
+    return provider
+
+
 # ── Per-provider embedding functions (all lazy-imported) ───────────────────
 
 

@@ -10046,6 +10046,19 @@ def main(argv: Optional[list[str]] = None):
         except Exception:
             logger.debug("process registry: register failed", exc_info=True)
 
+        # Import the native embedding backend here, on the main thread, before
+        # any event loop starts. Deferring it to the first embed call runs it
+        # inside an asyncio.to_thread worker while the main thread services the
+        # transport, which deadlocks on the Windows loader lock and hangs the
+        # call forever (jdatamunch-mcp#3, reproduced here). Above both dispatch
+        # branches so every transport is covered once; no-op unless a native
+        # provider (local_onnx / sentence-transformers) is configured.
+        try:
+            from .tools.embed_repo import warm_up_embedding_backend
+            warm_up_embedding_backend()
+        except Exception:
+            logger.debug("embedding warm-up failed", exc_info=True)
+
         if watcher_enabled:
             # Watcher params: CLI flag > config > default
             cfg_paths = config_module.get("watch_paths", [])
