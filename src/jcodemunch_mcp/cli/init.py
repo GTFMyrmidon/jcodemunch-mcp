@@ -1,6 +1,9 @@
 """jcodemunch-mcp init — one-command onboarding for MCP clients."""
 
+import contextlib
+import functools
 import json
+import logging
 import os
 import platform
 import re
@@ -9,6 +12,8 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -91,6 +96,46 @@ Replace `<your-model-id>` with your active model:
 - GPT-4o / GPT-5 / o1 / Llama → use the model id as printed by your runner
 
 The `model=` parameter rides on the existing `plan_turn` call — it does **not** add a separate tool invocation. If `plan_turn` is not appropriate for a non-code task, call `announce_model(model="...")` once instead.
+"""
+
+# Policy for `tool_surface="counter"`, the default on a genuinely first-ever
+# install. The full policy above names ~25 tools directly; under the front door
+# the server advertises only `order`/`menu`/`route`, so that text describes calls
+# the client never offers the model. The tools stay callable by name, which is
+# why the mismatch was silent rather than loud (#397).
+#
+# Deliberately short: the point of the front door is that the agent discovers
+# capabilities at need instead of carrying 91 schemas plus a long policy in every
+# turn. Naming the workflow, not the catalogue, is what keeps that promise.
+_CLAUDE_MD_POLICY_COUNTER = """\
+## Code Exploration Policy
+
+Always use jCodeMunch-MCP for code navigation. Never fall back to Read, Grep, Glob, or Bash for code exploration.
+**Exception:** use `Read` when you are about to edit a file — the harness requires a `Read` before `Edit`/`Write`. Use jCodeMunch to *find and understand* code, then `Read` only the file you are changing.
+
+This server runs the **front door** surface: three tools reach every jCodeMunch capability, so the tool list stays small and the catalogue is fetched only when you need it.
+
+**Start any session:**
+1. `order { "action": "resolve_repo", "args": { "path": "." } }` — confirm the project is indexed. If it is not: `order { "action": "index_folder", "args": { "path": "." } }`
+
+**Then, for any task:**
+- Know what you want → `order { "action": "<name>", "args": { ... } }`
+- Know the goal, not the tool → `route { "query": "your task in a sentence" }` picks the action and shapes the arguments
+- Want to see what exists → `menu { "query": "what you are trying to do" }` returns matching actions with example arguments
+- Want the whole catalogue and the usage rules → `jcodemunch_guide`
+
+`menu` and `jcodemunch_guide` list every action this server can run, including ones absent from your tool list. That is expected: the front door is the way to call them.
+
+**Interpreting results:**
+- A `verdict` of `no_implementation_found` is evidence of absence. Report the gap; do not re-search with different wording.
+- A `verdict` of `degraded` means a channel was unavailable, so absence is NOT proven. Read the note before relying on the result.
+- `source: ""` alongside `source_status` means the body could not be read, not that the symbol is empty.
+
+**After editing files:**
+- With PostToolUse hooks installed (Claude Code), edited files are reindexed automatically.
+- Otherwise `order { "action": "register_edit", "args": { "paths": [...] } }` after an edit, batched for bulk changes.
+
+**Announce your model once per session** so the server can size its answers: `announce_model { "model": "<your-model-id>" }`.
 """
 
 _MCP_ENTRY = {
@@ -362,18 +407,104 @@ def _has_policy(path: Path) -> bool:
     return _CLAUDE_MD_MARKER in path.read_text(encoding="utf-8")
 
 
+def with_scoped_config(fn):
+    """Run *fn* with the config loaded, and leave the process as it was found.
+
+    A decorator rather than a `with` inside the body so the restore covers every
+    exit path, including the early returns and the error paths.
+    """
+    @functools.wraps(fn)
+    def _wrapped(*args, **kwargs):
+        with config_loaded_for_init():
+            return fn(*args, **kwargs)
+    return _wrapped
+
+
+@contextlib.contextmanager
+def config_loaded_for_init():
+    """Load the config for the duration of a block, then put it back.
+
+    ``load_config`` replaces process-global state. ``init`` is normally a
+    one-shot CLI where that is harmless, but it is also an importable function,
+    and swapping a host process's configuration as a side effect of writing a
+    policy file is not something a caller can be expected to anticipate.
+
+    ⚠ It is not hypothetical: adding the load made ``test_json`` fail whenever
+    an ``init`` test ran first in the same process, because the config `init`
+    materialised outlived the call. A test-ordering failure here is the cheap
+    version of the same bug a library caller would hit silently.
+    """
+    from .. import config as _cfg
+
+    saved = dict(_cfg._GLOBAL_CONFIG)
+    saved_projects = dict(_cfg._PROJECT_CONFIGS)
+    try:
+        ensure_config_loaded()
+        yield
+    finally:
+        _cfg._GLOBAL_CONFIG.clear()
+        _cfg._GLOBAL_CONFIG.update(saved)
+        _cfg._PROJECT_CONFIGS.clear()
+        _cfg._PROJECT_CONFIGS.update(saved_projects)
+
+
+def ensure_config_loaded() -> None:
+    """Materialise and load the global config before generating any guidance.
+
+    ``init`` used to read config values without ever calling ``load_config``, so
+    every lookup returned a built-in default rather than the user's file. Two
+    consequences, both reported in #397:
+
+    * A user with ``tool_profile: "core"`` still got the full-profile policy,
+      because the profile read never saw their config.
+    * On a first-ever install there is no config yet at all. The server creates
+      it on first start and a genuinely-new install gets ``tool_surface:
+      "counter"``, so ``init`` was writing guidance for a decision that had not
+      been made and would not go its way.
+
+    Loading here makes ``init`` the point where that decision is taken and
+    observed, so the config on disk and the policy written beside it come from
+    the same value instead of from two code paths that never met.
+    """
+    try:
+        from ..config import load_config
+        load_config(os.environ.get("CODE_INDEX_PATH"))
+    except Exception:
+        logger.debug("could not load config before generating policy", exc_info=True)
+
+
+def _effective_tool_surface() -> str:
+    """The tool surface this install will actually serve ("full" or "counter")."""
+    try:
+        from ..config import get as cfg_get
+        env = os.environ.get("JCODEMUNCH_TOOL_SURFACE")
+        return (env or cfg_get("tool_surface", "full") or "full").strip().lower()
+    except Exception:
+        return "full"
+
+
 def _get_active_tools() -> set[str] | None:
     """Return the set of tool names active under current config.
 
-    Applies tool_profile and disabled_tools filtering.
+    Applies tool_surface, tool_profile and disabled_tools filtering.
     Returns ``None`` when the profile is "full" and nothing is disabled
     (i.e. no filtering needed).
+
+    ⚠ Surface is checked FIRST and is not a filter over the tier: under
+    ``counter`` the server advertises only the front door, whatever the profile
+    says, so a policy naming direct tools describes calls the client cannot
+    offer the model. The tools remain callable by name, which is exactly why
+    this went unnoticed -- nothing errors, the guidance is simply unreachable
+    through the tool list.
     """
     try:
         from ..config import get as cfg_get
         from ..server import _PROFILE_TIERS, _CANONICAL_TOOL_NAMES
     except Exception:
         return None
+
+    if _effective_tool_surface() == "counter":
+        return set(_front_door_tool_names())
 
     profile = cfg_get("tool_profile", "full")
     tier = _PROFILE_TIERS.get(profile)
@@ -387,11 +518,45 @@ def _get_active_tools() -> set[str] | None:
     return active
 
 
+def _front_door_tool_names() -> set[str]:
+    """Tool names the server advertises under ``tool_surface="counter"``.
+
+    The front door itself is only three tools, but the surface it produces is
+    six: ``_ALWAYS_PRESENT_TOOLS`` survives every filter, and the policy
+    legitimately uses two of them (``announce_model`` to size answers,
+    ``jcodemunch_guide`` to discover the catalogue). Reading both from the
+    server keeps this from drifting the moment either list changes.
+    """
+    names: set[str] = set()
+    try:
+        from ..server import _ALWAYS_PRESENT_TOOLS, _counter_front_door_tools
+        names = {t.name for t in _counter_front_door_tools()}
+        names |= set(_ALWAYS_PRESENT_TOOLS)
+    except Exception:
+        logger.debug("could not read the front-door tool list", exc_info=True)
+    return names or {"order", "menu", "route", "jcodemunch_guide",
+                     "announce_model", "set_tool_tier"}
+
+
 # Regex matching tool names in backtick contexts:
 #  - `tool_name` (exact)
 #  - `tool_name { ... }` (tool with inline args)
 #  - `tool_name(...)` (tool with call syntax)
 _TOOL_REF_RE = re.compile(r"`([a-z][a-z0-9_]*)[`(\s{]")
+
+
+def active_policy() -> str:
+    """The agent policy matching the surface this install actually serves.
+
+    Every writer goes through here so the choice cannot be made two ways. Under
+    the front door the direct-tool policy is not merely over-long, it names
+    calls the client will not offer the model, so the counter policy replaces it
+    outright rather than being filtered down to the three surviving names --
+    filtering a workflow away leaves an agent with no workflow at all.
+    """
+    if _effective_tool_surface() == "counter":
+        return _CLAUDE_MD_POLICY_COUNTER
+    return _filter_policy_for_tools(_CLAUDE_MD_POLICY, _get_active_tools())
 
 
 def _filter_policy_for_tools(policy: str, active_tools: set[str] | None) -> str:
@@ -478,7 +643,7 @@ def install_claude_md(scope: str = "global", *, dry_run: bool = False, backup: b
     if backup and path.exists():
         shutil.copy2(path, path.with_suffix(".md.bak"))
 
-    policy = _filter_policy_for_tools(_CLAUDE_MD_POLICY, _get_active_tools())
+    policy = active_policy()
     with open(path, "a", encoding="utf-8") as f:
         if path.exists() and path.stat().st_size > 0:
             f.write("\n\n")
@@ -511,17 +676,18 @@ def install_cursor_rules(*, dry_run: bool = False, backup: bool = True) -> str:
     if backup and path.exists():
         shutil.copy2(path, path.with_suffix(".mdc.bak"))
 
-    active = _get_active_tools()
+    # Cursor gets the same surface-matched policy as everyone else; only the MDC
+    # frontmatter differs. Reading the policy from `active_policy` rather than
+    # re-deriving it here is what stops this writer drifting from the others.
+    policy = active_policy()
     content = _CURSOR_RULES_CONTENT
-    if active is not None:
-        # Rebuild with filtered policy (preserve MDC frontmatter)
-        filtered = _filter_policy_for_tools(_CLAUDE_MD_POLICY, active)
+    if policy != _CLAUDE_MD_POLICY:
         content = (
             "---\n"
             "description: Use jCodemunch MCP tools for all code navigation instead of built-in search\n"
             "alwaysApply: true\n"
             "---\n\n"
-        ) + filtered
+        ) + policy
     path.write_text(content, encoding="utf-8")
     return f"  wrote {path}"
 
@@ -549,7 +715,7 @@ def install_windsurf_rules(*, dry_run: bool = False, backup: bool = True) -> str
     if backup and path.exists():
         shutil.copy2(path, path.with_suffix(".windsurfrules.bak"))
 
-    policy = _filter_policy_for_tools(_CLAUDE_MD_POLICY, _get_active_tools())
+    policy = active_policy()
     with open(path, "a", encoding="utf-8") as f:
         if path.exists() and path.stat().st_size > 0:
             f.write("\n\n")
@@ -571,7 +737,7 @@ def install_agents_md(*, dry_run: bool = False, backup: bool = True) -> str:
     tier-switching convention.
     """
     target = Path.cwd() / "AGENTS.md"
-    policy = _filter_policy_for_tools(_CLAUDE_MD_POLICY, _get_active_tools())
+    policy = active_policy()
     if target.exists():
         existing = target.read_text(encoding="utf-8")
         if _CLAUDE_MD_MARKER in existing:
@@ -964,11 +1130,18 @@ def _prompt_scope(message: str) -> Optional[str]:
 # Main entry point
 # ---------------------------------------------------------------------------
 
+@with_scoped_config
 def run_init(
     *,
     clients: Optional[list[str]] = None,
     claude_md: Optional[str] = None,
-    hooks: bool = False,
+    hooks: Optional[bool] = None,
+    # True only when a HUMAN typed `--hooks`. `install <agent>` passes
+    # ``hooks=True`` as its own default and deliberately leaves this False, so
+    # `--minimal` keeps suppressing that while honouring a typed flag (#397).
+    # The signal has to come from the caller: by the time both arrive as
+    # ``hooks=True`` the two cases are indistinguishable here.
+    hooks_explicit: bool = False,
     copilot_hooks: bool = False,
     index: bool = False,
     audit: bool = False,
@@ -1001,6 +1174,7 @@ def run_init(
         dry_run = True  # demo never writes anything
     backup = not no_backup
     interactive = not yes and sys.stdin.isatty()
+    hooks = bool(hooks)
     # P1.7: --minimal forces all channels beyond MCP server registration to
     # OFF and turns off interactive prompts. Combined with --yes (which is
     # how `install <agent>` calls into run_init) this becomes a clean
@@ -1010,11 +1184,28 @@ def run_init(
     if minimal:
         interactive = False
         claude_md = "skip"
-        hooks = False
         copilot_hooks = False
         index = False
         audit = False
         skills = False
+        # `--minimal` suppresses DEFAULTS, not a choice the user typed. The two
+        # are distinguishable only because `--hooks` now parses with
+        # ``default=None``: `None` means "not specified", `True` means the user
+        # asked for it on the command line.
+        #
+        # ⚠ Both directions are load-bearing and they pull opposite ways.
+        # `install <agent> --minimal` passes ``hooks=True`` as ITS OWN default
+        # and must still install nothing (asserted by
+        # test_init_minimal.py::test_minimal_under_yes_does_not_default_anything_on).
+        # `init --minimal --hooks` is a user asking for hooks without the policy
+        # paste and must get them (#397). A plain bool cannot tell those apart,
+        # which is why a tri-state and not a reordering is the fix.
+        if not hooks_explicit:
+            hooks = False
+
+    # The config is already loaded by @with_scoped_config, before anything is
+    # generated, so the surface and the policy come from one value rather than
+    # from `init` guessing and the server deciding later (#397).
 
     if demo:
         print("\njCodeMunch init -- DEMO MODE (no changes will be made)\n")

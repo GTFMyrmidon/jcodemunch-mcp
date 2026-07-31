@@ -4228,8 +4228,9 @@ def _build_tools_list() -> list[Tool]:
                 "--generate`. Lets an agent keep a one-line CLAUDE.md (e.g. \"Call "
                 "jcodemunch_guide and strictly follow its instructions.\") instead of "
                 "pasting a static snippet that drifts from the installed version. "
-                "Idempotent, no repo context required. Honors disabled_tools and tier "
-                "filtering — list 'jcodemunch_guide' in disabled_tools to hide it."
+                "Idempotent, no repo context required. Matches the active tool "
+                "surface, tier and disabled_tools — list 'jcodemunch_guide' in "
+                "disabled_tools to hide it."
             ),
             inputSchema={
                 "type": "object",
@@ -7481,6 +7482,18 @@ def _generate_claude_md_snippet(missing_only: bool = False) -> str:
         # Fall through to full generation if CLAUDE.md doesn't exist yet
 
     # Group tools by category for readability (single source: module constant).
+    # Under the front door the server advertises order/menu/route, so a snippet
+    # naming ~90 tools directly describes calls the client never offers the
+    # model (#397). The catalogue is still reachable, via `menu` and via this
+    # guide's own listing, but the WORKFLOW an agent should follow is different,
+    # and the workflow is what a policy snippet exists to convey.
+    if not missing_only and _effective_surface() == "counter":
+        try:
+            from .cli.init import _CLAUDE_MD_POLICY_COUNTER
+            return _CLAUDE_MD_POLICY_COUNTER
+        except Exception:
+            logger.debug("front-door snippet unavailable; using the full one", exc_info=True)
+
     categories = _SNIPPET_TOOL_CATEGORIES
     from . import __version__ as _ver
     lines = [
@@ -8588,6 +8601,7 @@ def main(argv: Optional[list[str]] = None):
     init_parser.add_argument(
         "--hooks",
         action="store_true",
+        default=None,
         help="Install worktree lifecycle hooks into ~/.claude/settings.json",
     )
     init_parser.add_argument(
@@ -9419,6 +9433,9 @@ def main(argv: Optional[list[str]] = None):
             clients=args.client,
             claude_md=args.claude_md,
             hooks=args.hooks,
+            # `--hooks` parses with default=None, so True here means a human
+            # typed it. That is what survives `--minimal` (#397).
+            hooks_explicit=(args.hooks is True),
             copilot_hooks=getattr(args, "copilot_hooks", False),
             index=args.index,
             audit=args.audit,

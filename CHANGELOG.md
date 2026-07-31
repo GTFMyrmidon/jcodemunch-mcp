@@ -122,6 +122,67 @@ belongs to.
 
 The headline claim is unchanged.
 
+## [1.108.206] - 2026-07-31
+
+### `init` wrote a policy for a decision it had not made yet (#397)
+
+Reported by @n-able-consulting with a reproduction against a throwaway `HOME`
+and a raw `tools/list` probe of the same install.
+
+On a first-ever install `init` wrote a 74-line CLAUDE.md naming ~25 tools by
+name, while the server advertised the 3-tool front door. 5 of the 6 tools the
+policy actually invoked were absent from `tools/list`, at a measured 964 tokens
+of per-turn context describing a workflow the client never offered the model.
+
+**The cause was one layer below the symptom: `init` never called
+`load_config`.** Every config read returned a built-in default rather than the
+user's file, which produced both halves of the report. A user with
+`tool_profile: "core"` still got the full-profile policy, because the profile
+read never saw their config. And on a fresh install there is no config yet at
+all: the server creates it on first start, a genuinely-new install gets
+`tool_surface: "counter"`, and `init` runs first, so it was generating guidance
+for a decision that had not been taken and would not go its way.
+
+`init` now loads the config before it generates anything, which makes it the
+point where that decision is taken and observed. `_get_active_tools` reads
+`tool_surface` alongside `tool_profile` and `disabled_tools`, and every policy
+writer routes through one `active_policy()` so the choice cannot be made two
+ways.
+
+Under the front door the policy is a different document rather than a filtered
+one: 28 lines teaching `order` / `menu` / `route`, because filtering the
+direct-tool policy down to its three surviving names would leave an agent with
+no workflow at all. Measured on a fresh install after the change: **0 named
+tools absent**, against 5 of 6 before. The `full` surface keeps its existing
+74-line policy unchanged, and a test asserts that rather than only asserting the
+new behaviour.
+
+⚠ **Stated limit, because it is why this survived: hidden tools stay callable by
+name.** Nothing errored, and a direct `tools/call` on an unlisted tool still
+returns a correct result. The guidance was unreachable through the tool list,
+not broken, so no error surfaced anywhere to signal it.
+
+### `jcodemunch_guide` returned the full catalogue under the front door
+
+Its description claimed it "honors disabled_tools and tier filtering", and the
+reporter read that the natural way. The snippet body was filtered by neither
+those nor the surface, so an agent that kept the recommended one-line CLAUDE.md
+was handed direct-tool guidance on a server that advertises three tools. It now
+returns the workflow matching the active surface, and the description says which.
+
+### `--minimal --hooks` installed no hooks
+
+`--minimal` assigned `hooks = False` over a value the caller had already set, so
+a hardened install that wanted hooks without the policy paste had to let `init`
+write the sections and delete them afterwards.
+
+⚠ **The obvious fix breaks the opposite contract.** `install <agent> --minimal`
+passes `hooks=True` as its own hardcoded default and must still install nothing,
+which `tests/test_init_minimal.py` already asserted. A plain bool cannot separate
+a caller's default from a flag a human typed, so `--hooks` now parses with
+`default=None` and the CLI passes `hooks_explicit`. Both directions are pinned by
+tests that pull opposite ways.
+
 ## [1.108.205] - 2026-07-31
 
 ### Starter packs now say whose code they contain, and under what terms
