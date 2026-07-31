@@ -337,17 +337,17 @@ written. Size context for the eventual decision: that pack is 10.6 MB of `.db`
 against a Node checkout in the hundreds of MB, so carrying bodies is a different
 product rather than a larger zip.
 
-⚠⚠ **The pack path fails SILENTLY today, and that is a live defect in a shipped
-free product rather than a gap in an unbuilt feature.** A real call against the
-installed pack returns the symbol's name, line, signature, docstring and
-`content_hash` alongside `"source": ""`, under `_freshness: "fresh"` and
-`_meta.verdict: {"state": "ok", "note": "Confident matches returned."}`. That is
-the exact false-confidence shape the #377 evidence work exists to prevent.
-`tools/get_symbol.py` collapses the missing body at `display_source = source or ""`.
-**Fixing the refusal is separable from, and precedes, any `--from` design**: it
-ships alone, it helps anyone whose content cache was pruned or copied without its
-sibling directory, and the `content_hash` already present in the response is the
-natural hook for naming what could not be produced.
+✅ **The silent half of this is FIXED in v1.108.204** and shipped on its own, ahead
+of any `--from` design. The pack path used to return the symbol's name, line,
+signature, docstring and `content_hash` alongside `"source": ""` under
+`_freshness: "fresh"` and `_meta.verdict: {"state": "ok", "note": "Confident
+matches returned."}`. A resolved symbol whose body cannot be read now carries
+`source_status: "content_cache_missing"` and degrades the verdict, in
+`get_symbol_source` and `get_context_bundle` alike.
+
+**What remains open here is the artifact question, not the reporting one:**
+whether a pack should carry the content cache at all. The tool now says what it
+cannot produce; it still cannot produce it.
 
 **Close condition.** A seat installs an index built by a CI job it controls, from
 a host it controls, and every tool that works against a locally built index works
