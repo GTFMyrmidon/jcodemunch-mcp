@@ -96,6 +96,29 @@ def test_list_packs_shows_entries(mock_httpx, capsys):
 
 
 @patch("jcodemunch_mcp.cli.install_pack.httpx")
+def test_listed_download_url_ignores_the_servers_own_field(mock_httpx, capsys):
+    """The printed URL is the one install-pack will fetch, not the catalog's.
+
+    A server that still advertises a retired host would otherwise put that
+    address on the user's screen, where it is the line they copy -- the same
+    stale-host defect surfacing through a printed string instead of a request.
+    """
+    mock_httpx.get.return_value = _mock_catalog_response([
+        {
+            "id": "fastapi",
+            "name": "FastAPI Starter",
+            "symbols": 5000,
+            "free": True,
+            "download_url": "https://retired.example/old/index.php?action=download&pack=fastapi",
+        },
+    ])
+    assert _list_packs() == 0
+    out = capsys.readouterr().out
+    assert "retired.example" not in out
+    assert f"{STARTER_PACK_API}?action=download&pack=fastapi" in out
+
+
+@patch("jcodemunch_mcp.cli.install_pack.httpx")
 def test_list_packs_network_error(mock_httpx):
     import httpx as real_httpx
     mock_httpx.HTTPError = real_httpx.HTTPError

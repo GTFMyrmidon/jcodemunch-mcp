@@ -677,6 +677,7 @@ def symbol_verdict_for_index(
     *,
     found_count: int,
     requested_id: Optional[str] = None,
+    unavailable_source_count: int = 0,
 ) -> dict:
     """Index-aware wrapper over :func:`build_symbol_verdict`."""
     verdict = build_symbol_verdict(
@@ -685,6 +686,7 @@ def symbol_verdict_for_index(
         symbols=getattr(index, "symbols", None) if found_count == 0 else None,
         index_stale=_index_is_stale(index),
         index_changed=index_changed_since_load(index),
+        unavailable_source_count=unavailable_source_count,
     )
     _attach_coverage(verdict, index_coverage_meta(index))
     return verdict
@@ -771,12 +773,21 @@ def build_symbol_verdict(
     symbols: Optional[Sequence[dict]] = None,
     index_stale: bool = False,
     index_changed: bool = False,
+    unavailable_source_count: int = 0,
 ) -> dict:
     """`_meta.verdict` for ``get_symbol_source``.
 
     ``found_count == 0`` yields ``absent`` plus ``did_you_mean`` symbol ids that
     share the requested name; any resolved symbol yields ``ok`` (a partial batch
     is still a hit).
+
+    ``unavailable_source_count`` is the number of resolved symbols whose body
+    could not be read back. Resolving a symbol and producing its source are two
+    different successes, and an index can do the first without the second: the
+    row lives in the ``.db`` while the bytes live in a separate content
+    directory. When that directory is absent the tool used to return the row
+    with ``source: ""`` under ``state: ok``, which asserts an answer it does not
+    have. A body it cannot produce makes the result degraded.
     """
     if found_count == 0 and index_changed:
         # jdoc/jcm #93 class: a rebuild deletes and reinserts rows, so a
@@ -789,6 +800,17 @@ def build_symbol_verdict(
         state = STATE_ABSENT
         note = "Symbol id is not in the index. " + _NOTES[STATE_ABSENT]
         suggestions = suggest_symbol_ids(requested_id, symbols)
+    elif unavailable_source_count > 0:
+        state = STATE_DEGRADED
+        plural = "s" if unavailable_source_count != 1 else ""
+        note = (
+            f"{unavailable_source_count} symbol{plural} resolved but the body could not "
+            "be read: the cached file content is missing for that path. Signatures, "
+            "docstrings and line ranges are accurate; `source` is empty because it is "
+            "unavailable, NOT because the symbol is empty. Re-index the repo to "
+            "rebuild the content cache."
+        )
+        suggestions = []
     else:
         state = STATE_OK
         note = _NOTES[STATE_OK]
@@ -801,6 +823,9 @@ def build_symbol_verdict(
         },
         "note": note,
     }
+    if unavailable_source_count > 0:
+        verdict["channels"]["content_cache"] = "missing"
+        verdict["unavailable_source_count"] = unavailable_source_count
     if suggestions:
         verdict["did_you_mean"] = suggestions
     return verdict

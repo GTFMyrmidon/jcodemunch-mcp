@@ -274,6 +274,7 @@ def get_symbol_source(
 
     symbols_out = []
     errors_out = []
+    unavailable_source_ids: list = []
     seen_files: set = set()
     raw_bytes = 0
     response_bytes = 0
@@ -366,6 +367,19 @@ def get_symbol_source(
                     entry["source_status"] = "metadata_only_mode"
             except Exception:
                 pass
+            # `None` means the content file could not be read at all, which is a
+            # different fact from a zero-length body: an index whose content
+            # cache was pruned, copied without its sibling directory, or never
+            # shipped (a starter pack carries `.db` files only) resolves the row
+            # and cannot produce the bytes. Left unlabeled, the empty string
+            # reads as the symbol's actual source under a confident verdict.
+            if source is None and "source_status" not in entry:
+                entry["source_status"] = "content_cache_missing"
+                entry["source_unavailable_reason"] = (
+                    f"No cached content for {symbol['file']} under {content_dir}. "
+                    "Re-index the repo to rebuild it."
+                )
+                unavailable_source_ids.append(symbol["id"])
         if context_before:
             entry["context_before"] = context_before
         if context_after:
@@ -429,7 +443,10 @@ def get_symbol_source(
             index,
             found_count=len(symbols_out),
             requested_id=(ids[0] if len(ids) == 1 else None),
+            unavailable_source_count=len(unavailable_source_ids),
         )
+        if unavailable_source_ids:
+            meta["unavailable_source_ids"] = unavailable_source_ids
         if _runtime_summary:
             meta["runtime_freshness"] = _runtime_summary
         return {"symbols": symbols_out, "errors": errors_out, "_meta": meta}
@@ -443,7 +460,10 @@ def get_symbol_source(
     result = symbols_out[0]
     meta["hint"] = "Use get_context_bundle(symbol_id) to retrieve source + imports in one call"
     meta["verdict"] = symbol_verdict_for_index(
-        index, found_count=len(symbols_out), requested_id=symbol_id
+        index,
+        found_count=len(symbols_out),
+        requested_id=symbol_id,
+        unavailable_source_count=len(unavailable_source_ids),
     )
     meta["freshness"] = _probe.summary(symbols_out)
     if _runtime_summary:

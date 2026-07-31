@@ -122,6 +122,53 @@ belongs to.
 
 The headline claim is unchanged.
 
+## [1.108.204] - 2026-07-30
+
+### A body the index cannot produce is now reported instead of returned as `""`
+
+Resolving a symbol and producing its source are two different successes, and an
+index can manage the first without the second: the row lives in the `.db` while
+the bytes live in a separate content directory. When that directory is missing,
+`get_symbol_source` returned the row with `source: ""` under
+`_meta.verdict.state: "ok"`, `channels.index: "fresh"` and the note "Confident
+matches returned." Every field except the one the caller asked for was correct,
+and nothing said so.
+
+Measured against the published `nodejs` starter pack, installed into an empty
+store with none of its repos checked out: bodies came back for **0 of 50**
+symbols, each one under a confident verdict. Starter packs carry `.db` files
+only, so every pack install has this shape, but the pack is only the loudest
+case. A pruned cache, or a `.db` copied without its sibling directory, produces
+it too.
+
+A resolved symbol whose body cannot be read now carries
+`source_status: "content_cache_missing"` plus a `source_unavailable_reason`
+naming the path and the fix, and the verdict degrades: `state: "degraded"`,
+`channels.content_cache: "missing"`, `unavailable_source_count`, and a note that
+says in words that the empty string means unavailable rather than empty. Batch
+mode adds `_meta.unavailable_source_ids`. The row itself is still returned in
+full, because signature, line range and docstring come from the `.db` and are
+accurate; refusing the body is not refusing the answer.
+
+`get_context_bundle` gets the same label. It is what `get_symbol_source`'s own
+hint points callers to, so fixing one and not the other would have moved the
+defect one call to the right rather than closing it.
+
+⚠ This distinguishes `None` (could not read) from `""` (read, and empty), so a
+genuinely zero-length body is untouched. A healthy store is byte-for-byte what it
+was, and a test asserts that rather than only asserting the new behaviour.
+
+### `install-pack --list` printed a URL it was not going to use
+
+The catalog rows showed the server's own `download_url` field, which the live
+PHP still composes from the retired host. The download itself was already
+correct after v1.108.203, so the tool fetched from one place and printed
+another, and the printed line is the one a user copies. It is now composed from
+`STARTER_PACK_API`, so it is the URL `install-pack` will actually fetch, by
+construction. A stale server can no longer put a wrong address on the screen.
+
+The server-side `get_license` link in the 403 body is a separate fix on the host.
+
 ## [1.108.203] - 2026-07-30
 
 ### `install-pack` was downloading from a host nobody was updating
