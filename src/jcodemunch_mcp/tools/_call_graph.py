@@ -102,6 +102,62 @@ class _ContentCache:
         return cached
 
 
+class _CalleeNameIndex:
+    """Per-traversal memo of the callee ``name -> definitions`` map.
+
+    ``symbols_by_file`` is invariant during one traversal, yet
+    ``_callees_from_references`` rebuilt this whole-repository map on every
+    visited node carrying call references: O(nodes x symbols) where O(symbols)
+    would do. @rknighton measured the traversal, not the function
+    (`direction="both"`, `depth=3`, session result cache invalidated per
+    sample, 22 pairs): django 9.25s -> 1.26s (45,561 symbols, 244 nodes with
+    references), fastapi 399ms -> 315ms, and a Q=1 express control whose 99%
+    interval on the paired saving spans zero. **The gain scales with the number
+    of nodes that resolve callees; a small or narrow traversal sees none.**
+
+    Built on FIRST LOOKUP, never in ``__init__``. ``symbols_by_file`` is built
+    before the direction branch in ``get_call_hierarchy``, so an eager build
+    would charge a full symbol pass to ``direction="callers"``, which never
+    resolves a callee.
+
+    Entries are ``(container_path, symbol)`` where *container_path* is the
+    ``symbols_by_file`` KEY, not ``symbol["file"]``. ``build_symbols_by_file``
+    makes those agree, but a caller-supplied mapping need not, and resolving
+    through the key is what keeps this byte-identical to the scan it replaces
+    rather than merely equivalent on well-formed input.
+
+    Threaded in as an optional argument so direct callers of the finders keep
+    their original behavior, exactly like ``_ContentCache``.
+    """
+
+    __slots__ = ("_symbols_by_file", "_index")
+
+    def __init__(self, symbols_by_file: dict[str, list[dict]]):
+        self._symbols_by_file = symbols_by_file
+        self._index: Optional[dict[str, list[tuple[str, dict]]]] = None
+
+    def matches(self, symbols_by_file: dict[str, list[dict]]) -> bool:
+        """Whether this memo was built over *symbols_by_file* itself.
+
+        A cache handed down a call chain must not answer for a different
+        mapping than the one the caller is resolving against. Identity, not
+        equality: the point is to catch a threading mistake, not to pay for a
+        deep comparison on every node.
+        """
+        return self._symbols_by_file is symbols_by_file
+
+    def get(self, name: str) -> list[tuple[str, dict]]:
+        if self._index is None:
+            built: dict[str, list[tuple[str, dict]]] = {}
+            for file_path, syms in self._symbols_by_file.items():
+                for s in syms:
+                    s_name = s.get("name", "")
+                    if s_name:
+                        built.setdefault(s_name, []).append((file_path, s))
+            self._index = built
+        return self._index.get(name, [])
+
+
 # ---------------------------------------------------------------------------
 # Direct caller / callee finders
 # ---------------------------------------------------------------------------
@@ -159,23 +215,22 @@ def _callees_from_references(
     index: "CodeIndex",
     sym: dict,
     symbols_by_file: dict[str, list[dict]],
+    callee_index: Optional["_CalleeNameIndex"] = None,
 ) -> list[dict]:
     """Return callees using stored call_references data (AST-based).
 
     Resolves the names in sym.call_references to actual symbol dicts.
     Uses a name→symbols index for O(1) lookup instead of O(N) scan.
+
+    Pass *callee_index* (a ``_CalleeNameIndex``) to share that map across a BFS
+    traversal; when omitted, it is built per call as before.
     """
     call_refs = sym.get("call_references", [])
     if not call_refs:
         return []
 
-    # Build name → list[(name, file_path)] index for O(1) cross-file lookup
-    name_index: dict[str, list[tuple[str, str]]] = {}
-    for file_path, syms in symbols_by_file.items():
-        for s in syms:
-            name = s.get("name", "")
-            if name:
-                name_index.setdefault(name, []).append((name, file_path))
+    if callee_index is None or not callee_index.matches(symbols_by_file):
+        callee_index = _CalleeNameIndex(symbols_by_file)
 
     sym_name = sym.get("name", "")
     sym_file = sym.get("file", "")
@@ -186,42 +241,45 @@ def _callees_from_references(
         # Skip self-recursion
         if called_name == sym_name:
             continue
-        # Look up in the same file first (local calls)
+        definitions = callee_index.get(called_name)
+        # Look up in the same file first (local calls). EVERY same-named
+        # definition in that file is emitted — the duplicate-name behavior here
+        # is deliberately asymmetric with the cross-file branch below, and
+        # collapsing it to one match would look like a speedup and be a
+        # regression.
         if sym_file:
-            for name, file_path in name_index.get(called_name, []):
-                if file_path == sym_file:
-                    cand = symbols_by_file[sym_file]
-                    for s in cand:
-                        if s.get("name") == called_name:
-                            cid = s.get("id", "")
-                            if cid and cid not in seen_ids:
-                                seen_ids.add(cid)
-                                results.append({
-                                    "id": cid,
-                                    "name": called_name,
-                                    "kind": s.get("kind", ""),
-                                    "file": sym_file,
-                                    "line": s.get("line", 0),
-                                    "resolution": "ast_resolved",
-                                })
-                    break
-        # Also look in other files (imported calls)
-        for name, file_path in name_index.get(called_name, []):
-            if file_path != sym_file:
-                for s in symbols_by_file.get(file_path, []):
-                    if s.get("name") == called_name:
-                        cid = s.get("id", "")
-                        if cid and cid not in seen_ids:
-                            seen_ids.add(cid)
-                            results.append({
-                                "id": cid,
-                                "name": called_name,
-                                "kind": s.get("kind", ""),
-                                "file": file_path,
-                                "line": s.get("line", 0),
-                                "resolution": "ast_inferred",
-                            })
-                        break
+            for container, s in definitions:
+                if container != sym_file:
+                    continue
+                cid = s.get("id", "")
+                if cid and cid not in seen_ids:
+                    seen_ids.add(cid)
+                    results.append({
+                        "id": cid,
+                        "name": called_name,
+                        "kind": s.get("kind", ""),
+                        "file": sym_file,
+                        "line": s.get("line", 0),
+                        "resolution": "ast_resolved",
+                    })
+        # Also look in other files (imported calls) — the FIRST definition per
+        # file only, in first-appearance order.
+        seen_files: set[str] = set()
+        for container, s in definitions:
+            if container == sym_file or container in seen_files:
+                continue
+            seen_files.add(container)
+            cid = s.get("id", "")
+            if cid and cid not in seen_ids:
+                seen_ids.add(cid)
+                results.append({
+                    "id": cid,
+                    "name": called_name,
+                    "kind": s.get("kind", ""),
+                    "file": container,
+                    "line": s.get("line", 0),
+                    "resolution": "ast_inferred",
+                })
 
     return results
 
@@ -520,6 +578,7 @@ def find_direct_callees(
     sym: dict,
     symbols_by_file: dict[str, list[dict]],
     content_cache: Optional["_ContentCache"] = None,
+    callee_index: Optional["_CalleeNameIndex"] = None,
 ) -> list[dict]:
     """Return symbols from imported files whose names appear in *sym*'s body.
 
@@ -527,6 +586,8 @@ def find_direct_callees(
 
     Pass *content_cache* (a ``_ContentCache``) to share file reads across a BFS
     traversal; when omitted, files are read directly per call as before.
+    Pass *callee_index* (a ``_CalleeNameIndex``) to share the callee name map
+    the same way; when omitted, it is built per call as before.
     """
     # Dispatch callees (interface → concrete impls) take highest priority
     dispatch_cls = _dispatch_callees(index, sym, symbols_by_file)
@@ -540,7 +601,9 @@ def find_direct_callees(
     # Fast path: use AST-derived call_references if available
     call_refs = sym.get("call_references", [])
     if call_refs:
-        ast_callees = _callees_from_references(index, sym, symbols_by_file)
+        ast_callees = _callees_from_references(
+            index, sym, symbols_by_file, callee_index
+        )
         # Merge: dispatch + LSP results override AST results for same symbol
         merged = list(dispatch_cls) + list(lsp_callees)
         for c in ast_callees:
@@ -680,8 +743,9 @@ def bfs_callees(
     depth_reached = 0
     symbol_index: dict[str, dict] = getattr(index, "_symbol_index", {})
     content_cache = _ContentCache(store, owner, repo_name)
+    callee_index = _CalleeNameIndex(symbols_by_file)
 
-    for c in find_direct_callees(index, store, owner, repo_name, sym, symbols_by_file, content_cache):
+    for c in find_direct_callees(index, store, owner, repo_name, sym, symbols_by_file, content_cache, callee_index):
         if c["id"] not in visited:
             visited.add(c["id"])
             results.append({**c, "depth": 1})
@@ -696,7 +760,7 @@ def bfs_callees(
         curr_full = symbol_index.get(curr_dict["id"])
         if not curr_full:
             continue
-        for c in find_direct_callees(index, store, owner, repo_name, curr_full, symbols_by_file, content_cache):
+        for c in find_direct_callees(index, store, owner, repo_name, curr_full, symbols_by_file, content_cache, callee_index):
             if c["id"] not in visited:
                 visited.add(c["id"])
                 new_depth = curr_depth + 1

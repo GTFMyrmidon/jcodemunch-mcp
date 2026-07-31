@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 from ..storage import IndexStore
 from ._utils import resolve_repo
-from ._call_graph import build_symbols_by_file, find_direct_callees
+from ._call_graph import _CalleeNameIndex, build_symbols_by_file, find_direct_callees
 from .flow_edges import resolve_flow_edges
 
 
@@ -201,6 +201,7 @@ def _bfs_chain(
     gateway_sym: dict,
     symbols_by_file: dict[str, list[dict]],
     max_depth: int,
+    callee_index=None,
 ) -> tuple[list[dict], int]:
     """BFS forward from a gateway through callees.
 
@@ -217,7 +218,10 @@ def _bfs_chain(
     symbol_index: dict[str, dict] = getattr(index, "_symbol_index", {})
 
     # Depth-1 callees
-    for c in find_direct_callees(index, store, owner, repo_name, gateway_sym, symbols_by_file):
+    for c in find_direct_callees(
+        index, store, owner, repo_name, gateway_sym, symbols_by_file,
+        None, callee_index,
+    ):
         if c["id"] not in visited:
             visited.add(c["id"])
             chain.append({**c, "depth": 1})
@@ -232,7 +236,10 @@ def _bfs_chain(
         curr_full = symbol_index.get(curr_dict["id"])
         if not curr_full:
             continue
-        for c in find_direct_callees(index, store, owner, repo_name, curr_full, symbols_by_file):
+        for c in find_direct_callees(
+            index, store, owner, repo_name, curr_full, symbols_by_file,
+            None, callee_index,
+        ):
             if c["id"] not in visited:
                 visited.add(c["id"])
                 new_depth = curr_depth + 1
@@ -296,6 +303,10 @@ def get_signal_chains(
 
     source_files = frozenset(index.source_files)
     symbols_by_file = build_symbols_by_file(index)
+    # Built ONCE for the whole run, not per gateway: _bfs_chain runs its own BFS
+    # loop rather than going through bfs_callees, so a cache scoped inside the
+    # traversal would rebuild the map for every gateway this repo has.
+    callee_index = _CalleeNameIndex(symbols_by_file)
 
     # ------------------------------------------------------------------
     # Phase 1: detect all gateways
@@ -391,6 +402,7 @@ def get_signal_chains(
     for gw_sym, gw_kind, gw_label in gateways:
         chain_syms, depth_reached = _bfs_chain(
             index, store, owner, name, gw_sym, symbols_by_file, max_depth,
+            callee_index,
         )
 
         gw_id = gw_sym.get("id", "")

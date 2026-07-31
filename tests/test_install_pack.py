@@ -119,6 +119,36 @@ def test_listed_download_url_ignores_the_servers_own_field(mock_httpx, capsys):
 
 
 @patch("jcodemunch_mcp.cli.install_pack.httpx")
+def test_list_packs_names_the_upstream_licence(mock_httpx, capsys):
+    """A pack is somebody else's source, indexed. Name the terms before the
+    download, not only in a file the user finds afterwards."""
+    mock_httpx.get.return_value = _mock_catalog_response([
+        {
+            "id": "nodejs", "name": "Node", "symbols": 100, "free": True,
+            "licenses": [
+                {"repo": "nodejs/node", "spdx": "MIT"},
+                {"repo": "django/django", "spdx": "BSD-3-Clause"},
+                {"repo": "expressjs/express", "spdx": "MIT"},
+            ],
+        },
+    ])
+    assert _list_packs() == 0
+    out = capsys.readouterr().out
+    assert "Upstream licence: BSD-3-Clause, MIT" in out, "deduped and sorted"
+
+
+@patch("jcodemunch_mcp.cli.install_pack.httpx")
+def test_list_packs_silent_when_catalog_has_no_licences(mock_httpx, capsys):
+    """Forward-compatible: a catalog built before this field must not print a
+    blank or a guess."""
+    mock_httpx.get.return_value = _mock_catalog_response([
+        {"id": "nodejs", "name": "Node", "symbols": 100, "free": True},
+    ])
+    assert _list_packs() == 0
+    assert "Upstream licence" not in capsys.readouterr().out
+
+
+@patch("jcodemunch_mcp.cli.install_pack.httpx")
 def test_list_packs_network_error(mock_httpx):
     import httpx as real_httpx
     mock_httpx.HTTPError = real_httpx.HTTPError
@@ -159,6 +189,44 @@ def _mock_error_response(error_msg: str, extra: dict | None = None):
     resp.json.return_value = body
     resp.raise_for_status = MagicMock()
     return resp
+
+
+@patch("jcodemunch_mcp.cli.install_pack.httpx")
+def test_install_extracts_and_reports_the_upstream_licences(
+    mock_httpx, tmp_path, monkeypatch, capsys
+):
+    """The licence text must land on disk and be pointed at, not merely bundled.
+
+    A pack redistributes third-party source; the terms travel with it, and the
+    user should not have to go looking to find out what they are.
+    """
+    monkeypatch.setenv("JCODEMUNCH_SHARE_SAVINGS", "0")
+    manifest = {
+        "name": "Node", "total_symbols": 42, "repos": ["nodejs/node"],
+        "licenses": [{
+            "repo": "nodejs/node", "spdx": "MIT",
+            "files": ["licenses/nodejs-node/LICENSE"],
+            "digest": "abc", "commit": "deadbeef",
+        }],
+    }
+    zip_bytes = _make_pack_zip({
+        "manifest.json": json.dumps(manifest).encode(),
+        "nodejs-node.db": b"fake-index-data",
+        "licenses/nodejs-node/LICENSE": b"Node.js is licensed for use as follows:",
+    })
+    mock_httpx.get.return_value = _mock_zip_response(zip_bytes)
+
+    assert _install_pack("nodejs", base_path=tmp_path) == 0
+
+    landed = tmp_path / "licenses" / "nodejs-node" / "LICENSE"
+    assert landed.exists(), "licence text must be extracted, not just carried"
+    assert landed.read_bytes().startswith(b"Node.js is licensed")
+
+    out = capsys.readouterr().out
+    assert "nodejs/node: MIT" in out
+    # And the marker records the terms this install happened under.
+    marker = json.loads((tmp_path / ".pack-nodejs.json").read_text(encoding="utf-8"))
+    assert marker["licenses"][0]["commit"] == "deadbeef"
 
 
 @patch("jcodemunch_mcp.cli.install_pack.httpx")

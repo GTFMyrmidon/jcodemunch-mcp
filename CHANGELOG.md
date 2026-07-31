@@ -122,6 +122,43 @@ belongs to.
 
 The headline claim is unchanged.
 
+## [1.108.205] - 2026-07-31
+
+### Starter packs now say whose code they contain, and under what terms
+
+Every packed repo is third-party open source and nine of the ten packs are sold,
+so a pack redistributes someone else's work commercially. It had been shipping
+docstrings, which are verbatim source text, with no attribution attached at all.
+
+The build pipeline now carries each upstream's licence and attribution files
+byte-for-byte inside the archive under `licenses/<owner>-<name>/`, and records
+per repo the SPDX id, the files carried, a digest over them, and the commit the
+pack was built from. `install-pack` extracts them alongside the index, prints
+the terms and where the full text landed, and the install marker keeps the
+record. `install-pack --list` names the licences before a download rather than
+only after one.
+
+Both displays stay silent against a catalog or pack built before this field
+exists, so an older pack prints nothing rather than a guess.
+
+Checking rather than assuming changed two of the fifteen answers. `nodejs/node`
+ships a 157 KB compendium, MIT for Node itself followed by the licences of every
+bundled dependency (V8, ICU, OpenSSL and others), and
+`modelcontextprotocol/typescript-sdk` is mid-relicensing from MIT to Apache-2.0
+with per-contribution status varying and documentation under CC-BY-4.0. GitHub's
+own detector returns `NOASSERTION` for both; a transcription would have recorded
+each as plain MIT.
+
+The pipeline side lives in `jgravelle/jcodemunch-starter-packs`, where the
+builder also refuses to package a repo that has no licence at its root, or one
+whose attribution bytes moved since the last build. A blocked pack keeps
+shipping its previous build, which is the safe direction: we already held the
+rights that one was built under.
+
+⚠ The pre-download line depends on the serving API passing the field through,
+which is a separate deploy. Until that lands the post-install report is the one
+that works, and `--list` simply omits the line.
+
 ## [1.108.204] - 2026-07-30
 
 ### A body the index cannot produce is now reported instead of returned as `""`
