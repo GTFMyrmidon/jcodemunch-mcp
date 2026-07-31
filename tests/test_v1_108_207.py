@@ -29,6 +29,28 @@ ONNX_INSTALLED = importlib.util.find_spec("onnxruntime") is not None
 ST_INSTALLED = importlib.util.find_spec("sentence_transformers") is not None
 
 
+@pytest.fixture
+def fake_backends(monkeypatch):
+    """Make the native backend imports succeed without the real libraries.
+
+    CI installs neither onnxruntime nor sentence-transformers (torch is ~2 GB),
+    so gating the success path on them would leave the point of this fix
+    unverified everywhere it actually runs. Stubs stand in where the real
+    library is absent; `test_warms_the_real_*` below keep the non-vacuity check
+    on machines that have them.
+    """
+    import sys
+    import types
+
+    for name, installed in (
+        ("onnxruntime", ONNX_INSTALLED),
+        ("sentence_transformers", ST_INSTALLED),
+    ):
+        if not installed:
+            monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    yield
+
+
 # ── warm_up_embedding_backend ──────────────────────────────────────────────
 
 
@@ -50,8 +72,7 @@ class TestWarmUp:
         monkeypatch.setattr(embed_repo, "_detect_provider", lambda: ("local_onnx", "m"))
         assert warm_up_embedding_backend() is None
 
-    @pytest.mark.skipif(not ONNX_INSTALLED, reason="onnxruntime not installed")
-    def test_warms_local_onnx(self, monkeypatch):
+    def test_warms_local_onnx(self, monkeypatch, fake_backends):
         import sys
 
         monkeypatch.delenv("JCODEMUNCH_EAGER_EMBED_IMPORT", raising=False)
@@ -59,8 +80,7 @@ class TestWarmUp:
         assert warm_up_embedding_backend() == "local_onnx"
         assert "onnxruntime" in sys.modules
 
-    @pytest.mark.skipif(not ST_INSTALLED, reason="sentence-transformers not installed")
-    def test_warms_sentence_transformers(self, monkeypatch):
+    def test_warms_sentence_transformers(self, monkeypatch, fake_backends):
         import sys
 
         monkeypatch.delenv("JCODEMUNCH_EAGER_EMBED_IMPORT", raising=False)
@@ -69,6 +89,16 @@ class TestWarmUp:
         )
         assert warm_up_embedding_backend() == "sentence_transformers"
         assert "sentence_transformers" in sys.modules
+
+    @pytest.mark.skipif(not ONNX_INSTALLED, reason="onnxruntime not installed")
+    def test_warms_the_real_onnxruntime(self, monkeypatch):
+        """Non-vacuity for the stubbed pair above, on a machine that has it."""
+        import sys
+
+        monkeypatch.delenv("JCODEMUNCH_EAGER_EMBED_IMPORT", raising=False)
+        monkeypatch.setattr(embed_repo, "_detect_provider", lambda: ("local_onnx", "m"))
+        assert warm_up_embedding_backend() == "local_onnx"
+        assert "onnxruntime" in sys.modules
 
     def test_detection_failure_does_not_stop_startup(self, monkeypatch):
         def boom():
