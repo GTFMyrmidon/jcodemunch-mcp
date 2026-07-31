@@ -159,6 +159,58 @@ rights that one was built under.
 which is a separate deploy. Until that lands the post-install report is the one
 that works, and `--list` simply omits the line.
 
+### Call-graph traversals stop rebuilding the same map at every node
+
+Reported and measured by @rknighton in
+[#396](https://github.com/jgravelle/jcodemunch-mcp/issues/396), with 636 raw
+timing rows attached.
+
+`_callees_from_references` rebuilt a whole-repository `name -> definitions` map
+on every visited node carrying call references, making a traversal
+O(nodes x symbols) where O(symbols) would do. `_CalleeNameIndex` memoises it for
+the life of one traversal, built on first lookup rather than in `__init__` so
+`direction="callers"` -- which never resolves a callee -- is not charged a full
+symbol pass.
+
+Measured by @rknighton across the traversal rather than the function
+(`direction="both"`, `depth=3`, session result cache invalidated per sample, 22
+pairs): django 9.25s to 1.26s over 45,561 symbols and 244 reference-carrying
+nodes, fastapi 399ms to 315ms. ⚠ **Stated limit, kept from the measurement: a
+`Q=1` express control's 99% interval on the paired saving spans zero. The gain
+tracks the number of nodes that actually resolve callees, so a small or narrow
+traversal sees none of it.**
+
+Reproduced against jCodeMunch's own index (12,484 symbols), baseline produced by
+disabling the memo's identity check so every node rebuilds exactly as 1.108.204
+did, interleaved order, 7 pairs: `finalize_handoff` (122 callees) 2075.6ms to
+899.3ms, and a low-fan-out control at 710.5ms to 631.0ms whose minima overlap.
+Result shapes identical in both arms.
+
+The memo is threaded through as an optional argument, so direct callers of the
+finders keep their original behaviour -- the same shape as `_ContentCache`. It
+keys entries on the `symbols_by_file` key rather than `symbol["file"]`, which is
+what makes it byte-identical to the scan it replaces rather than merely
+equivalent on well-formed input, and it identity-checks the mapping it was built
+over so a threading mistake cannot make it answer for a different one.
+
+`get_signal_chains` gets it too, built once for the whole run rather than inside
+`_bfs_chain`: that path runs its own BFS loop instead of going through
+`bfs_callees`, so a traversal-scoped memo would have rebuilt per gateway. This is
+the coverage @rknighton's level C was for, without the generation-lifetime
+memory, single-flight construction, and invalidation rule that storing it on
+`CodeIndex` would have required.
+
+Correctness is held against an oracle -- 1.108.204's `_callees_from_references`
+copied verbatim -- compared list-for-list over 3,000 randomized fixtures plus
+adversarial ones, because the duplicate-name behaviour here is deliberately
+asymmetric (same-file emits every definition, cross-file the first per file) and
+a faster lookup returning one same-file match would read as a win and be a
+regression.
+
+⚠ This landed in the release commit through a `git add` that swept a directory
+rather than named files, so it ships here rather than in the version its tests
+are named for. The work itself is complete and its 17 tests pass.
+
 ## [1.108.204] - 2026-07-30
 
 ### A body the index cannot produce is now reported instead of returned as `""`
