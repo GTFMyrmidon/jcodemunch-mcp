@@ -122,6 +122,48 @@ belongs to.
 
 The headline claim is unchanged.
 
+## [1.108.203] - 2026-07-30
+
+### `install-pack` was downloading from a host nobody was updating
+
+The starter-pack pipeline builds ten packs and deploys them to `jcodemunch.com`.
+The shipped client asked a legacy host, `j.gravelle.us`, which stopped being
+refreshed. Anyone running `install-pack nodejs` today received an artifact built
+**2026-04-08**, three months behind the one CI had published, and the two hosts
+had drifted far enough apart that the counts no longer agreed: `spring-boot`
+served 33,977 symbols against 8,313 in the current build.
+
+Nothing in the product could tell the difference. The stale host returned a 200,
+a well-formed catalog, a valid zip, a manifest and a plausible symbol count, so
+every signal a user could reach said the download had worked. It also survived a
+green pipeline run earlier the same day: the deploy step reported `Deploy
+Success` because the transfer completed, which says nothing about whether the
+API serves the directory the bytes landed in.
+
+`STARTER_PACK_API` now points at the host CI writes to, and the catalog's
+"Get a license" line points at `jcodemunch.com/#pricing` alongside it. Two tests
+pin it: one asserts the API host by name, and one fails on any retired host
+appearing anywhere in the module, because the constant was only one of the
+places that host was spelled. Both fail on revert.
+
+The README's user-invoked-network-calls disclosure names the new host. License
+validation is a separate service and still runs against `j.gravelle.us`; that
+line is unchanged.
+
+Companion change in `jgravelle/jcodemunch-starter-packs`: the refresh job now
+ends by fetching the live catalog and comparing it against what it just built,
+failing the run when they disagree. It runs before the state commit, so a
+failed verification leaves no build markers behind to suppress the next rebuild.
+
+### Known limitation, unchanged by this release
+
+An installed pack still ships `.db` files only. Symbol bodies live in a separate
+content directory that packs do not carry, so `get_symbol_source` against a
+pack-installed repo returns an empty `source` while the response reports
+`state: ok` and `_freshness: fresh`. Search, outlines, signatures, docstrings and
+the graph tools all work. The honest-refusal fix and the question of whether
+packs should carry bodies at all are tracked in `ROADMAP.md`.
+
 ## [1.108.202] - 2026-07-30
 
 ### The new writer had the bug the last one was fixed for

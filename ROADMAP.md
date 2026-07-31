@@ -322,13 +322,32 @@ that cost for everyone downstream of the build.
 catalog the customer hosts, with auth for a private endpoint, reusing the
 existing archive layout and extraction path unchanged.
 
-⚠ **Known blocker, verified rather than assumed: symbol bodies do not travel in
-the `.db`.** `get_symbol_content` seeks `byte_offset` into a file under a separate
-content directory and returns `None` when that file is absent
+⚠ **Known blocker, now measured rather than read off the source: symbol bodies do
+not travel in the `.db`.** `get_symbol_content` seeks `byte_offset` into a file
+under a separate content directory and returns `None` when that file is absent
 (`storage/sqlite_store.py`), and `build_pack.py` packages `.db` files only. So a
 pack delivers search, outlines and signatures, while `get_symbol_source` comes
 back empty unless the content cache ships too. Any design here settles that first,
 because it changes the artifact's size profile.
+
+Probed 2026-07-30 by installing the free `nodejs` pack into an empty store with
+none of the packed repos checked out anywhere on the box. Bodies returned for
+**0 of 50** symbols; `get_file_content` returned `None`; no content directory was
+written. Size context for the eventual decision: that pack is 10.6 MB of `.db`
+against a Node checkout in the hundreds of MB, so carrying bodies is a different
+product rather than a larger zip.
+
+⚠⚠ **The pack path fails SILENTLY today, and that is a live defect in a shipped
+free product rather than a gap in an unbuilt feature.** A real call against the
+installed pack returns the symbol's name, line, signature, docstring and
+`content_hash` alongside `"source": ""`, under `_freshness: "fresh"` and
+`_meta.verdict: {"state": "ok", "note": "Confident matches returned."}`. That is
+the exact false-confidence shape the #377 evidence work exists to prevent.
+`tools/get_symbol.py` collapses the missing body at `display_source = source or ""`.
+**Fixing the refusal is separable from, and precedes, any `--from` design**: it
+ships alone, it helps anyone whose content cache was pruned or copied without its
+sibling directory, and the `content_hash` already present in the response is the
+natural hook for naming what could not be produced.
 
 **Close condition.** A seat installs an index built by a CI job it controls, from
 a host it controls, and every tool that works against a locally built index works

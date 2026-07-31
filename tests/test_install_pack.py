@@ -9,11 +9,47 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from jcodemunch_mcp.cli.install_pack import (
+    STARTER_PACK_API,
     _install_pack,
     _list_packs,
     _mask_license,
     run_install_pack,
 )
+
+
+# ── Pack host ─────────────────────────────────────────────────────────────
+#
+# The client must point at the host the pack pipeline deploys to. It pointed at
+# a legacy host that stopped being refreshed, so `install-pack nodejs` served an
+# artifact three months older than the one CI had built -- and every signal a
+# user could see (a 200, a valid zip, a manifest, a symbol count) said it had
+# worked. Nothing in the product could distinguish a current pack from an
+# abandoned one, so the host is pinned by name here instead.
+
+PACK_HOST = "jcodemunch.com"
+_RETIRED_PACK_HOSTS = ("j.gravelle.us",)
+
+
+def test_starter_pack_api_points_at_the_deploy_host():
+    from urllib.parse import urlparse
+
+    assert urlparse(STARTER_PACK_API).netloc == PACK_HOST
+
+
+def test_no_retired_pack_host_in_the_install_pack_module():
+    """Catch the catalog URL, the pricing link and any new sibling at once.
+
+    The constant is only one of the places the legacy host was spelled; a
+    reverting edit is as likely to land on a printed URL as on the API base.
+    """
+    source = Path(
+        __import__("jcodemunch_mcp.cli.install_pack", fromlist=["__file__"]).__file__
+    ).read_text(encoding="utf-8")
+    body = "\n".join(
+        line for line in source.splitlines() if not line.lstrip().startswith("#")
+    )
+    for retired in _RETIRED_PACK_HOSTS:
+        assert retired not in body, f"{retired} is no longer refreshed; use {PACK_HOST}"
 
 
 # ── _mask_license ─────────────────────────────────────────────────────────
