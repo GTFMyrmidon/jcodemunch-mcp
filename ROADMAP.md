@@ -333,9 +333,17 @@ because it changes the artifact's size profile.
 Probed 2026-07-30 by installing the free `nodejs` pack into an empty store with
 none of the packed repos checked out anywhere on the box. Bodies returned for
 **0 of 50** symbols; `get_file_content` returned `None`; no content directory was
-written. Size context for the eventual decision: that pack is 10.6 MB of `.db`
-against a Node checkout in the hundreds of MB, so carrying bodies is a different
+written. Size context recorded at the time: that pack is 10.6 MB of `.db` against
+a Node checkout in the hundreds of MB, so carrying bodies looked like a different
 product rather than a larger zip.
+
+⚠⚠ **That conclusion was WRONG and is superseded by measurement (2026-08-01, see
+"What the artifact actually weighs" below). It was wrong for a structural reason
+worth keeping:** it compared the `.db` against the SOURCE, when the number that
+decides the question is the content cache against **the `.db` we already ship**.
+Measured, the cache adds about **1.5x to the shipped zip**. A larger zip, not a
+different product. ⚠ **The general lesson, since this cost a design conclusion:
+size the increment against the thing it joins, not against the thing it replaces.**
 
 ✅ **The silent half of this is FIXED in v1.108.204** and shipped on its own, ahead
 of any `--from` design. The pack path used to return the symbol's name, line,
@@ -348,6 +356,53 @@ matches returned."}`. A resolved symbol whose body cannot be read now carries
 **What remains open here is the artifact question, not the reporting one:**
 whether a pack should carry the content cache at all. The tool now says what it
 cannot produce; it still cannot produce it.
+
+### What the artifact actually weighs
+
+Measured 2026-08-01, because the paragraph above had been reasoning from an
+unmeasured size profile since 2026-07-30. Method: fresh shallow clone, indexed
+locally, all three sizes taken from the same tree in the same run. Both sides of
+a ratio have to be measured together or the stale side drifts unaudited, which is
+the same failure `benchmarks/` hit for four months (see Maintenance Practices #4
+in `CLAUDE.md`). The pre-existing local indexes were unusable here: truncated at
+the 2,000-file `max_folder_files` cap, with stale or absent `source_root`s, and
+quoting them would have flattered the ratio.
+
+Zipped, which is what a pack actually ships:
+
+| repo | `.db` zip | + content cache | source zip (no `.git`) | cache multiple | source / artifact |
+|---|---|---|---|---|---|
+| fastapi | 1.91 MB | 2.91 MB | 19.46 MB | **1.52x** | 6.69 |
+| flask | 0.39 MB | 0.57 MB | 0.84 MB | **1.47x** | 1.48 |
+| gin | 0.32 MB | 0.50 MB | 0.24 MB | **1.56x** | **0.47** |
+
+Uncompressed on disk the same three run 1.28x-1.34x, and five older (truncated)
+indexes - react, django, sqlalchemy, langchain, celery - run 1.4x-1.6x. **Eight
+repos, three languages, two methods, no outlier: carrying bodies costs about
+1.5x.** That answers the artifact question in the affirmative on size grounds.
+⚠ It does NOT answer the licensing or trust questions, which are independent.
+
+⚠⚠ **Unasked-for finding, and the one to carry forward: the artifact is NOT
+reliably smaller than the source it indexes.** Gin's zipped artifact is **2.1x
+LARGER** than gin's own zipped source; flask is only 1.5x smaller. Only fastapi
+posts a big ratio, and that is composition rather than compression - roughly 20
+of its 35 MB is docs and translations, and only 1,191 of 3,137 files were indexed
+at all. **The "Nx smaller than the source" framing holds only for repos whose
+bulk is non-code**, which every hand-picked pack so far happens to be. It does
+not survive a code-dense repo, and gin is one of our own benchmark repos. ⚠ Do
+not attach a size-savings claim to a pack for a repo we did not pick without
+measuring that repo first; the Console's badge reads its ratio from the catalog's
+`$PACK_SOURCE_MB` and cannot tell the difference.
+
+⚠ **Stated limits of this measurement, so it is not over-read:** one shallow
+clone each, single run, no repeats, NTFS. Fastapi's index covers a third of its
+files. Reproduce with a clone + index + `du` on the `.db` and its sibling content
+directory; there is no committed harness for this yet, and the numbers above are
+not wired to `benchmarks/jcm_reference.json`. ⚠ **They are therefore hand-typed
+figures, which is exactly what Maintenance Practices #4 forbids for anything
+published outward.** They are fine as an internal design input; if any of them is
+ever to appear in a README, on the site, or in a pack badge, it needs a harness
+that writes them first.
 
 ### Validating an index you did not build
 
