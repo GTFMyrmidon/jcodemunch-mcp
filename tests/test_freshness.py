@@ -17,9 +17,12 @@ def _ns(seconds: float) -> int:
 
 
 class TestFreshnessProbeBasics:
-    def test_no_source_root_classifies_fresh(self):
+    def test_no_source_root_classifies_unknown(self):
+        # v1.108.209: was `fresh`. With no source root there is nothing to
+        # stat, so the comparison never happened and cannot be reported as a
+        # clean bill of health. Mirrors repo_freshness's four-state split.
         probe = FreshnessProbe(source_root=None, indexed_at="", index_sha=None)
-        assert probe.classify("foo.py") == "fresh"
+        assert probe.classify("foo.py") == "unknown"
 
     def test_repo_is_stale_when_sha_differs(self):
         probe = FreshnessProbe(
@@ -97,8 +100,9 @@ class TestAnnotateAndSummary:
         entries = [{"file": "ok.py"}, {"file": "missing.py"}]
         probe.annotate(entries)
         assert entries[0]["_freshness"] == "fresh"
-        # missing file → can't stat, defaults to fresh per probe contract
-        assert entries[1]["_freshness"] == "fresh"
+        # v1.108.209: a file that is not on disk cannot be stat'd, so its
+        # freshness is unmeasured — previously reported as `fresh`.
+        assert entries[1]["_freshness"] == "unknown"
 
     def test_summary_counts(self, tmp_path):
         probe = FreshnessProbe(

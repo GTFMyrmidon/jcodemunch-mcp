@@ -122,6 +122,59 @@ belongs to.
 
 The headline claim is unchanged.
 
+## [1.108.209] - 2026-08-01
+
+### Per-file freshness stops answering `fresh` when it could not measure
+
+`FreshnessProbe.classify` returned one of three buckets, and two of its exits
+returned `fresh` for a comparison that never happened: `_file_mtime` answers
+`None` when there is no source root, when the root has moved, when the file is
+gone from the tree, or when the stat raised, and `classify` mapped that `None`
+straight to `fresh`. A fourth exit did the same when the file stat'd fine but
+the index carried no per-file mtime *and* no parseable `indexed_at` — a current
+measurement with nothing to compare it against.
+
+This is the defect `repo_freshness` already grew a four-state split to fix in
+v1.108.180 (#377 item 4), sitting 40 lines below it in the same file. That
+docstring makes the argument this change applies per-file: a Boolean "has
+nowhere to put 'I could not find out'", and rendering the non-answer as `fresh`
+asserts current-snapshot equivalence that was never established.
+
+⚠ **The mislabeled population is exactly the one that cannot self-diagnose:** a
+`.db`-only starter pack, an index built on another machine, a source root that
+has since moved. `tests/test_missing_content_cache_is_reported.py` has recorded
+`_freshness: "fresh"` as part of this observed shape since 2026-07-30, measured
+against the published `nodejs` pack; v1.108.204 fixed the `source: ""` half of
+that report and left this half standing.
+
+`classify` now returns `unknown` on all four unmeasurable exits, and `summary()`
+carries an `unknown` count. ⚠ **The summary key matters as much as the
+classifier:** `summary()` enumerated its three buckets explicitly, so a new
+state would have been counted internally and then dropped on the way out — the
+block would still have summed to fewer than the rows it described, which reads
+as "nothing to report". A test asserts the buckets account for every entry. An
+entry carrying no `_freshness` at all now counts as `unknown` rather than
+`fresh` for the same reason.
+
+⚠ **Measured answers are byte-for-byte unchanged** — `fresh`, `edited_uncommitted`
+and `stale_index` all still come from real comparisons, and `stale_index` still
+outranks a per-file `unknown` because a stale index is something we *did*
+establish. Only the exits that previously guessed are affected.
+
+⚠ **Response-shape change inside 1.x, deliberate**: `_meta.freshness` gains a key
+and `_freshness` gains a value. Two existing tests asserted the old fail-to-fresh
+behaviour by name (`test_no_source_root_classifies_fresh`, and the missing-file
+leg of the annotate test); both are updated with the reasoning inline rather than
+deleted, since the behaviour was pinned on purpose and the change is a contract
+decision, not a bug-fix to a slip.
+
+Prompted by an external read: a same-lane project shipped a fix for the adjacent
+defect on its own serve path. ⚠ **The byte-level defect it fixed does NOT exist
+here and was NOT ported** — `get_symbol_content` seeks stored byte offsets into
+the *content-cache copy*, so the bytes and the offsets always come from one
+snapshot and cannot disagree; jcm can serve stale, it cannot mis-slice. The
+freshness *disclosure* gap was the real finding. Tests: `test_v1_108_209.py` (14).
+
 ## [1.108.208] - 2026-08-01
 
 ### `content_hash` stops riding every `get_symbol_source` response

@@ -1,6 +1,6 @@
 """Per-symbol freshness classification (v1.77.0).
 
-Three buckets:
+Four buckets:
   * ``fresh``               — index SHA matches HEAD AND the file mtime is
                               not newer than the index timestamp.
   * ``edited_uncommitted``  — index SHA matches HEAD but the on-disk file
@@ -8,6 +8,18 @@ Three buckets:
                               than indexed_at).
   * ``stale_index``         — the whole index lags behind: index SHA does
                               not match the current git HEAD.
+  * ``unknown``             — the comparison could not be made at all: no
+                              source root, the root moved, the file is gone
+                              from the tree, the stat failed, or the index
+                              recorded no timestamp to compare against.
+
+``unknown`` exists for the same reason ``repo_freshness`` grew it in
+v1.108.180 (#377 item 4), one level down: this classifier used to answer
+``fresh`` whenever it could not measure, so a served symbol whose freshness
+was never established claimed to be current. "I could not find out" is a
+third fact, not a clean bill of health — and it is the answer for exactly
+the population that cannot self-diagnose: a ``.db``-only starter pack, an
+index built on another machine, a source root that has since moved.
 
 The probe caches per-call git HEAD lookup and per-file mtime stats so
 classifying many symbols in one tool call is cheap.
@@ -28,6 +40,10 @@ logger = logging.getLogger(__name__)
 _FRESH = "fresh"
 _EDITED = "edited_uncommitted"
 _STALE = "stale_index"
+# Per-file "could not measure" (v1.108.209). Same wire string as the repo-level
+# _UNKNOWN below and deliberately a separate constant: these two answer
+# different questions and only one of them is about a single returned file.
+_UNKNOWN_FILE = "unknown"
 
 # Repo-level freshness states (#377 item 4). Deliberately separate strings from
 # the per-symbol buckets above: those classify one returned file, these classify
@@ -291,14 +307,23 @@ class FreshnessProbe:
         return mtime
 
     def classify(self, file_rel: str) -> str:
-        """Return one of fresh / edited_uncommitted / stale_index."""
+        """Return one of fresh / edited_uncommitted / stale_index / unknown.
+
+        Every ``unknown`` below is a comparison that could not be made. None of
+        them may answer ``fresh``: that would assert current-snapshot
+        equivalence off a measurement that never happened.
+        """
         if self.repo_is_stale:
             return _STALE
         if not file_rel:
-            return _FRESH
+            # No path to stat, so nothing to compare. An entry that carries no
+            # file cannot be attested either way.
+            return _UNKNOWN_FILE
         mtime_now = self._file_mtime(file_rel)
         if mtime_now is None:
-            return _FRESH
+            # No source root, the root moved, the file is gone from the tree,
+            # or the stat raised. All four are "could not find out".
+            return _UNKNOWN_FILE
         # Prefer per-file indexed mtime when available (more accurate than
         # the single index-wide indexed_at timestamp).
         per_file_indexed = self._indexed_mtimes_s.get(file_rel)
@@ -306,7 +331,11 @@ class FreshnessProbe:
             if mtime_now > per_file_indexed + 1.0:
                 return _EDITED
             return _FRESH
-        if self._indexed_ts and mtime_now > self._indexed_ts + 1.0:
+        # We have a current mtime but no baseline to measure it against: the
+        # index recorded no per-file mtime AND no parseable indexed_at.
+        if not self._indexed_ts:
+            return _UNKNOWN_FILE
+        if mtime_now > self._indexed_ts + 1.0:
             return _EDITED
         return _FRESH
 
@@ -323,16 +352,20 @@ class FreshnessProbe:
         return entries
 
     def summary(self, entries: list[dict]) -> dict:
-        """Bucket-count summary of ``_freshness`` across entries."""
-        counts = {_FRESH: 0, _EDITED: 0, _STALE: 0}
+        """Bucket-count summary of ``_freshness`` across entries.
+
+        An entry carrying no ``_freshness`` at all counts as ``unknown``, not
+        ``fresh`` — an un-annotated row has not been measured either.
+        """
+        counts = {_FRESH: 0, _EDITED: 0, _STALE: 0, _UNKNOWN_FILE: 0}
         for e in entries:
             if isinstance(e, dict):
-                counts[e.get("_freshness", _FRESH)] = counts.get(
-                    e.get("_freshness", _FRESH), 0
-                ) + 1
+                bucket = e.get("_freshness", _UNKNOWN_FILE)
+                counts[bucket] = counts.get(bucket, 0) + 1
         return {
             "fresh": counts.get(_FRESH, 0),
             "edited_uncommitted": counts.get(_EDITED, 0),
             "stale_index": counts.get(_STALE, 0),
+            "unknown": counts.get(_UNKNOWN_FILE, 0),
             "repo_is_stale": self.repo_is_stale,
         }

@@ -8,6 +8,10 @@ returned the row with `source: ""` under `_meta.verdict.state == "ok"` and
 `_freshness: "fresh"`. Measured against the published `nodejs` pack on
 2026-07-30: bodies for 0 of 50 symbols, every one of them reported confidently.
 
+The `source: ""` half was fixed in v1.108.204 (`source_status`). The
+`_freshness: "fresh"` half named above stood until v1.108.209, which gave the
+per-file classifier an `unknown` bucket — see `test_v1_108_209.py`.
+
 These tests build that exact store shape: a real index with no content
 directory beside it.
 """
