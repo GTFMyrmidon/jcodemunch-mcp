@@ -122,6 +122,68 @@ belongs to.
 
 The headline claim is unchanged.
 
+## [1.108.210] - 2026-08-01
+
+### `find_similar_symbols` stops reading every embedding in the repository
+
+Reported by **@rknighton** in [#398](https://github.com/jgravelle/jcodemunch-mcp/issues/398)
+as Arc 5 of a five-arc large-repository proposal.
+
+The tool prefilters its candidate pairs on non-semantic evidence, then called
+`EmbeddingStore.count()` followed by `get_all()` and narrowed the result to
+`cand_ids` on the very next line. `cand_ids` is built three lines *above* the
+fetch, so the repository-wide read was waste by construction: every vector was
+decoded from bytes into a Python float list, and almost all of them were then
+dropped.
+
+New `EmbeddingStore.get_many(ids)` fetches only the named symbols.
+
+⚠ **Dropping `count()` is part of the fix, not a shortcut.** It opened a
+read-WRITE connection, and `_connect` runs `PRAGMA journal_mode = WAL` plus a
+CREATE-TABLE on every connection, so the existence check bumped the database
+mtime *before the read even started*. A read-only `get_many` alone would not have
+kept the file untouched. `get_many` uses the same `mode=ro&immutable=1`
+connection as `get_all_readonly` (v1.108.185), whose docstring records why
+`mode=ro` alone is insufficient and what the WAL trade-off costs. A test asserts
+the mtime does not move and no sidecars appear.
+
+⚠ **Chunked at 900 ids.** An `IN (...)` clause is bounded by
+`SQLITE_MAX_VARIABLE_NUMBER`, which is 999 on older SQLite builds. A candidate
+set large enough for this fix to matter is exactly the one that would overflow a
+naive single-statement version, so the bug would have appeared only on the repos
+the change targets. Tested at 2x the chunk plus a remainder, and on the exact
+boundary.
+
+⚠ **Measured on our side rather than transcribed.** The reporter measured a
+2.63%-7.65% fetch fraction on FastAPI and Django. On jcm's own index the figure
+is **22.48%** (2,838 of 12,625 vectors requested; 9,787 avoided), still hybrid
+mode, 25 clusters. Both numbers are real and they describe different repository
+shapes; the saving held while the headline did not transfer. Re-measuring is
+house policy after a benchmark constant of ours went four months stale, and is
+not a comment on the report.
+
+Behavior is unchanged: `embeddings` ends up the same mapping the old code
+produced (it was already restricted to `cand_ids`), and `mode` is still decided
+by `len(embeddings) >= 2`. Tests: `test_v1_108_210.py` (12).
+
+### Also: `uv.lock` re-synced, which had gone red on CI at 1.108.209
+
+⚠ **v1.108.209 was pushed with `uv.lock` still pinning 1.108.208, and CI failed
+on it.** `uv sync --locked` refuses a stale lockfile, so both the `Tests` and
+`Replay` workflows died before running a single test at `7ceca0a`. The local
+suite for that release was genuinely green, and that is exactly the trap: **the
+suite was started before the version bump, so it validated the pre-bump tree.**
+A version bump invalidates any suite run that preceded it, because `uv.lock`
+records the project version and `tests/test_lockfile_version_sync.py` asserts
+the two agree. Re-synced to 1.108.210 here, which clears both releases; verified
+with `uv lock --check` rather than only the unit test.
+
+The other four arcs of #398 are accepted or gated and now live in `ROADMAP.md`
+with their close conditions and credit. Arc 4 is gated on a measurement that does
+not exist yet: its semantic figures use synthetic embeddings, and the one cost
+that depends on embedding *content* (lane-3 certification breadth) is unmeasured
+on real vectors.
+
 ## [1.108.209] - 2026-08-01
 
 ### Per-file freshness stops answering `fresh` when it could not measure

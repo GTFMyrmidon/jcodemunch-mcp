@@ -261,12 +261,16 @@ def find_similar_symbols(
         from ..storage.embedding_store import EmbeddingStore  # noqa: PLC0415
         db_path = store._sqlite._db_path(owner, name)
         emb_store = EmbeddingStore(db_path)
-        if emb_store.count() > 0:
-            all_emb = emb_store.get_all()
-            # Restrict to candidates only
-            embeddings = {sid: all_emb[sid] for sid in cand_ids if sid in all_emb}
-            if len(embeddings) >= 2:
-                mode = "hybrid"
+        # Fetch ONLY the prefiltered candidates. The previous count()+get_all()
+        # pair read every vector in the repository and then discarded all but
+        # `cand_ids`, which is already known one line above (#398, @rknighton).
+        # Dropping count() is part of the fix, not a shortcut: it opened a
+        # read-WRITE connection whose PRAGMA/CREATE-TABLE bumped the .db mtime
+        # before the read even started, so a read-only fetch alone would not
+        # have stopped the file from being touched.
+        embeddings = emb_store.get_many(cand_ids)
+        if len(embeddings) >= 2:
+            mode = "hybrid"
     except Exception as exc:  # noqa: BLE001
         logger.debug("find_similar_symbols: embedding load skipped: %s", exc, exc_info=True)
 

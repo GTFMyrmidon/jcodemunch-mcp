@@ -20,6 +20,10 @@ CREATE TABLE IF NOT EXISTS symbol_embeddings (
 );
 """
 
+# Bound on ids per `IN (...)` in get_many. SQLITE_MAX_VARIABLE_NUMBER is 32766
+# on modern builds but 999 on older ones; 900 clears the floor with headroom.
+_GET_MANY_CHUNK = 900
+
 _EMBED_DIM_KEY = "embed_dimension"
 _EMBED_MODEL_KEY = "embed_model"
 _EMBED_TASK_TYPE_KEY = "embed_task_type"
@@ -228,6 +232,64 @@ class EmbeddingStore:
             return {row[0]: _decode_embedding(row[1]) for row in rows}
         except Exception:
             logger.debug("EmbeddingStore.get_all_readonly failed", exc_info=True)
+            return {}
+        finally:
+            conn.close()
+
+    def get_many(self, symbol_ids) -> dict[str, list[float]]:
+        """Embeddings for a NAMED set of symbols, without touching the file.
+
+        For callers that already know which symbols can participate in their
+        result. ``find_similar_symbols`` prefilters its pairs on non-semantic
+        evidence and then used ``count()`` + ``get_all()``, reading every vector
+        in the repository to keep the few percent its own prefilter had already
+        selected. On a large repository that is the dominant cost of the call
+        (reported by @rknighton in #398: 2.63% to 7.65% of fetched vectors were
+        actually used).
+
+        Uses the same ``mode=ro&immutable=1`` connection as
+        ``get_all_readonly`` and for the same reason: ``_connect`` runs a
+        PRAGMA and a CREATE-TABLE on every connection, so a plain read bumps the
+        database mtime and can make an unrelated scan report itself as
+        rebuilding. See that method's docstring for why ``mode=ro`` alone is not
+        enough, and for the stated trade-off (vectors sitting in an
+        un-checkpointed WAL are not read, which can only weaken a ranking).
+
+        Chunked: an ``IN (...)`` clause is bounded by SQLITE_MAX_VARIABLE_NUMBER,
+        which is 999 on older builds. A candidate set large enough to matter here
+        is exactly the one that would overflow it.
+
+        Returns only the ids that are present. A missing id is not an error, it
+        is a symbol that was never embedded.
+        """
+        ids = [s for s in dict.fromkeys(symbol_ids) if s]
+        if not ids:
+            return {}
+        try:
+            conn = sqlite3.connect(
+                f"file:{self._db_path}?mode=ro&immutable=1",
+                uri=True,
+                isolation_level=None,
+            )
+        except Exception:
+            logger.debug("EmbeddingStore.get_many could not open %s",
+                         self._db_path, exc_info=True)
+            return {}
+        out: dict[str, list[float]] = {}
+        try:
+            for start in range(0, len(ids), _GET_MANY_CHUNK):
+                chunk = ids[start:start + _GET_MANY_CHUNK]
+                placeholders = ",".join("?" * len(chunk))
+                rows = conn.execute(
+                    "SELECT symbol_id, embedding FROM symbol_embeddings "
+                    f"WHERE symbol_id IN ({placeholders})",
+                    chunk,
+                ).fetchall()
+                for row in rows:
+                    out[row[0]] = _decode_embedding(row[1])
+            return out
+        except Exception:
+            logger.debug("EmbeddingStore.get_many failed", exc_info=True)
             return {}
         finally:
             conn.close()

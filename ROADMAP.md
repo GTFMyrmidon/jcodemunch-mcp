@@ -512,6 +512,100 @@ any enterprise layer.
 
 ---
 
+## Adaptive large-repository data path (#398, @rknighton)
+
+Four accepted arcs from a five-arc proposal. **Arc 5 shipped in v1.108.210** and
+is not repeated here. The evidence pack behind all five is SHA-pinned to
+`c2201a55`, order-balanced A/B, with canonical response parity; every code
+citation in it was verified against our tree before acceptance.
+
+⚠ **Do not quote the reporter's multipliers in any shipped artifact.** Re-measure
+on our side first. Arc 5's own numbers moved substantially when we did: he
+measured a 2.63%-7.65% fetch fraction on FastAPI and Django, and jcm's own repo
+came out at **22.48%** (2,838 of 12,625 vectors). Both are real; they describe
+different repository shapes. The saving held, the headline did not transfer.
+
+### Arc 1 — generation-safe read contract
+
+One read snapshot per request, with the code generation distinguished from the
+embedding generation, and cache identity including branch, index format version,
+embedding model, and vector dimension.
+
+Accepted on **correctness** grounds; the reporter's own estimate is ~1.0x and
+that is honest. We currently have three surfaces answering one question:
+`subject_state.capture()` publishes `indexed_at` as `generation`,
+`evidence/producers.py` re-exposes it as `index_generation`, and
+`_db_mtime_ns` is read separately. That is the [[feedback_two_paths_one_decision]]
+shape, and v1.108.209 shipped a fix for the same shape one layer down (a per-file
+freshness classifier answering `fresh` on five paths where it could not measure,
+while the repo-level classifier 40 lines above already had `unknown`).
+
+**Close condition:** the three generation surfaces resolve to one authoritative
+committed-revision contract, receipt semantics preserved byte-for-byte, and the
+read-only SQLite path sees committed WAL data when sidecars exist without
+creating them when they do not.
+
+### Arc 2 — transactional selective code snapshots
+
+Load repository/file metadata plus only the rows a tool needs, inside one SQLite
+read transaction. An explicit storage-owned read view, **not** a silent change to
+`load_index`; broad modes promote to the existing complete path.
+
+Best median result in the proposal (2.24x-2.35x). Sequenced after Arc 1 because
+its consistency guarantee is part of Arc 1's contract.
+
+**Close condition:** supported narrow calls complete without hydrating the full
+`CodeIndex`; unsupported and broad modes promote once with no change to errors,
+suggestions, ordering, branch behavior, or response fields.
+
+### Arc 3 — generation-scoped shared promotion — GATED
+
+Promote a broad request's snapshot into one immutable full view keyed by the code
+generation, single-flighted across concurrent callers.
+
+⚠ **Gated on disclosure, not on the technique.** Retaining a view across requests
+is background behavior, and every new background/persistent/network behavior must
+be README-disclosed before shipping (the standing post-quarantine rule). It also
+overlaps `JCODEMUNCH_INDEX_CACHE_TTL` (v1.108.172), which is deliberately opt-in
+because cold hydration of a 665k-symbol index was measured at 7.5-11.4 minutes
+(#370). **Reconcile with that switch; do not add a second retention policy beside
+it.**
+
+**Close condition:** byte- and entry-bounded retention with safe eviction and a
+per-request fallback when the budget is full; expensive construction stays lazy;
+README background-behavior section updated in the same release.
+
+### Arc 4 — adaptive certified semantic scoring — GATED ON A MEASUREMENT
+
+Three exact-result lanes (retained float32 matrix / chunked streaming / certified
+uncertainty-set rescoring), NumPy as an optional accelerator only.
+
+⚠⚠ **The gate is a number we do not have.** Every semantic figure in the proposal
+uses deterministic synthetic 384-dim vectors attached to real symbol IDs. Scoring
+cost scales with vector count and dimension, so the matrix lane should carry over
+— but **lane 3 certification breadth depends on embedding CONTENT**, and real code
+embeddings produce more near-ties than the fixture. The reporter names this
+himself. If certification fires often on real embeddings, the fast lane degrades
+toward the exact scorer it replaces while carrying an optional native dependency
+and a memory-cap subsystem.
+
+**Close condition:** certification breadth measured on REAL embeddings on at least
+one large repository, showing the fallback rate low enough that the lane still
+wins. Until that exists this is accepted design, not approved work.
+
+⚠ NumPy is native code, so the accelerated lane inherits
+[[feedback_native_imports_belong_on_the_main_thread]]: one guarded main-thread
+import before the four serve runners, extending `warm_up_embedding_backend()`
+rather than adding a second startup mechanism, and disabled when
+`JCODEMUNCH_EAGER_EMBED_IMPORT=0`. The base install must keep zero mandatory
+NumPy dependency.
+
+**Provenance.** Filed by @rknighton as #398 on 2026-08-01 with a full research
+archive offered on request. Split per the one-issue-one-verdict rule; #398 closed
+as the umbrella once Arc 5 shipped and these four landed here.
+
+---
+
 ## Conventions
 
 - Entries here are **accepted**, not speculative. A rejected proposal gets a
