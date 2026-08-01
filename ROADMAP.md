@@ -364,9 +364,12 @@ unmeasured size profile since 2026-07-30. Method: fresh shallow clone, indexed
 locally, all three sizes taken from the same tree in the same run. Both sides of
 a ratio have to be measured together or the stale side drifts unaudited, which is
 the same failure `benchmarks/` hit for four months (see Maintenance Practices #4
-in `CLAUDE.md`). The pre-existing local indexes were unusable here: truncated at
-the 2,000-file `max_folder_files` cap, with stale or absent `source_root`s, and
-quoting them would have flattered the ratio.
+in `CLAUDE.md`). ⚠ **The pre-existing local indexes could not carry the SOURCE
+side of this**: truncated at the 2,000-file `max_folder_files` cap, with stale or
+absent `source_root`s, so any source ratio taken from them would have been a
+fresh number over a stale one. They remain valid for the **cache-against-`.db`**
+ratio only, because both of those come from the same artifact and truncation
+drops files from each together; that is the one number they are quoted for below.
 
 Zipped, which is what a pack actually ships:
 
@@ -376,11 +379,19 @@ Zipped, which is what a pack actually ships:
 | flask | 0.39 MB | 0.57 MB | 0.84 MB | **1.47x** | 1.48 |
 | gin | 0.32 MB | 0.50 MB | 0.24 MB | **1.56x** | **0.47** |
 
-Uncompressed on disk the same three run 1.28x-1.34x, and five older (truncated)
-indexes - react, django, sqlalchemy, langchain, celery - run 1.4x-1.6x. **Eight
-repos, three languages, two methods, no outlier: carrying bodies costs about
-1.5x.** That answers the artifact question in the affirmative on size grounds.
-⚠ It does NOT answer the licensing or trust questions, which are independent.
+**The number that decides the design is the zipped one, ~1.5x**, because a pack
+ships zipped. Uncompressed the same three repos run 1.28x-1.34x; compression
+favours the `.db` over the cache, which is why the shipped figure is the higher
+of the two. ⚠ **Quote them separately - a single blended "about 1.5x" hides a
+real 0.2x spread between the two methods.**
+
+Corroboration, cache-against-`.db` only, from five older truncated indexes:
+react 1.6x, django 1.4x, sqlalchemy 1.6x, langchain 1.6x, celery 1.5x
+(uncompressed). So eight repos across Python, Go and TypeScript, none outside
+1.28x-1.6x by either method. **Carrying bodies is a bounded multiple of an
+artifact we already ship, not a new order of magnitude.** That answers the
+artifact question in the affirmative on size grounds. ⚠ It does NOT answer the
+licensing or trust questions, which are independent and unaddressed.
 
 ⚠⚠ **Unasked-for finding, and the one to carry forward: the artifact is NOT
 reliably smaller than the source it indexes.** Gin's zipped artifact is **2.1x
