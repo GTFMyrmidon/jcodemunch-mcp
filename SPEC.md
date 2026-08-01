@@ -333,6 +333,7 @@ Batch — returns `{symbols, errors}`:
 * retrieval is based on cached raw file content, not reparsing
 * `symbol_id` and `symbol_ids` are mutually exclusive — passing both is an error
 * `verify` re-hashes the retrieved source and compares it with the stored `content_hash`; applies to all symbols in batch mode
+* the stored `content_hash` itself is returned on a served row only when `verify` or `receipt` is requested (v1.108.208). Neither the boolean `content_verified` nor the receipt's `content_sha256` changed; what stopped shipping is the raw 64-char digest on responses that asked for neither
 * `context_lines` optionally adds surrounding lines; applies to all symbols in batch mode
 * in batch mode, missing symbols are reported in `errors[]` without causing other lookups to fail
 

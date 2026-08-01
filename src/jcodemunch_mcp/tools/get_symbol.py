@@ -343,6 +343,11 @@ def get_symbol_source(
             "signature": symbol["signature"],
             "decorators": symbol.get("decorators", []),
             "docstring": symbol.get("docstring", ""),
+            # Always populated here so the evidence producer can read it off the
+            # served row (it never re-reads the index). The dispatcher strips it
+            # again after minting unless `verify` or `receipt` was requested —
+            # see the content_hash block in server.py's call_tool. Do not gate
+            # it at this line: that downgrades every receipt's hash_source.
             "content_hash": symbol.get("content_hash", ""),
             "source": display_source,
         }

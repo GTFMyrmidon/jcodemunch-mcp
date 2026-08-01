@@ -122,6 +122,48 @@ belongs to.
 
 The headline claim is unchanged.
 
+## [1.108.208] - 2026-08-01
+
+### `content_hash` stops riding every `get_symbol_source` response
+
+`tools/get_symbol.py` put the stored `content_hash` on every served row
+unconditionally, next to `signature` and `source`, and **not** gated on
+`verify`. It is a full 64-character SHA-256 (`parser/symbols.py`), so it cost
+roughly 83 characters per symbol returned, on the most-called read tool in the
+server. A twenty-symbol batch spent on the order of 400 tokens on it.
+
+Nothing was offered a use for the raw digest. `verify` already answers the
+drift question as a boolean (`content_verified`), `get_changed_symbols` answers
+it across a diff, and an evidence receipt carries `content_sha256` out of band
+with only the id on the wire. It is now emitted only when `verify` or `receipt`
+is requested; both of those responses are byte-for-byte unchanged.
+
+**The reason the strip lives in the dispatcher and not at the emission site.**
+`evidence/producers.py::_row_subject` reads the digest off the SERVED ROW and
+deliberately never re-reads the index, so that a receipt describes what the
+caller was handed. Gating the field inside `get_symbol_source` would therefore
+have kept minting valid-looking receipts whose `hash_source` had quietly
+downgraded from `index_content_hash` to `served_bytes` - every field correct
+except the provenance of the one that matters, which is the exact shape #377
+exists to prevent. The strip runs after the mint block instead, which makes the
+receipt immune by construction rather than by remembering to thread a flag, and
+follows the same ordering rule as the presentation filtering below it: a display
+preference must not decide what a scan proved.
+
+⚠ **Response-shape change inside 1.x, taken deliberately.** No test asserted the
+field in a tool response; every assertion found is parser- or storage-layer and
+is untouched. A caller that reads `content_hash` off a plain
+`get_symbol_source` result adds `verify: true` and gets it back along with the
+comparison it implies.
+
+⚠ **Corrects a claim made while investigating this, in case it is repeated:**
+`compute_content_hash` was **not** truncated. The 12-hex helper is
+`config.py::_content_hash`, which caches project-config files and has nothing to
+do with symbols. No widening was needed and none was done.
+
+Tests: `tests/test_v1_108_208.py` (7), including the receipt-provenance test
+that would have caught the tool-side version of this fix.
+
 ## [1.108.207] - 2026-07-31
 
 ### The first native embedding import has to happen on the main thread

@@ -349,6 +349,89 @@ matches returned."}`. A resolved symbol whose body cannot be read now carries
 whether a pack should carry the content cache at all. The tool now says what it
 cannot produce; it still cannot produce it.
 
+### Validating an index you did not build
+
+Raised 2026-08-01. The section above assumes the installing seat trusts the
+builder, because in the `--from` case it *is* the builder: its own CI, its own
+host. The interesting widening is the case where it is not, two unrelated users
+who both depend on the same public third-party repo and would each otherwise
+index it. ⚠ **That case dodges both findings that killed the enterprise broker**
+(see `project_jcm_enterprise`): a shared dependency is a tree neither party
+edits, so the freshness objection does not apply, and a public repo has nothing
+to ACL. It is the Starter Pack shape with the catalog opened up, not a new
+mechanism.
+
+The question that gates it is whether a recipient can validate a received index
+more cheaply than rebuilding it. **The answer splits in two, and only one half
+is cheap.**
+
+**The content cache can be attested cheaply, and the digest width is already
+sufficient.** ⚠ **Checked, because the first pass through this got it wrong:**
+`compute_content_hash` (`parser/symbols.py:80`) returns a full 64-character
+SHA-256 over the symbol's slice, pinned by `test_hardening.py:356`. The truncated
+12-hex helper is `config.py:_content_hash`, which caches project-config files and
+has nothing to do with symbols. **No widening is required.**
+
+What is missing is not width but an **external referent**. The digest is
+self-referential: `verify_against="cache"` says so in its own docstring, and the
+externally attested `git_sha` mode (`tools/get_symbol.py:109`) needs
+`source_root`, precisely the checkout a recipient does not have. The construction
+that works is to record the **git blob OID per file plus the built-from commit**,
+so the recipient hashes the shipped cache locally and compares against tree
+objects the forge publishes independently. No parse, no clone of file bodies, and
+the comparison target stops coming from the uploader. ⚠ The manifest already
+records a built-from commit for attribution (v1.108.205); this needs it per file
+and for a different purpose, so do not assume the existing field covers it.
+
+**Derived rows cannot be attested by any hash, only re-derived.** Symbols and
+summaries are parse output; a digest over them proves internal consistency and
+nothing else. The affordable form is a **spot-check re-parse** of a random sample
+of files, which works only if parsing is deterministic for a fixed grammar set
+and `INDEX_VERSION`, and that is an assumption with no test behind it today. Cost
+then scales with the sample rather than the repo. ⚠⚠ **AI summaries are outside
+this entirely.** They are non-deterministic, so unre-derivable, so unverifiable
+by sampling, and they are also the one genuinely duplicated *token* cost the
+paragraphs above give as the reason to share at all. A shared artifact probably
+has to be heuristic-summaries-only and say so, or the field carries builder trust
+that nothing else in the artifact does.
+
+⚠ **State the guarantee accurately or it will be oversold.** Validation reduces
+trust-in-uploader to trust-in-repo. It does not make a shared index safe: an
+honest index of hostile code is still hostile, and it reaches the recipient's
+agent as authoritative retrieval. Trust-in-repo is the right bar because it is
+the same exposure as reading the repo, but it is not the same claim as "verified".
+
+**One finding here is a live cost rather than a design, and it stands on its own
+whether or not any of the above is ever built.** `tools/get_symbol.py:346` puts
+`content_hash` in every `get_symbol_source` response entry unconditionally,
+alongside `signature` and `source`, **not gated on `verify`**. A 64-hex digest is
+about 83 characters per symbol returned, so a 20-symbol batch spends on the order
+of 400 tokens on a field the caller was not offered a use for: `verify` already
+answers the drift question as a boolean (`content_verified`), `get_changed_symbols`
+answers it across a diff, and receipts carry `content_sha256` out of band with
+only the id on the wire (`evidence/producers.py:483`). ⚠ **This is the same cost
+in every response today; it is not created by anything in this section.**
+
+⚠ **Gating it is a response-shape change on a shipped tool and wants an explicit
+decision against the 1.x no-removal contract, so it is recorded here rather than
+done.** Checked, in case it made the call easy: **no test asserts the field in a
+tool response.** Every assertion found is storage-layer or parser-layer
+(`test_hardening.py`, `test_call_references_model.py`, `test_css.py`,
+`test_json.py`) and none is affected either way.
+
+⚠ Adding blob OIDs is an `INDEX_VERSION` bump, which re-indexes every user and
+re-downloads every pack. Do not land it alone; bank it against the next bump.
+
+**Close condition for this sub-item.** A recipient can take an index built
+elsewhere and establish, without a full re-index, that its content cache matches
+a named upstream commit and that a sampled fraction of its symbol rows re-derive
+from that content. Until the sampling assumption has a determinism test behind
+it, the honest state is that only the content half is checkable.
+
+**Non-goal.** Nothing here is approved work, and it does not become approved by
+being written down. See the note under `#385`/`#386` in `CLAUDE.md`: parked
+design with a close condition belongs in this file and not on the tracker.
+
 **Close condition.** A seat installs an index built by a CI job it controls, from
 a host it controls, and every tool that works against a locally built index works
 against the installed one. Where that is not true (see the content-cache blocker),

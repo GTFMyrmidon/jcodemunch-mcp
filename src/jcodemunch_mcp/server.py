@@ -6573,6 +6573,31 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent] | CallToolR
         except Exception:
             logger.debug("Evidence-receipt minting failed", exc_info=True)
 
+        # `content_hash` is a 64-hex SHA-256 the caller was never offered a use
+        # for: `verify` answers the drift question as a boolean, and a receipt
+        # carries the digest out of band. Shipped on every row it cost ~83
+        # characters per symbol on the hottest read path, so it is now emitted
+        # only when something in the request actually consumes it.
+        #
+        # Stripped HERE, not at the emission site in tools/get_symbol.py, and
+        # deliberately AFTER the mint block: `_row_subject` reads the digest
+        # from the SERVED ROW and never re-reads the index, so a tool-side gate
+        # would silently downgrade every receipt's `hash_source` from
+        # `index_content_hash` to `served_bytes`. Running after mint makes the
+        # receipt immune to this by construction rather than by remembering to
+        # thread a flag. Same ordering rule as the filtering below: a
+        # presentation choice must not decide what a scan proved.
+        if (
+            name == "get_symbol_source"
+            and isinstance(result, dict)
+            and not arguments.get("verify")
+            and arguments.get("receipt") is not True
+        ):
+            result.pop("content_hash", None)
+            for _sym in result.get("symbols", []):
+                if isinstance(_sym, dict):
+                    _sym.pop("content_hash", None)
+
         if isinstance(result, dict):
             meta_fields = config_module.get("meta_fields")
             if meta_fields == [] or arguments.get("suppress_meta"):
