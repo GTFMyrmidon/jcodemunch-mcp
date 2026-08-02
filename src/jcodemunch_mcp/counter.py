@@ -337,7 +337,33 @@ _INTENT_RULES: list[tuple[re.Pattern, str, str]] = [
      "get_dependency_graph", "Map file-level import dependencies."),
     (re.compile(r"\bhealth\b|\bhotspot|\bcomplexit|\bchurn\b|\brisk\b", re.I),
      "get_repo_health", "Repo-level health, hotspots, and risk."),
-    (re.compile(r"\bplan\b|\bwhere (do|should) i (start|begin)\b|\bcontext for\b|\bonboard\b|\bunderstand the\b", re.I),
+    # --- transform: act on another tool's OUTPUT ------------------------------ #
+    # These consume a prior result rather than querying the index, so none of the
+    # words an agent would actually type ("diagram", "a plan for renaming") appear
+    # in the catalog text the lexical fallback ranks over -- measured route recall
+    # for this whole group was 0% before these rules existed.
+    #
+    # Placed LATE on purpose, two constraints at once. Late enough that a specific
+    # data-fetch intent still wins primary: "visualize the call graph" must lead
+    # with get_call_hierarchy, because render_diagram consumes that output and has
+    # nothing to draw without it. Early enough to precede the generic "\bplan\b"
+    # rule below, which would otherwise claim every refactor-plan request.
+    #
+    # High-precision nouns only. A bare "graph"/"render"/"map" would capture the
+    # call-graph, import-graph and topology intents -- the failure these rules
+    # exist to fix, inverted.
+    (re.compile(r"\b(diagram|mermaid|flowchart|graphviz|visuali[sz]e|visuali[sz]ation)\b", re.I),
+     "render_diagram", "Render a graph-producing tool's output as an annotated Mermaid diagram."),
+    # A REQUEST for a plan is not a mutation command, so this is deliberately not
+    # leading-anchored the way the imperative rules above are.
+    (re.compile(r"\b(plan|steps|walk me through)\b[^.]{0,40}"
+                r"\b(rename|renaming|refactor|refactoring|extract|extracting|"
+                r"inline|moving|migrat\w*)\b", re.I),
+     "plan_refactoring", "Edit-ready plan for a rename, move, extract, or signature change."),
+
+    (re.compile(r"\bplan\b|\bwhere (do|should) i (start|begin)\b|\bcontext for\b|\bonboard\b|\bunderstand the\b|"
+                r"\bset me up\b|\beverything i need\b|\bup to speed\b|\bget me (started|going)\b|"
+                r"\bhelp me (debug|fix|track down|get)\b", re.I),
      "assemble_task_context", "Single-call task-scoped context assembly."),
     (re.compile(r"\b(find|locate|where is|look up|search for|definition of)\b", re.I),
      "search_symbols", "Find a symbol by name."),

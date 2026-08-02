@@ -2,6 +2,57 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.212] - 2026-08-02 - route() can now reach the tools that render, plan, and assemble
+
+`route()` mapped a plain-language task onto three actions it could never propose,
+no matter how the task was phrased: `render_diagram`, `plan_refactoring`, and
+`assemble_task_context`. Measured recall for that group was **0%**.
+
+These three consume another tool's *output* rather than querying the index, so
+the words a user actually types for them ("draw me a diagram", "give me a plan
+for renaming this", "set me up to debug this") appear nowhere in the catalog text
+`route`'s fallback ranks over. No curated rule covered them either. The
+capability shipped; the route to it did not.
+
+Three `_INTENT_RULES` entries added, plus broader task-setup phrasing for
+`assemble_task_context`. Measured on the new harness below: **transform-group
+route recall 0% -> 100%**, all three at rank 1, and **no other query regressed**.
+Overall route recall@3 moved 44.1% -> 49.2%, recall@1 25.4% -> 30.5%.
+
+Ordering is deliberate and load-bearing. A task naming both a data fetch and a
+render ("visualize the call graph") leads with `get_call_hierarchy` and offers
+`render_diagram` as an alternate, because the renderer consumes that output and
+has nothing to draw without it. `tests/test_counter.py` pins both directions.
+
+⚠ `menu()` is unchanged for this group and still does not surface these three.
+`_INTENT_RULES` is not in `menu`'s path -- it ranks name and description text
+only -- so browsing the catalog still will not find them. That is a known gap,
+stated rather than papered over.
+
+### New: `benchmarks/route_recall/` -- the Counter's recall, measured
+
+The Counter cuts resident tool-schema tokens by ~98%. The cost it trades against
+is recall, because an action `route` never proposes is functionally absent. That
+cost had never been measured, which is why `tool_surface=counter` is not the
+default.
+
+`run_route_recall.py` measures `menu()` and `route()` separately against a
+committed query corpus, reporting recall@k, per-group breakdown, and which path
+answered (curated rule vs lexical fallback). It refuses to report a number when a
+corpus target is missing from the live catalog -- a typo there reads as a router
+failure, which is a corpus bug wearing a result's clothes.
+
+Each query also carries a measured **leakage score**: how much of the target
+action's own vocabulary the query hands back. A corpus written by paraphrasing
+tool descriptions measures paraphrase matching, not retrieval, and scores high
+for the wrong reason. On the committed corpus that check found a real inflation
+-- leaky queries score 24.5 points higher than clean ones -- so the honest
+headline is the clean-subset figure, not the flattering aggregate.
+
+⚠ The harness is single-shot. It measures the retriever, not the agent loop
+around it; a real agent re-queries and self-corrects, so effective recall is
+better than the raw number. Do not read it as a failure rate.
+
 ## [Unreleased] - benchmarks: one measurement path, no estimates
 
 No shipped-package changes. Benchmark harnesses, their committed reports, and the

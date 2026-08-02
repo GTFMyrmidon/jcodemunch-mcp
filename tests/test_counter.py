@@ -169,6 +169,59 @@ def test_route_classify_intent_pure():
     assert any(r["action"] in ("find_dead_code", "find_unused_paths") for r in recs)
 
 
+# --- Transform-group routing (measured 0% recall before these rules) -------- #
+# benchmarks/route_recall measured route recall@3 = 0% for the actions that
+# consume ANOTHER tool's output rather than querying the index. Their vocabulary
+# ("diagram", "a plan for renaming", "set me up") appears nowhere in the catalog
+# text the lexical fallback ranks over, so no phrasing could reach them. Pin the
+# rules; re-run the harness after touching _INTENT_RULES.
+
+@pytest.mark.parametrize(
+    "task,expected",
+    [
+        ("draw me a diagram of that", "render_diagram"),
+        ("visualize the call graph", "render_diagram"),
+        ("give me a plan for renaming this across the codebase", "plan_refactoring"),
+        ("walk me through extracting this into a shared module", "plan_refactoring"),
+        ("set me up with everything I need to debug this bug", "assemble_task_context"),
+        ("everything i need to understand this failure", "assemble_task_context"),
+    ],
+)
+def test_transform_intents_route_to_their_action(task, expected):
+    recs = counter.classify_intent(task, server._catalog_names())
+    assert expected in [r["action"] for r in recs], (
+        f"{task!r} did not reach {expected}; got {[r['action'] for r in recs]}"
+    )
+
+
+def test_diagram_rule_does_not_steal_the_graph_rules():
+    """The transform rules use high-precision nouns on purpose. A bare
+    'graph'/'render'/'map' would capture the call-graph, import-graph and
+    topology intents -- the exact failure these rules exist to fix, inverted."""
+    names = server._catalog_names()
+    for task, expected in (
+        ("show me the call graph for this function", "get_call_hierarchy"),
+        ("what does the import graph look like here", "get_dependency_graph"),
+    ):
+        actions = [r["action"] for r in counter.classify_intent(task, names)]
+        assert actions and actions[0] == expected, (
+            f"{task!r} primary should stay {expected}; got {actions}"
+        )
+
+
+def test_transform_rules_yield_primary_to_the_tool_that_feeds_them():
+    """render_diagram consumes another tool's output and has nothing to draw
+    without it, so a task naming BOTH must lead with the data fetch and offer
+    the render as an alternate. This is why the transform block sits late in
+    _INTENT_RULES; moving it above the graph rules silently inverts the pair."""
+    actions = [
+        r["action"]
+        for r in counter.classify_intent("visualize the call graph", server._catalog_names())
+    ]
+    assert actions[0] == "get_call_hierarchy", f"data fetch must lead; got {actions}"
+    assert "render_diagram" in actions, f"render must still be offered; got {actions}"
+
+
 # --- Charter CI gate: the Counter can never expose an exec/write action ----- #
 
 def test_no_catalog_action_trips_exec_tripwire():
