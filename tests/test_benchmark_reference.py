@@ -197,3 +197,48 @@ def test_reference_drift_names_the_corpus_that_moved(rb):
     assert drift and "185 -> 172 files" in drift and "baseline" in drift
     # No entry means no comparison at all — not a silent "no drift".
     assert rb.reference_drift(None, 1, 1) is None
+
+
+# --- The README is the fourth artifact mirroring one benchmark run ---------- #
+# CLAUDE.md names four: results.md, METHODOLOGY.md, README.md, and
+# benchmarks/provenance/measured.json. test_provenance.py gates three of them.
+# The README had no gate, and on 2026-08-02 its header advertised "run
+# 2026-07-23" while its own benchmark section 200 lines below said "run
+# 2026-07-29, v1.108.199" and jcm_reference.json agreed with the latter. The
+# file contradicted itself in public, on PyPI, for the reader most likely to
+# check. Re-syncing three artifacts and missing the fourth is the same defect
+# in a different costume; the fix is a gate on the fourth, not another
+# checklist line.
+
+README = pathlib.Path(__file__).resolve().parents[1] / "README.md"
+
+
+def _reference() -> dict:
+    return json.loads(REFERENCE.read_text(encoding="utf-8"))
+
+
+def test_readme_benchmark_run_date_matches_the_reference():
+    """Every `run YYYY-MM-DD` the README quotes must be the reference's capture
+    date. A second date is a second claim, and only one run happened."""
+    import re
+
+    ref_date = _reference()["captured_at"][:10]
+    quoted = set(re.findall(r"run (\d{4}-\d{2}-\d{2})", README.read_text(encoding="utf-8")))
+    assert quoted, "README quotes no benchmark run date; the provenance was dropped"
+    assert quoted == {ref_date}, (
+        f"README quotes run date(s) {sorted(quoted)} but jcm_reference.json was "
+        f"captured {ref_date}. Re-run `run_benchmark.py --reference` or fix the README; "
+        f"two dates in one file means at least one is wrong."
+    )
+
+
+def test_readme_benchmark_version_matches_the_reference():
+    """The README pins the version the benchmark ran under. It must be the one
+    the artifact records, or the number describes a build nobody measured."""
+    ref = _reference()
+    version = ref["jcodemunch_version"]
+    text = README.read_text(encoding="utf-8")
+    assert f"v{version}" in text, (
+        f"README does not name v{version}, the version jcm_reference.json was "
+        f"measured under (captured {ref['captured_at'][:10]})."
+    )

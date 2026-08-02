@@ -3,8 +3,9 @@
 **The leading, most token-efficient MCP server for precise GitHub source code retrieval via tree-sitter AST parsing.** Cut AI token costs **95%+** on code exploration — stop burning your context window reading entire files.
 
 > **Real results, live from production**
-> **583B+ tokens saved** · **73,000+ developers** · **$2.9M+ in AI spend avoided** · **70,000+ kg CO₂ prevented**
-> Live telemetry at **[jcodemunch.com](https://jcodemunch.com/)** — benchmark: **99.6% average token reduction** (15 tasks / 3 repos, 99.9% peak; run 2026-07-23).
+> **621B+ tokens saved** · **83,000+ reporting installs** · **$3.1M+ in AI spend avoided** · **74,000+ kg CO₂ prevented**
+> Counter figures as of 2026-08-02, valued at the $5/MTok Claude Opus **input** rate. All four only grow, so read them as floors. Live at **[jcodemunch.com](https://jcodemunch.com/)**.
+> Benchmark: **99.6% average token reduction** (15 tasks / 3 repos, 99.9% peak; run 2026-07-29, v1.108.199).
 
 Works with **Autohand Code**, **Claude Code**, **Cursor**, **VS Code**, **Codex CLI**, **Continue**, **Windsurf**, and any MCP-compatible client.
 
