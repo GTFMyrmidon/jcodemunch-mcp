@@ -2,6 +2,62 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.214] - 2026-08-02 - deletion safety as proof obligations, not a score
+
+New `jcodemunch_mcp.investigator` package. First investigation:
+`investigate_deletion_safety(repo, symbol)`.
+
+A tool answers the question it was asked. An investigation decides which
+questions must be answered before a claim is justified, asks them in cost order,
+and reports the ones it could not settle.
+
+That difference is the entire content of this release. The 2026-03-18 dead-code
+A/B measured an agent that held every tool it needed and still got export-level
+liveness wrong in 6 of 6 iterations, because it established that a *file* was
+imported and never asked whether the *export* was used. Re-measured against
+1.108.213 today, `check_references` answers the export question correctly and
+**no aggregate caller asks it.** The capability was never missing. The obligation
+was never raised.
+
+Five obligations, cheapest first, each tri-state (`satisfied` / `refuted` /
+`unestablished`). One function draws conclusions, and it enforces the rule that
+makes the format worth anything: **an unresolved obligation can never produce
+`safe`.**
+
+Verdicts are `safe`, `static_clear`, `unsafe`, `not_established`.
+
+⚠ **`static_clear` exists because strictness alone would have made the verdict
+useless.** Most repositories have never ingested a runtime trace, so
+`no_runtime_evidence` is permanently unresolvable there and `safe` would be
+unreachable for nearly every real user. A constant verdict carries no
+information. `static_clear` states exactly what was established, every
+source-answerable obligation passed, without claiming the one thing source
+cannot show. Obligations therefore declare a `channel`: `static` or `dynamic`.
+
+⚠ **The distinction it protects:** `static_clear` means the dynamic channel is
+open. `not_established` means something source COULD have answered went
+unanswered. Collapsing them would let a failed reference check masquerade as a
+clean scan. Opting out of the runtime check does not upgrade the verdict either;
+declining to look is not evidence.
+
+⚠ **Refutation is qualified by importer liveness.** The first implementation
+called a transitively dead symbol `unsafe` because a dead file imported it.
+Breaking dead code is not breaking anything. When every named importer is itself
+unreachable the obligation is satisfied and a `deletion_cluster` is returned
+naming what must be removed alongside it. The same qualifier is applied to the
+text sweep, or the two obligations disagree about one dead cluster and the weaker
+signal silently wins. Importer liveness walks **one level only**, deliberately;
+an importer we cannot classify counts as reachable, so uncertainty blocks
+deletion rather than permitting it.
+
+Not registered as an MCP tool. Route recall at rank one was measured at 42.4%
+this morning, and adding a 92nd action ahead of that measurement improving is the
+behaviour 1.108.213 exists to argue against. It is importable and tested; wiring
+it to the surface is a separate decision.
+
+Tests: `tests/test_investigator_deletion_safety.py` (19), including the three A/B
+gap shapes rebuilt as a fixture.
+
 ## [1.108.213] - 2026-08-02 - the Counter stopped ranking on the word "me"
 
 `menu()` and `route()` were ranking the catalog on English function words, and it
