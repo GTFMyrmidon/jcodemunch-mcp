@@ -1574,6 +1574,140 @@ class SQLiteIndexStore:
             _cache_put(owner, safe_name, post_mtime_ns, index, branch)
             return _stamp_load_provenance(index, db_path, post_mtime_ns)
 
+    # ── Selective read path (#398 Arc 2) ─────────────────────────────
+
+    #: Chunk size for `id IN (...)`. SQLITE_MAX_VARIABLE_NUMBER is 32766 on
+    #: modern builds and 999 on older ones; 900 clears the floor with headroom.
+    _SELECT_CHUNK = 900
+
+    def open_selective(
+        self,
+        owner: str,
+        name: str,
+        *,
+        symbol_ids: Optional[list] = None,
+        files: Optional[list] = None,
+        branch: str = "",
+    ):
+        """One read transaction: repo + file metadata, plus only named symbols.
+
+        Returns a ``SelectiveIndexView`` or ``None``. ``None`` means *use
+        ``load_index``* — it is never an absence claim about the repository, and
+        every caller must treat it as "take the ordinary path".
+
+        ⚠ **A non-empty branch always returns None.** A branch view is
+        ``load_index`` composed with a delta, including the staleness warning
+        when the base moved underneath it. Reproducing that against a partial row
+        set would change branch behaviour, which the close condition forbids.
+        Promotion is the honest answer, and it is one line rather than a second
+        implementation of delta composition.
+
+        ⚠ No read here uses ``immutable=1``; see ``storage/selective.py``.
+        """
+        _ensure_index_store_deps()
+        if branch:
+            return None
+        safe_name = self._safe_repo_component(name, "name")
+        db_path = self._db_path(owner, safe_name)
+        if not db_path.exists():
+            return None
+
+        # A cached full index already answers everything, exactly, for free.
+        # Paying for a second (narrower) read would be strictly worse.
+        try:
+            mtime_ns = _db_mtime_ns(db_path)
+        except OSError:
+            return None
+        cached = _cache_get(owner, safe_name, mtime_ns, branch)
+        if cached is not None:
+            return _stamp_load_provenance(cached, db_path, mtime_ns)
+
+        from .generation import connect_readonly
+        from .selective import SelectiveIndexView
+
+        try:
+            conn = connect_readonly(db_path)
+        except Exception:
+            logger.debug("Selective open failed for %s", db_path, exc_info=True)
+            return None
+        conn.row_factory = sqlite3.Row
+        try:
+            # One read transaction, so the meta, files and symbols rows all
+            # describe the same generation (Arc 1's consistency guarantee).
+            conn.execute("BEGIN")
+            try:
+                meta = self._read_meta(conn)
+                if not meta:
+                    return None
+                try:
+                    stored_version = int(meta.get("index_version", "0"))
+                except (TypeError, ValueError):
+                    return None
+                if stored_version > cast(int, _INDEX_VERSION):
+                    return None
+
+                file_rows = conn.execute("SELECT * FROM files").fetchall()
+
+                symbol_rows: list = []
+                if symbol_ids:
+                    ids = [s for s in dict.fromkeys(symbol_ids) if s]
+                    for start in range(0, len(ids), self._SELECT_CHUNK):
+                        chunk = ids[start:start + self._SELECT_CHUNK]
+                        marks = ",".join("?" * len(chunk))
+                        symbol_rows.extend(
+                            conn.execute(
+                                f"SELECT * FROM symbols WHERE id IN ({marks})", chunk
+                            ).fetchall()
+                        )
+                if files:
+                    paths = [f for f in dict.fromkeys(files) if f]
+                    for start in range(0, len(paths), self._SELECT_CHUNK):
+                        chunk = paths[start:start + self._SELECT_CHUNK]
+                        marks = ",".join("?" * len(chunk))
+                        symbol_rows.extend(
+                            conn.execute(
+                                f"SELECT * FROM symbols WHERE file IN ({marks})", chunk
+                            ).fetchall()
+                        )
+                partial = self._build_index_from_rows(
+                    meta, symbol_rows, file_rows, owner, name
+                )
+            finally:
+                conn.rollback()
+        except sqlite3.DatabaseError:
+            logger.debug("Corrupt SQLite index at %s during selective open",
+                         db_path, exc_info=True)
+            return None
+        finally:
+            conn.close()
+
+        view = SelectiveIndexView(
+            partial,
+            promote=lambda: self.load_index(owner, name, branch),
+            fetch_symbol=lambda sid: self._fetch_symbol_row(db_path, sid),
+            generation=meta.get("indexed_at") or None,
+        )
+        return _stamp_load_provenance(view, db_path, mtime_ns)
+
+    def _fetch_symbol_row(self, db_path: Path, symbol_id: str) -> Optional[dict]:
+        """One symbol row, read-only. Raises so the caller can promote.
+
+        Deliberately NOT ``get_symbol_by_id``: that opens through ``_connect``,
+        which runs PRAGMA and CREATE-TABLE on every connection and therefore
+        moves the database mtime on a pure read — the v1.108.185 defect.
+        """
+        from .generation import connect_readonly
+
+        conn = connect_readonly(db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            row = conn.execute(
+                "SELECT * FROM symbols WHERE id = ?", (symbol_id,)
+            ).fetchone()
+            return self._row_to_symbol_dict(row) if row is not None else None
+        finally:
+            conn.close()
+
     def inspect_index(self, owner: str, name: str, branch: str = ""):
         """Check SQLite index presence and compatibility without loading rows."""
         _ensure_index_store_deps()

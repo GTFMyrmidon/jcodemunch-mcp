@@ -2,6 +2,96 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.216] - 2026-08-02 - a narrow read stays narrow, or it promotes
+
+#398 Arc 2 (@rknighton), transactional selective code snapshots, built on the
+Arc 1 read contract that shipped in .215.
+
+`load_index` runs `SELECT * FROM symbols` and builds the whole `CodeIndex`
+before anyone can ask it anything. Issue #370 measured what that costs at scale:
+thirteen concurrent cold searches over 665,982 symbols, 7.5-11.4 minutes each,
+~16.4 GiB, every caller hydrating independently. A tool that wants one symbol
+body pays for the entire corpus.
+
+New `storage/selective.py` + `store.open_selective()`. One read transaction
+reads repository metadata, **all** file rows, and only the symbol rows the
+caller named. Reading every file row is deliberate: the `files` table is bounded
+by file count rather than symbol count, so it is cheap, and it keeps every
+file-level answer — `source_files`, `has_source_file`, `file_languages`,
+`imports`, coverage — exact rather than partial.
+
+### The promotion boundary is the whole design
+
+A view that answers a corpus-wide question from a partial row set is a false
+absence generator, which is the exact defect class .215 shipped a release to
+close. So the boundary is enforced structurally, not by discipline:
+
+- every field that is exact on a selective read is copied onto the instance at
+  construction, so ordinary attribute lookup finds it;
+- everything else falls through `__getattr__`, which loads the full index once
+  and delegates — `symbols`, `search`, `get_callers_by_name`, the BM25 caches,
+  **and any field added to `CodeIndex` in the future.**
+
+⚠ **The fail-safe direction is load-bearing.** A field invented next year is
+unknown to this module, and unknown promotes. Forgetting to update this file
+makes a request *slower*, never *wrong*. A test monkeypatches a fake future
+field onto `CodeIndex` and asserts it promotes.
+
+⚠ `get_symbol` is the one accessor that never promotes, because it does not
+have to: a miss against the preloaded set is a targeted single-row read, exact
+for any id in the database. **But if that read raises, it promotes rather than
+returning `None`** — could-not-establish must never be served as
+could-not-find, the same distinction `static_clear` protects in the
+investigator.
+
+⚠⚠ **The near-miss worth recording.** `_stamp_load_provenance` writes `_db_path`
+and `_loaded_mtime_ns` onto the index, and the view uses `__slots__`. Without
+those two slots the writes are swallowed by that function's `except Exception`,
+and then `subject_state.capture` — which runs on essentially every response —
+hits `__getattr__` and hydrates the whole corpus to answer a question about a
+file's mtime. The arc would have measured as a regression on every verdict path
+while every test about symbols still passed. Pinned by name.
+
+### Wired caller
+
+`get_symbol_source` takes the selective path: the caller already knows every id
+it wants, so a full hydration has nothing to contribute. Responses are asserted
+byte-identical against the un-selective path on a hit, a batch, and a miss. The
+miss is the interesting one — `did_you_mean` needs the whole corpus and
+therefore promotes. Paying for the corpus to spell-check a wrong id is the right
+trade; paying for it to serve a correct one is not.
+
+A non-empty branch returns `None` outright and the caller takes the ordinary
+path. A branch view is `load_index` composed with a delta, including the
+stale-base warning; reproducing that against a partial row set would change
+branch behaviour, which the close condition forbids. `None` from
+`open_selective` is never an absence claim — it means *use `load_index`*, which
+is also the JSON auto-migration path.
+
+⚠⚠ **No read on this path uses `immutable=1`,** and it is not a matter of
+remembering: every connection goes through `generation.connect_readonly`, and
+.215's convention test fails on a hand-rolled read-only URI anywhere outside
+`storage/generation.py`. The trade-off that flag accepts is channel-specific —
+on the similarity channel a missed vector only weakens a ranking; here the reads
+are exact rows, and an invisible row is a symbol that exists and was not
+returned.
+
+### Measured
+
+Both sides in one interleaved run, cold cache each iteration, on jcm's own
+index (12,826 symbols / 726 files): selective median **7.6 ms** vs hydrate
+median **159.7 ms**, ratio **20.96x**; a file-scoped open was 7.9 ms for 23
+rows.
+
+⚠ **That is one shape on one corpus and it is not the arc's headline.** It is
+the narrowest possible call on the control corpus. The reporter's 2.24x-2.35x
+was a median across a mixed group, and Django and FastAPI are the load-bearing
+points. Nothing here goes into a shipped artifact without a re-measure on the
+authoritative corpora.
+
+Tests: `tests/test_selective_snapshot.py` (33). Full suite 6513 passed,
+7 skipped, 0 failed.
+
 ## [1.108.215] - 2026-08-02 - one read contract, and a false absence it was hiding
 
 #398 Arc 1 (@rknighton), the generation-safe read contract. The reporter's own

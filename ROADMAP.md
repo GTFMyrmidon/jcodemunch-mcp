@@ -596,6 +596,37 @@ fails on any hand-rolled read-only URI outside `storage/generation.py`.
 suggestions, ordering, branch behavior, or response fields; **and no read on this
 path uses `immutable=1`.**
 
+✅ **SHIPPED v1.108.216.** `storage/selective.py` + `store.open_selective()`;
+`get_symbol_source` is the first wired caller, byte-identical on hit, batch and
+miss. A non-empty branch returns `None` (take the ordinary path) rather than
+reproducing delta composition against a partial row set.
+
+⚠ **The promotion boundary is `__getattr__`, not an allow-list, and that choice
+is the arc.** Exact fields are copied onto the instance; everything else falls
+through and promotes, **including fields that do not exist yet**. Forgetting to
+update the module makes a request slower, never wrong. A test proves it with a
+fake future field.
+
+⚠⚠ **Near-miss worth not repeating.** The view uses `__slots__`, and
+`_stamp_load_provenance` writes `_db_path`/`_loaded_mtime_ns` inside a bare
+`except Exception`. Omitting those two slots would have sent
+`subject_state.capture` — which runs on essentially every response — through
+`__getattr__`, hydrating the whole corpus to answer a question about a file
+mtime, **while every test about symbols still passed**. A silent swallow plus a
+promoting fallback is a performance defect that hides behind green tests.
+
+**Measured on our side** (both sides, one interleaved run, cold cache each
+iteration), jcm's own index at 12,826 symbols: selective median 7.6 ms vs
+hydrate 159.7 ms, **20.96x**. ⚠ **Not quotable as the arc's result** — narrowest
+possible call, control corpus. The 2.24x-2.35x figure is a mixed-group median;
+Django and FastAPI remain the load-bearing points and neither has been
+re-measured here.
+
+**Remaining, not blocking the close:** only `get_symbol_source` is wired.
+`get_file_outline` and `get_context_bundle` are the obvious next callers (the
+`files=` scope already exists and is tested); each is a separate wiring with its
+own parity assertion, not a change to this path.
+
 ### Arc 3 — generation-scoped shared promotion — GATED
 
 Promote a broad request's snapshot into one immutable full view keyed by the code

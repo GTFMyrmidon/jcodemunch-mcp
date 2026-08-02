@@ -267,7 +267,15 @@ def get_symbol_source(
         return {"error": str(e)}
 
     store = IndexStore(base_path=storage_path)
-    index = store.load_index(owner, name)
+    # #398 Arc 2: this is the canonical narrow call — the caller already knows
+    # every id it wants, so there is nothing for a full hydration to contribute.
+    # The view answers `get_symbol` and the file-level metadata exactly, and
+    # promotes on `index.symbols` below, which is reached only on a MISS to
+    # build `did_you_mean`. Paying for the corpus to spell-check a wrong id is
+    # the right trade; paying for it to serve a correct one is not.
+    index = store.open_selective(owner, name, symbol_ids=list(ids))
+    if index is None:
+        index = store.load_index(owner, name)
 
     if not index:
         return index_status_to_tool_error(store.inspect_index(owner, name))

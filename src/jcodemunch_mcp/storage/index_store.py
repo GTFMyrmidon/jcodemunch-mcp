@@ -709,6 +709,16 @@ class IndexStore:
 
         return None
 
+    def open_selective(self, owner: str, name: str, **kwargs):
+        """Selective read view, or None meaning *use ``load_index``* (#398 Arc 2).
+
+        ⚠ ``None`` is never an absence claim about the repository. Every caller
+        must fall back to ``load_index``, which is also the JSON auto-migration
+        path — a legacy JSON-only repo has no SQLite rows to select from and
+        must migrate before anything can read it.
+        """
+        return self._sqlite.open_selective(owner, name, **kwargs)
+
     def get_symbol_content(self, owner: str, name: str, symbol_id: str, _index: Optional["CodeIndex"] = None) -> Optional[str]:
         """Read symbol source using stored byte offsets.
 
