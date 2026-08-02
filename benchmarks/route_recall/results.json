@@ -3,14 +3,14 @@
     "queries": 59,
     "catalog_actions": 91,
     "menu_recall": {
-      "@1": 40.7,
-      "@3": 61.0,
-      "@5": 67.8,
-      "@10": 76.3
+      "@1": 44.1,
+      "@3": 67.8,
+      "@5": 74.6,
+      "@10": 78.0
     },
     "route_recall": {
-      "@1": 42.4,
-      "@3": 59.3
+      "@1": 45.8,
+      "@3": 64.4
     },
     "route_path_split": {
       "rule": 15,
@@ -20,14 +20,11 @@
       "which file contains the message connection refused",
       "find every place we swallow an exception without logging",
       "list functions longer than 50 lines with deep nesting in the parser",
-      "pull together the most relevant code for this task under a token budget",
-      "I do not know this repo, what should I look at first",
       "show me the body of this function",
       "I need this function plus everything it imports",
       "is this name used anywhere at all or can I drop it",
       "what breaks if I change the POST orders endpoint",
       "what is the import chain from this file outward",
-      "what directories and files are in here",
       "what are the natural modules in this system",
       "where is every route annotation in the project",
       "how concentrated is this codebase and how deep does it nest",
@@ -50,7 +47,6 @@
       "I need this function plus everything it imports",
       "who calls this",
       "what is the import chain from this file outward",
-      "what directories and files are in here",
       "what are the natural modules in this system",
       "how concentrated is this codebase and how deep does it nest",
       "how risky is this pull request",
@@ -59,9 +55,9 @@
       "how much of this code actually runs in production"
     ],
     "leakage": {
-      "mean_name_overlap": 0.127,
-      "mean_desc_overlap": 0.329,
-      "queries_containing_target_name_token": 18,
+      "mean_name_overlap": 0.133,
+      "mean_desc_overlap": 0.338,
+      "queries_containing_target_name_token": 19,
       "high_leak_queries": [
         "what columns does the orders model have",
         "which symbols changed between these two commits",
@@ -162,9 +158,10 @@
       "query": "list functions longer than 50 lines with deep nesting in the parser",
       "group": "locate",
       "targets": [
+        "search_ast",
         "winnow_symbols"
       ],
-      "menu_rank": 7,
+      "menu_rank": 4,
       "route_rank": null,
       "route_path": "fallback",
       "menu_top3": [
@@ -184,7 +181,8 @@
       "query": "what classes implement this interface",
       "group": "locate",
       "targets": [
-        "find_implementations"
+        "find_implementations",
+        "get_class_hierarchy"
       ],
       "menu_rank": 1,
       "route_rank": 1,
@@ -251,10 +249,11 @@
       "query": "pull together the most relevant code for this task under a token budget",
       "group": "locate",
       "targets": [
+        "assemble_task_context",
         "get_ranked_context"
       ],
-      "menu_rank": 4,
-      "route_rank": null,
+      "menu_rank": 1,
+      "route_rank": 1,
       "route_path": "fallback",
       "menu_top3": [
         "assemble_task_context",
@@ -266,7 +265,7 @@
         "find_dead_code",
         "get_dead_code_v2"
       ],
-      "leak_name": 0.0,
+      "leak_name": 0.333,
       "leak_desc": 0.538
     },
     {
@@ -274,11 +273,12 @@
       "group": "locate",
       "targets": [
         "digest",
+        "get_repo_map",
         "get_repo_outline",
         "suggest_queries"
       ],
-      "menu_rank": 10,
-      "route_rank": null,
+      "menu_rank": 1,
+      "route_rank": 1,
       "route_path": "fallback",
       "menu_top3": [
         "get_repo_map",
@@ -291,7 +291,7 @@
         "embed_repo"
       ],
       "leak_name": 0.333,
-      "leak_desc": 0.182
+      "leak_desc": 0.545
     },
     {
       "query": "show me the body of this function",
@@ -385,10 +385,11 @@
       "query": "what breaks if I change this function",
       "group": "relate",
       "targets": [
+        "check_edit_safe",
         "get_blast_radius",
         "get_impact_preview"
       ],
-      "menu_rank": 7,
+      "menu_rank": 3,
       "route_rank": 1,
       "route_path": "rule",
       "menu_top3": [
@@ -427,7 +428,8 @@
       "query": "which files import this module",
       "group": "relate",
       "targets": [
-        "find_importers"
+        "find_importers",
+        "find_references"
       ],
       "menu_rank": 2,
       "route_rank": 2,
@@ -450,7 +452,8 @@
       "group": "relate",
       "targets": [
         "check_delete_safe",
-        "check_references"
+        "check_references",
+        "find_references"
       ],
       "menu_rank": 5,
       "route_rank": null,
@@ -466,7 +469,7 @@
         "get_parity_map"
       ],
       "leak_name": 0.0,
-      "leak_desc": 0.167
+      "leak_desc": 0.333
     },
     {
       "query": "what does this class inherit from and what extends it",
@@ -646,10 +649,11 @@
       "query": "what directories and files are in here",
       "group": "shape",
       "targets": [
-        "get_file_tree"
+        "get_file_tree",
+        "get_repo_outline"
       ],
-      "menu_rank": null,
-      "route_rank": null,
+      "menu_rank": 2,
+      "route_rank": 2,
       "route_path": "fallback",
       "menu_top3": [
         "get_repo_map",
@@ -862,7 +866,8 @@
       "query": "am I going to break callers if I edit this signature",
       "group": "assess",
       "targets": [
-        "check_edit_safe"
+        "check_edit_safe",
+        "get_impact_preview"
       ],
       "menu_rank": 1,
       "route_rank": null,
@@ -986,6 +991,7 @@
       "query": "which modules are too tangled together",
       "group": "assess",
       "targets": [
+        "get_architecture_metrics",
         "get_coupling_metrics"
       ],
       "menu_rank": 3,
@@ -1030,6 +1036,7 @@
       "query": "which code should be pulled out into a shared module",
       "group": "assess",
       "targets": [
+        "find_similar_symbols",
         "get_extraction_candidates"
       ],
       "menu_rank": 3,
@@ -1118,7 +1125,8 @@
       "query": "is our CLAUDE.md wasting tokens on stale instructions",
       "group": "assess",
       "targets": [
-        "audit_agent_config"
+        "audit_agent_config",
+        "suggest_corrections"
       ],
       "menu_rank": 1,
       "route_rank": 1,

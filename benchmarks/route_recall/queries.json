@@ -1,89 +1,490 @@
 {
-  "_README": [
-    "Query corpus for measuring menu()/route() recall over the jCodeMunch catalog.",
-    "",
-    "LEAKAGE DISCIPLINE (read before adding a query):",
-    "Each query MUST be written as the task a user actually has, phrased in the",
-    "user's vocabulary, WITHOUT the target tool's name or description in view.",
-    "A query built by paraphrasing a tool description measures paraphrase matching,",
-    "not retrieval, and will score near-perfectly for the wrong reason. The harness",
-    "computes a per-query leakage score (shared rare tokens with the target's",
-    "name + description) so this stays measured rather than promised. See",
-    "benchmarks/README.md and the planted_queries.json precedent: a max-leakage",
-    "corpus is a fixture, never a retrieval score.",
-    "",
-    "TARGETS: 'targets' lists every action that would be an ACCEPTABLE answer.",
-    "'ideal' (optional) is the single best action when one clearly dominates.",
-    "Recall@k credits any member of 'targets'. Precision@1 credits only 'ideal'",
-    "when present. Multi-target entries are deliberate: several questions in this",
-    "domain have more than one defensible answer, and a harness that pretends",
-    "otherwise measures the author's opinion instead of the router."
-  ],
-  "queries": [
-    {"q": "where is the function that validates auth tokens", "targets": ["search_symbols"], "group": "locate"},
-    {"q": "which file contains the message connection refused", "targets": ["search_text"], "group": "locate"},
-    {"q": "find every place we swallow an exception without logging", "targets": ["search_ast"], "group": "locate"},
-    {"q": "what columns does the orders model have", "targets": ["search_columns"], "group": "locate"},
-    {"q": "list functions longer than 50 lines with deep nesting in the parser", "targets": ["winnow_symbols"], "group": "locate"},
-    {"q": "what classes implement this interface", "targets": ["find_implementations"], "group": "locate"},
-    {"q": "do we have two copies of the same logic somewhere", "targets": ["find_similar_symbols"], "group": "locate"},
-    {"q": "which symbols changed between these two commits", "targets": ["get_changed_symbols", "get_symbol_diff"], "group": "locate"},
-    {"q": "pull together the most relevant code for this task under a token budget", "targets": ["get_ranked_context"], "group": "locate"},
-    {"q": "I do not know this repo, what should I look at first", "targets": ["suggest_queries", "get_repo_outline", "digest"], "group": "locate"},
-
-    {"q": "show me the body of this function", "targets": ["get_symbol_source"], "group": "expand"},
-    {"q": "give me lines 40 through 90 of that file", "targets": ["get_file_content"], "group": "expand"},
-    {"q": "I need this function plus everything it imports", "targets": ["get_context_bundle"], "group": "expand"},
-    {"q": "what functions and classes live in this file", "targets": ["get_file_outline"], "group": "expand"},
-
-    {"q": "what breaks if I change this function", "targets": ["get_blast_radius", "get_impact_preview"], "group": "relate"},
-    {"q": "who calls this", "targets": ["get_call_hierarchy", "find_references"], "group": "relate"},
-    {"q": "which files import this module", "targets": ["find_importers"], "group": "relate"},
-    {"q": "is this name used anywhere at all or can I drop it", "targets": ["check_references", "check_delete_safe"], "group": "relate"},
-    {"q": "what does this class inherit from and what extends it", "targets": ["get_class_hierarchy"], "group": "relate"},
-    {"q": "do we have circular imports", "targets": ["get_dependency_cycles"], "group": "relate"},
-    {"q": "what breaks if I change the POST orders endpoint", "targets": ["get_endpoint_impact"], "group": "relate"},
-    {"q": "how does an incoming HTTP request travel through this code", "targets": ["get_signal_chains"], "group": "relate"},
-    {"q": "who wrote this and why has it kept changing", "targets": ["get_symbol_provenance"], "group": "relate"},
-    {"q": "which of our repos depend on which other ones", "targets": ["get_cross_repo_map"], "group": "relate"},
-    {"q": "what is the import chain from this file outward", "targets": ["get_dependency_graph"], "group": "relate"},
-
-    {"q": "give me an overview of this codebase", "targets": ["get_repo_outline", "get_repo_map", "digest"], "group": "shape"},
-    {"q": "what directories and files are in here", "targets": ["get_file_tree"], "group": "shape"},
-    {"q": "what are the natural modules in this system", "targets": ["get_tectonic_map"], "group": "shape"},
-    {"q": "where is every route annotation in the project", "targets": ["get_decorator_census"], "group": "shape"},
-    {"q": "what packages make up this monorepo", "targets": ["list_workspaces"], "group": "shape"},
-    {"q": "what does the docker and CI setup do here", "targets": ["get_project_intel"], "group": "shape"},
-    {"q": "how concentrated is this codebase and how deep does it nest", "targets": ["get_architecture_metrics"], "group": "shape"},
-    {"q": "which symbols matter most architecturally", "targets": ["get_symbol_importance"], "group": "shape"},
-
-    {"q": "what are the riskiest parts of this repo", "targets": ["get_hotspots", "get_repo_health", "get_file_risk"], "group": "assess"},
-    {"q": "is it safe to delete this function", "targets": ["check_delete_safe"], "group": "assess"},
-    {"q": "will renaming this collide with something else", "targets": ["check_rename_safe"], "group": "assess"},
-    {"q": "am I going to break callers if I edit this signature", "targets": ["check_edit_safe"], "group": "assess"},
-    {"q": "what code here is never used", "targets": ["find_dead_code", "get_dead_code_v2"], "group": "assess"},
-    {"q": "which functions have no test covering them", "targets": ["get_untested_symbols"], "group": "assess"},
-    {"q": "how risky is this pull request", "targets": ["get_pr_risk_profile"], "group": "assess"},
-    {"q": "how often does this file get touched", "targets": ["get_churn_rate"], "group": "assess"},
-    {"q": "how complicated is this one function", "targets": ["get_symbol_complexity"], "group": "assess"},
-    {"q": "which modules are too tangled together", "targets": ["get_coupling_metrics"], "group": "assess"},
-    {"q": "are we breaking our own layering rules", "targets": ["get_layer_violations"], "group": "assess"},
-    {"q": "which code should be pulled out into a shared module", "targets": ["get_extraction_candidates"], "group": "assess"},
-    {"q": "how much of this code actually runs in production", "targets": ["get_runtime_coverage"], "group": "assess"},
-    {"q": "which functions are hit hardest at runtime", "targets": ["find_hot_paths"], "group": "assess"},
-    {"q": "what have we shipped that stuck over the last month", "targets": ["get_delivery_metrics"], "group": "assess"},
-    {"q": "is our CLAUDE.md wasting tokens on stale instructions", "targets": ["audit_agent_config"], "group": "assess"},
-
-    {"q": "read this folder in so I can ask about it", "targets": ["index_folder"], "group": "ingest"},
-    {"q": "pull down a github project so I can explore it", "targets": ["index_repo"], "group": "ingest"},
-    {"q": "I just edited a file, refresh it", "targets": ["index_file", "register_edit"], "group": "ingest"},
-    {"q": "turn on semantic search for this project", "targets": ["embed_repo"], "group": "ingest"},
-
-    {"q": "how many tokens have I saved so far", "targets": ["get_session_stats"], "group": "meta"},
-    {"q": "what have I been doing this session", "targets": ["get_session_context", "get_session_snapshot"], "group": "meta"},
-    {"q": "what changed since I last worked on this", "targets": ["digest", "get_changed_symbols"], "group": "meta"},
-    {"q": "draw me a diagram of that", "targets": ["render_diagram"], "group": "transform"},
-    {"q": "give me a plan for renaming this across the codebase", "targets": ["plan_refactoring"], "group": "transform"},
-    {"q": "set me up with everything I need to debug this bug", "targets": ["assemble_task_context"], "group": "transform"}
-  ]
+ "_README": [
+  "Query corpus for measuring menu()/route() recall over the jCodeMunch catalog.",
+  "",
+  "LEAKAGE DISCIPLINE (read before adding a query):",
+  "Each query MUST be written as the task a user actually has, phrased in the",
+  "user's vocabulary, WITHOUT the target tool's name or description in view.",
+  "A query built by paraphrasing a tool description measures paraphrase matching,",
+  "not retrieval, and will score near-perfectly for the wrong reason. The harness",
+  "computes a per-query leakage score (shared rare tokens with the target's",
+  "name + description) so this stays measured rather than promised. See",
+  "benchmarks/README.md and the planted_queries.json precedent: a max-leakage",
+  "corpus is a fixture, never a retrieval score.",
+  "",
+  "TARGETS: 'targets' lists every action that would be an ACCEPTABLE answer.",
+  "'ideal' (optional) is the single best action when one clearly dominates.",
+  "Recall@k credits any member of 'targets'. Precision@1 credits only 'ideal'",
+  "when present. Multi-target entries are deliberate: several questions in this",
+  "domain have more than one defensible answer, and a harness that pretends",
+  "otherwise measures the author's opinion instead of the router.",
+  "",
+  "TARGET AUDIT 2026-08-02 (v1.108.218). The retrieval counterfactual shipped in",
+  "v1.108.217 surfaced that this corpus violated its own rule above: a query lost",
+  "to get_repo_map, which is a correct answer its target list omitted. Every one",
+  "of the 59 target lists was then re-reviewed against the catalog descriptions",
+  "in ALPHABETICAL order, deliberately WITHOUT consulting any ranking -- using",
+  "'what currently ranks high' as the candidate generator is the leakage",
+  "mechanism itself, because every accepted correction would then raise the score",
+  "by construction. Test applied: would a user receiving this action's output",
+  "consider the question answered, without needing a different call?",
+  "",
+  "Result: 12 additions across 12 queries, 0 removals. The asymmetry is disclosed",
+  "rather than balanced -- manufacturing a removal for symmetry would be a worse",
+  "error than the asymmetry. Two over-generous targets were considered and KEPT",
+  "because the case against each was arguable, not clear: get_symbol_diff on",
+  "'which symbols changed between these two commits' (it diffs snapshots, not",
+  "commits) and register_edit on 'I just edited a file, refresh it' (it",
+  "invalidates caches without re-indexing).",
+  "",
+  "The five misses this audit deliberately did NOT rescue are the ones where the",
+  "proposed action genuinely cannot answer -- e.g. route offers get_blast_radius",
+  "for 'what breaks if I change the POST orders endpoint', and get_blast_radius",
+  "does not accept an endpoint. Those stay misses.",
+  "",
+  "A recall figure measured after this audit is NOT comparable with one measured",
+  "before it. The pre-audit number was route@1 42.4 / @3 59.3, menu@1 40.7 /",
+  "@3 61.0; quote the delta as a corpus correction, never as a routing gain."
+ ],
+ "queries": [
+  {
+   "q": "where is the function that validates auth tokens",
+   "targets": [
+    "search_symbols"
+   ],
+   "group": "locate"
+  },
+  {
+   "q": "which file contains the message connection refused",
+   "targets": [
+    "search_text"
+   ],
+   "group": "locate"
+  },
+  {
+   "q": "find every place we swallow an exception without logging",
+   "targets": [
+    "search_ast"
+   ],
+   "group": "locate"
+  },
+  {
+   "q": "what columns does the orders model have",
+   "targets": [
+    "search_columns"
+   ],
+   "group": "locate"
+  },
+  {
+   "q": "list functions longer than 50 lines with deep nesting in the parser",
+   "targets": [
+    "winnow_symbols",
+    "search_ast"
+   ],
+   "group": "locate"
+  },
+  {
+   "q": "what classes implement this interface",
+   "targets": [
+    "find_implementations",
+    "get_class_hierarchy"
+   ],
+   "group": "locate"
+  },
+  {
+   "q": "do we have two copies of the same logic somewhere",
+   "targets": [
+    "find_similar_symbols"
+   ],
+   "group": "locate"
+  },
+  {
+   "q": "which symbols changed between these two commits",
+   "targets": [
+    "get_changed_symbols",
+    "get_symbol_diff"
+   ],
+   "group": "locate"
+  },
+  {
+   "q": "pull together the most relevant code for this task under a token budget",
+   "targets": [
+    "get_ranked_context",
+    "assemble_task_context"
+   ],
+   "group": "locate"
+  },
+  {
+   "q": "I do not know this repo, what should I look at first",
+   "targets": [
+    "suggest_queries",
+    "get_repo_outline",
+    "digest",
+    "get_repo_map"
+   ],
+   "group": "locate"
+  },
+  {
+   "q": "show me the body of this function",
+   "targets": [
+    "get_symbol_source"
+   ],
+   "group": "expand"
+  },
+  {
+   "q": "give me lines 40 through 90 of that file",
+   "targets": [
+    "get_file_content"
+   ],
+   "group": "expand"
+  },
+  {
+   "q": "I need this function plus everything it imports",
+   "targets": [
+    "get_context_bundle"
+   ],
+   "group": "expand"
+  },
+  {
+   "q": "what functions and classes live in this file",
+   "targets": [
+    "get_file_outline"
+   ],
+   "group": "expand"
+  },
+  {
+   "q": "what breaks if I change this function",
+   "targets": [
+    "get_blast_radius",
+    "get_impact_preview",
+    "check_edit_safe"
+   ],
+   "group": "relate"
+  },
+  {
+   "q": "who calls this",
+   "targets": [
+    "get_call_hierarchy",
+    "find_references"
+   ],
+   "group": "relate"
+  },
+  {
+   "q": "which files import this module",
+   "targets": [
+    "find_importers",
+    "find_references"
+   ],
+   "group": "relate"
+  },
+  {
+   "q": "is this name used anywhere at all or can I drop it",
+   "targets": [
+    "check_references",
+    "check_delete_safe",
+    "find_references"
+   ],
+   "group": "relate"
+  },
+  {
+   "q": "what does this class inherit from and what extends it",
+   "targets": [
+    "get_class_hierarchy"
+   ],
+   "group": "relate"
+  },
+  {
+   "q": "do we have circular imports",
+   "targets": [
+    "get_dependency_cycles"
+   ],
+   "group": "relate"
+  },
+  {
+   "q": "what breaks if I change the POST orders endpoint",
+   "targets": [
+    "get_endpoint_impact"
+   ],
+   "group": "relate"
+  },
+  {
+   "q": "how does an incoming HTTP request travel through this code",
+   "targets": [
+    "get_signal_chains"
+   ],
+   "group": "relate"
+  },
+  {
+   "q": "who wrote this and why has it kept changing",
+   "targets": [
+    "get_symbol_provenance"
+   ],
+   "group": "relate"
+  },
+  {
+   "q": "which of our repos depend on which other ones",
+   "targets": [
+    "get_cross_repo_map"
+   ],
+   "group": "relate"
+  },
+  {
+   "q": "what is the import chain from this file outward",
+   "targets": [
+    "get_dependency_graph"
+   ],
+   "group": "relate"
+  },
+  {
+   "q": "give me an overview of this codebase",
+   "targets": [
+    "get_repo_outline",
+    "get_repo_map",
+    "digest"
+   ],
+   "group": "shape"
+  },
+  {
+   "q": "what directories and files are in here",
+   "targets": [
+    "get_file_tree",
+    "get_repo_outline"
+   ],
+   "group": "shape"
+  },
+  {
+   "q": "what are the natural modules in this system",
+   "targets": [
+    "get_tectonic_map"
+   ],
+   "group": "shape"
+  },
+  {
+   "q": "where is every route annotation in the project",
+   "targets": [
+    "get_decorator_census"
+   ],
+   "group": "shape"
+  },
+  {
+   "q": "what packages make up this monorepo",
+   "targets": [
+    "list_workspaces"
+   ],
+   "group": "shape"
+  },
+  {
+   "q": "what does the docker and CI setup do here",
+   "targets": [
+    "get_project_intel"
+   ],
+   "group": "shape"
+  },
+  {
+   "q": "how concentrated is this codebase and how deep does it nest",
+   "targets": [
+    "get_architecture_metrics"
+   ],
+   "group": "shape"
+  },
+  {
+   "q": "which symbols matter most architecturally",
+   "targets": [
+    "get_symbol_importance"
+   ],
+   "group": "shape"
+  },
+  {
+   "q": "what are the riskiest parts of this repo",
+   "targets": [
+    "get_hotspots",
+    "get_repo_health",
+    "get_file_risk"
+   ],
+   "group": "assess"
+  },
+  {
+   "q": "is it safe to delete this function",
+   "targets": [
+    "check_delete_safe"
+   ],
+   "group": "assess"
+  },
+  {
+   "q": "will renaming this collide with something else",
+   "targets": [
+    "check_rename_safe"
+   ],
+   "group": "assess"
+  },
+  {
+   "q": "am I going to break callers if I edit this signature",
+   "targets": [
+    "check_edit_safe",
+    "get_impact_preview"
+   ],
+   "group": "assess"
+  },
+  {
+   "q": "what code here is never used",
+   "targets": [
+    "find_dead_code",
+    "get_dead_code_v2"
+   ],
+   "group": "assess"
+  },
+  {
+   "q": "which functions have no test covering them",
+   "targets": [
+    "get_untested_symbols"
+   ],
+   "group": "assess"
+  },
+  {
+   "q": "how risky is this pull request",
+   "targets": [
+    "get_pr_risk_profile"
+   ],
+   "group": "assess"
+  },
+  {
+   "q": "how often does this file get touched",
+   "targets": [
+    "get_churn_rate"
+   ],
+   "group": "assess"
+  },
+  {
+   "q": "how complicated is this one function",
+   "targets": [
+    "get_symbol_complexity"
+   ],
+   "group": "assess"
+  },
+  {
+   "q": "which modules are too tangled together",
+   "targets": [
+    "get_coupling_metrics",
+    "get_architecture_metrics"
+   ],
+   "group": "assess"
+  },
+  {
+   "q": "are we breaking our own layering rules",
+   "targets": [
+    "get_layer_violations"
+   ],
+   "group": "assess"
+  },
+  {
+   "q": "which code should be pulled out into a shared module",
+   "targets": [
+    "get_extraction_candidates",
+    "find_similar_symbols"
+   ],
+   "group": "assess"
+  },
+  {
+   "q": "how much of this code actually runs in production",
+   "targets": [
+    "get_runtime_coverage"
+   ],
+   "group": "assess"
+  },
+  {
+   "q": "which functions are hit hardest at runtime",
+   "targets": [
+    "find_hot_paths"
+   ],
+   "group": "assess"
+  },
+  {
+   "q": "what have we shipped that stuck over the last month",
+   "targets": [
+    "get_delivery_metrics"
+   ],
+   "group": "assess"
+  },
+  {
+   "q": "is our CLAUDE.md wasting tokens on stale instructions",
+   "targets": [
+    "audit_agent_config",
+    "suggest_corrections"
+   ],
+   "group": "assess"
+  },
+  {
+   "q": "read this folder in so I can ask about it",
+   "targets": [
+    "index_folder"
+   ],
+   "group": "ingest"
+  },
+  {
+   "q": "pull down a github project so I can explore it",
+   "targets": [
+    "index_repo"
+   ],
+   "group": "ingest"
+  },
+  {
+   "q": "I just edited a file, refresh it",
+   "targets": [
+    "index_file",
+    "register_edit"
+   ],
+   "group": "ingest"
+  },
+  {
+   "q": "turn on semantic search for this project",
+   "targets": [
+    "embed_repo"
+   ],
+   "group": "ingest"
+  },
+  {
+   "q": "how many tokens have I saved so far",
+   "targets": [
+    "get_session_stats"
+   ],
+   "group": "meta"
+  },
+  {
+   "q": "what have I been doing this session",
+   "targets": [
+    "get_session_context",
+    "get_session_snapshot"
+   ],
+   "group": "meta"
+  },
+  {
+   "q": "what changed since I last worked on this",
+   "targets": [
+    "digest",
+    "get_changed_symbols"
+   ],
+   "group": "meta"
+  },
+  {
+   "q": "draw me a diagram of that",
+   "targets": [
+    "render_diagram"
+   ],
+   "group": "transform"
+  },
+  {
+   "q": "give me a plan for renaming this across the codebase",
+   "targets": [
+    "plan_refactoring"
+   ],
+   "group": "transform"
+  },
+  {
+   "q": "set me up with everything I need to debug this bug",
+   "targets": [
+    "assemble_task_context"
+   ],
+   "group": "transform"
+  }
+ ]
 }

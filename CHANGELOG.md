@@ -2,6 +2,72 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.218] - 2026-08-02 - the benchmark was wrong about us, in our favour's direction
+
+Target audit of `benchmarks/route_recall/queries.json`. **No routing code
+changed in this release.**
+
+⚠⚠ **Read the numbers below as a corpus correction. They are NOT a routing
+gain, and a figure measured after this audit is not comparable with one measured
+before it.**
+
+| | before | after | delta |
+|---|---|---|---|
+| route@1 | 42.4 | 45.8 | +3.4 |
+| route@3 | 59.3 | 64.4 | +5.1 |
+| menu@1 | 40.7 | 44.1 | +3.4 |
+| menu@3 | 61.0 | 67.8 | +6.8 |
+
+### What was wrong
+
+The counterfactual shipped in .217 surfaced that this corpus violated its own
+stated rule. `queries.json` has said since .212 that *"'targets' lists every
+action that would be an ACCEPTABLE answer"* and that *"a harness that pretends
+otherwise measures the author's opinion instead of the router."* Then "I do not
+know this repo, what should I look at first" lost three times to `get_repo_map`
+— which is *"query-less, token-budgeted, signature-level overview of a
+repository"*, documented as cold-start orientation, and absent from the target
+list. A correct answer was being scored as a miss.
+
+All 59 target lists were re-reviewed. 12 additions across 12 queries, 0
+removals.
+
+### The method, because on this file the method IS the result
+
+⚠⚠ **Candidates were generated from catalog descriptions in ALPHABETICAL order,
+never from rankings.** Using "what currently ranks high" as the candidate pool
+is the leakage mechanism itself: every accepted correction would then raise the
+score by construction, and there would be no way to distinguish a real
+correction from score-chasing. Test applied to each: *would a user receiving
+this action's output consider the question answered, without needing a different
+call?*
+
+**The strongest evidence the method held is that leakage barely moved** — mean
+name overlap 0.127 -> 0.133, mean description overlap 0.329 -> 0.338. Targets
+added by paraphrase-matching would have moved it with the score.
+
+⚠ **The audit deliberately did not rescue the misses it could have.** `route`
+proposes `get_blast_radius` for "what breaks if I change the POST orders
+endpoint", and `get_blast_radius` does not accept an endpoint; adding it as a
+target would have converted a real miss into a hit. It stays a miss, as do the
+`get_decorator_census` and `embed_repo` cases.
+
+⚠ **12 additions and 0 removals is an asymmetry, and it is disclosed rather
+than balanced.** Two over-generous targets were considered and KEPT because the
+case against each is arguable rather than clear: `get_symbol_diff` on "which
+symbols changed between these two commits" (it diffs snapshots, not commits) and
+`register_edit` on "I just edited a file, refresh it" (it invalidates caches
+without re-indexing). Both are named in the corpus README so the next reader can
+overrule this call. Manufacturing a removal for symmetry would be a worse error
+than the asymmetry.
+
+### The correction surfaced a miss rather than hiding one
+
+Re-running the counterfactual on the corrected corpus: 30 explained misses ->
+28, and `rule_preempted` went **6 -> 7**. Adding `get_impact_preview` to "am I
+going to break callers if I edit this signature" exposed one more action that a
+curated rule preempts before the scorer ever runs.
+
 ## [1.108.217] - 2026-08-02 - every route miss now names the gate that stopped it
 
 Retrieval counterfactuals. `investigator/retrieval_counterfactual.py` answers
