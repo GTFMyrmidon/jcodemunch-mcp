@@ -43,6 +43,35 @@ _MAX_PAIRS_PER_BUCKET = 200     # cap to keep pair count bounded on dense terms
 _HARD_PAIR_CAP = 100_000        # absolute cap on pairs scored (safety)
 _NEAR_DUP_THRESHOLD = 0.92      # avg cluster similarity → near_duplicate verdict
 
+# Why the semantic signal is not in play, and what the caller should do about it.
+# ⚠ These are NOT interchangeable: "run embed_repo" is wrong advice for a
+# repository that is already embedded, which is the state the old single note
+# swallowed (#398, @rknighton). Keyed by `semantic_state`, which ships beside the
+# note so a caller can branch without parsing prose.
+_STRUCTURAL_NOTES = {
+    "repo_not_embedded": (
+        "This repository has no embeddings; using structural+behavioral signal only. "
+        "Run embed_repo to enable semantic similarity (verdict tier upgrades from "
+        "parallel_implementation to near_duplicate/similar_logic)."
+    ),
+    "candidates_not_embedded": (
+        "This repository HAS embeddings, but fewer than two of the candidates in this "
+        "scope do, so the semantic signal could not be blended — structural+behavioral "
+        "only. Re-run embed_repo to cover symbols added since it last ran, or widen the "
+        "scope; running it again on the same symbols will not change this result."
+    ),
+    "unknown": (
+        "Semantic signal not applied and the reason could not be established — the "
+        "embedding store could not be read. Using structural+behavioral signal only. "
+        "This is not evidence that the repository lacks embeddings."
+    ),
+    # Unreachable while `mode == "structural"` gates the note, kept so the mapping
+    # is total for every value `semantic_state` can take.
+    "used": (
+        "Semantic signal applied."
+    ),
+}
+
 # Filenames we skip even when include_tests is True.
 _GENERATED_PATTERNS = (
     "_pb2.py", "_pb2_grpc.py", ".pb.go", ".gen.go", ".g.dart",
@@ -114,6 +143,24 @@ def _looks_generated(file_path: str) -> bool:
 
 def _is_test_file(file_path: str) -> bool:
     return bool(_TEST_FILENAME_RE.search(file_path or ""))
+
+
+def _structural_disclosure(mode: str, semantic_state: str) -> dict:
+    """The `why no semantic signal` block, or nothing when the signal was used.
+
+    One function because `find_similar_symbols` has three exits that can return a
+    structural answer, and before v1.108.211 two of them disclosed nothing and
+    the third disclosed the wrong reason.
+
+    Deliberately empty in hybrid mode: `mode` already carries that, and this is
+    the most-called shape.
+    """
+    if mode == "hybrid":
+        return {}
+    return {
+        "semantic_state": semantic_state,
+        "note": _STRUCTURAL_NOTES[semantic_state],
+    }
 
 
 def _classify_verdict(avg: float, mode: str) -> str:
@@ -245,6 +292,10 @@ def find_similar_symbols(
             "mode": "structural",
             "total_tokens": 0,
             "budget_tokens": token_budget,
+            # The embedding store is never consulted on this path, so neither
+            # structural reason applies — do not let a caller read this as
+            # "not embedded".
+            "semantic_state": "not_applicable",
             "note": "Not enough candidates for similarity analysis.",
             "_meta": {"timing_ms": round(elapsed, 1), "tokens_saved": 0, "total_tokens_saved": 0},
         }
@@ -257,6 +308,7 @@ def find_similar_symbols(
     # ── Embedding signal (optional) ────────────────────────────────────
     embeddings: dict[str, list[float]] = {}
     mode = "structural"
+    emb_store = None
     try:
         from ..storage.embedding_store import EmbeddingStore  # noqa: PLC0415
         db_path = store._sqlite._db_path(owner, name)
@@ -273,6 +325,25 @@ def find_similar_symbols(
             mode = "hybrid"
     except Exception as exc:  # noqa: BLE001
         logger.debug("find_similar_symbols: embedding load skipped: %s", exc, exc_info=True)
+
+    # Only when the semantic signal is NOT in play, and only then: which of the
+    # two structural reasons is it? A candidate we did fetch a vector for already
+    # proves the repository is embedded, so the probe runs solely when we fetched
+    # none (#398, @rknighton).
+    semantic_state = "used" if mode == "hybrid" else "unknown"
+    if mode != "hybrid":
+        if embeddings:
+            semantic_state = "candidates_not_embedded"
+        elif emb_store is not None:
+            try:
+                present = emb_store.has_any()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("find_similar_symbols: has_any failed: %s", exc, exc_info=True)
+                present = None
+            if present is True:
+                semantic_state = "candidates_not_embedded"
+            elif present is False:
+                semantic_state = "repo_not_embedded"
 
     # ── Pre-filter pairs via BM25 inverted index ───────────────────────
     # Only score pairs that share at least one indexed term.
@@ -371,6 +442,12 @@ def find_similar_symbols(
             "mode": mode,
             "total_tokens": 0,
             "budget_tokens": token_budget,
+            # ⚠ This exit carried NO disclosure at all before v1.108.211: a
+            # zero-cluster answer from an un-embedded repository read exactly
+            # like a zero-cluster answer from an embedded one. Same block as the
+            # main return, because a caller cannot tell which exit produced its
+            # response.
+            **_structural_disclosure(mode, semantic_state),
             "_meta": {"timing_ms": round(elapsed, 1), "tokens_saved": 0, "total_tokens_saved": 0},
         }
 
@@ -540,11 +617,6 @@ def find_similar_symbols(
         },
     }
 
-    if mode == "structural":
-        result["note"] = (
-            "Embeddings not available; using structural+behavioral signal only. "
-            "Run embed_repo to enable semantic similarity (verdict tier upgrades from "
-            "parallel_implementation to near_duplicate/similar_logic)."
-        )
+    result.update(_structural_disclosure(mode, semantic_state))
 
     return result

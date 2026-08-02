@@ -122,6 +122,58 @@ belongs to.
 
 The headline claim is unchanged.
 
+## [1.108.211] - 2026-08-02
+
+### "No embeddings here" and "not these symbols" stop looking identical
+
+Raised by **@rknighton** in [#398](https://github.com/jgravelle/jcodemunch-mcp/issues/398),
+reviewing the code v1.108.210 shipped the same day.
+
+Removing `count()` was right, and this does not restore it. But `count()` was
+`SELECT COUNT(*) FROM symbol_embeddings` over the whole repository, and the old
+code branched on `count() > 0` *before* narrowing to candidates. The new path
+derives everything from `len(get_many(cand_ids)) >= 2`, which collapses two
+states a caller acts on differently:
+
+- this repository has no embeddings at all
+- this repository **is** embedded, but fewer than two of *these* candidates are
+
+⚠ **The collapse was not only invisible, it was wrong out loud.** Both states
+emitted one note - *"Embeddings not available... Run embed_repo"* - which is
+simply false advice for the second: the repository is embedded, and running
+`embed_repo` again over the same symbols changes nothing. That note pre-dates
+v1.108.210; the old `count()` guard never surfaced the difference either. So
+this is a live misdirection being fixed, not a signal being pre-positioned.
+
+New `EmbeddingStore.has_any()` restores the repository-level answer for less
+than what was removed: `SELECT 1 FROM symbol_embeddings LIMIT 1` on the same
+`mode=ro&immutable=1` connection as `get_all_readonly`. No scan, no write, no
+WAL sidecars, and it runs **only** when no candidate vector came back - one
+fetched vector already proves the repository is embedded.
+
+⚠ **Three-state, not boolean.** `True` / `False` / `None`. `False` is reserved
+for the two cases that actually mean nothing is embedded: the database file is
+absent, or the table is. A locked file, a corrupt page or a permission error
+answers `None`, because `False` there is a guess about a repository we could not
+read. Same rule as v1.108.209's freshness classifier and v1.108.180's
+`repo_freshness`.
+
+Responses in structural mode now carry `semantic_state`
+(`repo_not_embedded` / `candidates_not_embedded` / `unknown` /
+`not_applicable`) beside a note written for that state, so a caller can branch
+without parsing prose. Hybrid responses are byte-identical to v1.108.210 -
+`mode: "hybrid"` already carries it, and that is the most-called shape.
+
+⚠ **`find_similar_symbols` has three exits that can return a structural answer,
+and two of them disclosed nothing at all.** The zero-edge exit returned
+`mode: "structural"` with no note whatsoever, so a zero-cluster answer from an
+un-embedded repository was indistinguishable from a zero-cluster answer from an
+embedded one. All three now go through one `_structural_disclosure()` helper;
+the too-few-candidates exit reports `not_applicable`, because it never consults
+the embedding store and must not be read as evidence either way.
+
+Tests: `tests/test_v1_108_211.py` (16).
+
 ## [1.108.210] - 2026-08-01
 
 ### `find_similar_symbols` stops reading every embedding in the repository

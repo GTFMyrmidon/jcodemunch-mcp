@@ -294,6 +294,63 @@ class EmbeddingStore:
         finally:
             conn.close()
 
+    def has_any(self) -> Optional[bool]:
+        """Does this repository have ANY embedding? Without touching the file.
+
+        Three-state on purpose (v1.108.211, raised by @rknighton in #398):
+        ``True`` / ``False`` / ``None`` for "could not establish".
+
+        ``count()`` used to answer the repository-level half of this question as
+        a side effect of guarding a fetch, and v1.108.210 removed it — correctly,
+        because it opened a read-WRITE connection and paid a full ``COUNT(*)``
+        scan. But removing it collapsed two states a caller can act on
+        differently: *this repository has no embeddings at all* and *this
+        repository is embedded, but not these candidates*. `find_similar_symbols`
+        was telling both of them to run ``embed_repo``, which is wrong advice for
+        the second.
+
+        ``SELECT 1 ... LIMIT 1`` on the same ``mode=ro&immutable=1`` connection as
+        ``get_all_readonly``: no scan, no write, no WAL sidecars. See that
+        method's docstring for why ``mode=ro`` alone is not enough, and for the
+        un-checkpointed-WAL trade-off it accepts.
+
+        ``False`` is reserved for the two cases that genuinely mean "nothing
+        embedded": the database file is absent, or the table is. Anything else —
+        a locked file, a corrupt page, a permission error — is ``None``, because
+        answering ``False`` there is a guess about a repository we could not
+        read.
+        """
+        try:
+            if not Path(self._db_path).exists():
+                return False
+        except Exception:
+            return None
+        try:
+            conn = sqlite3.connect(
+                f"file:{self._db_path}?mode=ro&immutable=1",
+                uri=True,
+                isolation_level=None,
+            )
+        except Exception:
+            logger.debug("EmbeddingStore.has_any could not open %s",
+                         self._db_path, exc_info=True)
+            return None
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM symbol_embeddings LIMIT 1"
+            ).fetchone()
+            return row is not None
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc).lower():
+                return False
+            logger.debug("EmbeddingStore.has_any failed", exc_info=True)
+            return None
+        except Exception:
+            logger.debug("EmbeddingStore.has_any failed", exc_info=True)
+            return None
+        finally:
+            conn.close()
+
     def count(self) -> int:
         """Return the number of stored embeddings."""
         try:

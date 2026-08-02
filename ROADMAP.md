@@ -554,9 +554,26 @@ read transaction. An explicit storage-owned read view, **not** a silent change t
 Best median result in the proposal (2.24x-2.35x). Sequenced after Arc 1 because
 its consistency guarantee is part of Arc 1's contract.
 
+⚠⚠ **`immutable=1` MUST NOT be lifted into this path, and the reason is the
+argument that justifies it elsewhere.** `get_all_readonly` / `get_many` accept
+that un-checkpointed WAL vectors go unread, on the stated grounds that the
+similarity channel only ADDS candidates, so a missed vector can weaken a ranking
+and cannot manufacture a false absence. Arc 2 is exact row reads. There, an
+invisible un-checkpointed row is not a weaker ranking - it is a symbol that
+exists and was not returned, which is a false absence of exactly the kind the
+evidence work exists to prevent. **The trade-off is channel-specific; it does not
+generalize** (@rknighton, 2026-08-01, and this is a sharper statement of the
+sequencing than the one we gave).
+
+That makes Arc 1 a genuine prerequisite rather than a tidiness preference: Arc 1's
+read contract is the thing that has to satisfy both sides at once - see committed
+WAL data when sidecars already exist, create nothing when they do not - and only
+that contract lets this path read exactly.
+
 **Close condition:** supported narrow calls complete without hydrating the full
 `CodeIndex`; unsupported and broad modes promote once with no change to errors,
-suggestions, ordering, branch behavior, or response fields.
+suggestions, ordering, branch behavior, or response fields; **and no read on this
+path uses `immutable=1`.**
 
 ### Arc 3 — generation-scoped shared promotion — GATED
 
@@ -571,9 +588,32 @@ because cold hydration of a 665k-symbol index was measured at 7.5-11.4 minutes
 (#370). **Reconcile with that switch; do not add a second retention policy beside
 it.**
 
+**Which direction the reconciliation runs — DECIDED 2026-08-02.** The proposal
+asked whether Arc 3 sits under the existing switch or makes it unnecessary, on
+the argument that a byte budget bounds a leaked process by construction and does
+so without the idle-eviction bill that forced the TTL to default off.
+
+Arc 3's budget is the **primary** policy and the TTL does not gate it. But the
+byte budget does **not** subsume the TTL, and the reason is worth pinning:
+
+⚠ **A byte budget is per PROCESS; the leak the TTL was built for is a count of
+processes.** #375 was 25+ leaked stdio servers holding ~17 GB between them. A
+per-process cap bounds how much each one can GROW to; it never reclaims the floor
+each one is already sitting on, and 25 x budget is still 25 x budget. The TTL
+evicts an idle cache toward zero, which is a different axis, and the only one
+that reaches a process nobody is talking to.
+
+So: **one policy, two axes** - byte/entry pressure and generation change (always
+on, Arc 3's own), plus idle reclamation (opt-in, the existing
+`JCODEMUNCH_INDEX_CACHE_TTL` spelling, retained under the 1.x no-removal
+contract). Arc 3 must not introduce a second switch, a second eviction loop, or a
+second vocabulary for either axis.
+
 **Close condition:** byte- and entry-bounded retention with safe eviction and a
 per-request fallback when the budget is full; expensive construction stays lazy;
-README background-behavior section updated in the same release.
+`JCODEMUNCH_INDEX_CACHE_TTL` continues to mean idle reclamation and is honored by
+the same holder rather than by a parallel one; README background-behavior section
+updated in the same release.
 
 ### Arc 4 — adaptive certified semantic scoring — GATED ON A MEASUREMENT
 
@@ -589,9 +629,49 @@ himself. If certification fires often on real embeddings, the fast lane degrades
 toward the exact scorer it replaces while carrying an optional native dependency
 and a memory-cap subsystem.
 
-**Close condition:** certification breadth measured on REAL embeddings on at least
-one large repository, showing the fallback rate low enough that the lane still
-wins. Until that exists this is accepted design, not approved work.
+**The measurement is SPECIFIED, 2026-08-02**, because a pooled number cannot fail
+this arc for the right reason. Breadth reports in three buckets, never one
+(@rknighton's refinement, accepted):
+
+1. **exact ties** — identical embeddings, identical scores. Duplicated
+   docstrings, boilerplate, generated files, near-identical test methods.
+2. **near ties** — distinct scores inside float32 epsilon.
+3. **genuine boundary cases** — float32 and float64 actually disagree on the
+   ordering.
+
+They have opposite remedies. If (1) dominates the answer is a deterministic
+tie-break key, not abandoning the lane. If (3) dominates the gate has found the
+real thing and the lane fails.
+
+⚠ **The tie-break key is required regardless and ships FIRST, alone.** Today the
+ranking sorts on score with a stable sort, so ties break on insertion order:
+deterministic but arbitrary. Certifying that means reproducing an arbitrary row
+order bit for bit. A `(score, symbol_id)` key is independently right - a ranking
+should not depend on which row SQLite handed back first - and it collapses bucket
+(1) before the measurement runs, so the number measures what it claims to.
+
+**Corpus — Django is authoritative, FastAPI is the second point, jcm's own index
+is a control and NOT authoritative.** It is the cheapest (already embedded) and
+it is the one we tune against, so it is the wrong place to certify. Tie density
+is a function of corpus HOMOGENEITY rather than size, so it gets reported as a
+corpus property alongside the result, per repository, not folded into a pooled
+figure.
+
+**Threshold — named before the run, deliberately.** On the authoritative corpus:
+
+- certification fires on **<= 10%** of scored candidates → PASS
+- 10-25% → the lane needs a design answer before it ships
+- **> 25%** → FAIL, the lane does not carry its dependency
+- bucket (3) above **0.5%** → FAIL regardless of speed; that is a correctness
+  signal, not a cost one
+
+The 10% line is where the reported 9.7x-16.2x generation-warm result still clears
+5x once the certified fraction pays exact-scorer cost. Fixing the number in
+advance is the point: neither side picks the bar after seeing results.
+
+**Close condition:** the three-bucket breadth measured on REAL embeddings on
+Django, with tie density reported per corpus, against the thresholds above.
+Until that exists this is accepted design, not approved work.
 
 ⚠ NumPy is native code, so the accelerated lane inherits
 [[feedback_native_imports_belong_on_the_main_thread]]: one guarded main-thread
@@ -600,9 +680,25 @@ rather than adding a second startup mechanism, and disabled when
 `JCODEMUNCH_EAGER_EMBED_IMPORT=0`. The base install must keep zero mandatory
 NumPy dependency.
 
+**Supporting material.** The Arc 1 / Arc 2 harnesses and fixed-schema CSVs are
+published at [`rknighton/jcm-398-evidence`](https://github.com/rknighton/jcm-398-evidence)
+with a `verify.py` that recomputes the quoted figures from the shipped CSVs.
+⚠ Two standing cautions from the author, both worth honoring before aggregating:
+the archive retains earlier exploratory rows at `6996cc08` beside the `c2201a55`
+rows and **no `6996cc08` row backs a quoted figure** (filter on the provenance
+column first), and Arc 2's classification screen is one pair per case, so its 58
+Express/Gin sub-50ms cases cannot separate from timing variance - Django (5.17x)
+and FastAPI (2.59x) are the load-bearing part. ⚠ **The repository carries no
+LICENSE**, so nothing in it can be vendored into this tree until that changes;
+read it, re-run it, do not copy it in.
+
 **Provenance.** Filed by @rknighton as #398 on 2026-08-01 with a full research
 archive offered on request. Split per the one-issue-one-verdict rule; #398 closed
-as the umbrella once Arc 5 shipped and these four landed here.
+as the umbrella once Arc 5 shipped and these four landed here. A post-close review
+of the shipped Arc 5 code by the same reporter produced **v1.108.211** (the
+`count()` removal collapsed a repository-level state, and the note attached to it
+was giving wrong advice), which is why this section stays live after the umbrella
+closed.
 
 ---
 
