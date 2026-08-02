@@ -103,6 +103,55 @@ accept, and that is the opposite of what we want. This way your findings are an
 upgrade that can arrive at any time, and neither of us is negotiating under a
 clock.
 
+## Catalog moratorium: new top-level actions are paused
+
+**jCodeMunch is not accepting new top-level catalog actions right now.** This is
+not a judgement about any particular idea, and it is not permanent. The
+reasoning, and the conditions that end it, are written down so you can hold us
+to them.
+
+The catalog is 91 actions. Under the default `counter` surface an agent reaches
+them through `route`, and `route` proposes the right action for a plain-language
+task **45.8% of the time at rank 1** (`benchmarks/route_recall/`). An action
+`route` never proposes is functionally absent — it still costs a schema, a
+documentation obligation, a compatibility promise under 1.x, an output contract
+and a test matrix, and it still competes with 91 siblings for the same ranking.
+Issue #397 is the sharp end of this: generated `CLAUDE.md` named 25 tools while
+the server exposed 6, so the policy meant to make jCodeMunch useful instructed
+the agent to call tools that were not there.
+
+**The moratorium lifts when all three hold:**
+
+1. `route@1` reaches **60%** on `benchmarks/route_recall/queries.json`
+   (baseline **45.8%**);
+2. mean name leakage at that measurement stays at or below **0.15** — a recall
+   bar with no leakage bar is trivially met by writing queries that paraphrase
+   tool descriptions, so both move together or neither counts;
+3. generated guidance references only actions callable under the active surface.
+
+All three are enforced by `tests/test_catalog_moratorium.py`, including a pinned
+ceiling on the catalog size. **We hold ourselves to this first:** three
+capabilities we built and tested are deliberately not exposed —
+`investigate_deletion_safety` (v1.108.214, 19 tests) and the retrieval
+counterfactuals (v1.108.217) are importable and unregistered. They do not jump
+the queue merely because we wrote them.
+
+### What this means for your PR
+
+- **A new action** will be asked to wait, or to land as a **parameter or mode on
+  an existing action** instead. That is usually the better shape anyway.
+- **Everything else is unaffected** — bug fixes, language support, new
+  parameters, output fields, performance, docs, and tests are all as welcome as
+  ever. Most merged contributions have never touched the catalog count.
+- **If your action is genuinely warranted**, say so in the PR. The ceiling is
+  one constant in one file; raising it in the same commit is allowed, and the
+  visible diff is the whole point. We would rather have the conversation than
+  pretend the rule decides it.
+
+Route-recall work is the fastest way to end this, and
+`benchmarks/route_recall/explain_misses.py` prints the current defect list with
+each miss labelled by the gate that caused it.
+
 ## Quality gates that run on every release
 
 - **Schema budget** — `tests/test_schema_budget.py` fails when `tools/list` token count grows more than 5% above `benchmarks/schema_baseline.json`. If you intentionally grow the schema (new tool / longer description), regenerate the baseline in the same PR with justification:

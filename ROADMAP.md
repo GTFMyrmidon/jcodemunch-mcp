@@ -512,6 +512,56 @@ any enterprise layer.
 
 ---
 
+## Catalog moratorium — IN FORCE from v1.108.218
+
+No new top-level catalog actions until the exit conditions below are met. Pinned
+and enforced by `tests/test_catalog_moratorium.py`; the contributor-facing
+statement is in `CONTRIBUTING.md`.
+
+**Why.** 91 actions, and `route` proposes the right one for a plain-language
+task 45.8% of the time at rank 1. An action `route` never proposes is
+functionally absent while still costing a schema, a 1.x compatibility promise,
+an output contract and a test matrix. #397 is the sharp end: generated
+`CLAUDE.md` named 25 tools against a server exposing 6.
+
+**Exit conditions, named before the work** (same discipline as Arc 4's
+thresholds — neither side picks the bar after seeing results):
+
+1. `route@1` >= **60%** on `benchmarks/route_recall/queries.json`;
+2. mean name leakage <= **0.15** at that same measurement;
+3. generated guidance references only actions callable under the active surface.
+
+⚠⚠ **Condition 2 is not decoration.** A recall bar with no leakage bar is met
+by writing queries that paraphrase tool descriptions — the exact failure
+v1.108.218's target audit was run to avoid. Both move together or neither
+counts.
+
+⚠ **Progress is measured from 45.8, never from 42.4.** The 3.4-point move
+between them was v1.108.218's corpus correction, not routing work. A reader who
+anchors to 42.4 will credit routing with a correction it did not make.
+
+**What is withheld, and it is a surface not a capability.** Both exist, are
+tested, and are unregistered: `investigate_deletion_safety` (v1.108.214, 19
+tests) and the retrieval counterfactuals (v1.108.217). A test asserts both stay
+importable, so the policy cannot quietly become deletion.
+
+⚠ **Two of the report's four proposed conditions were DROPPED as unmeasurable,
+deliberately rather than silently.** "Every catalog action has a clear usage
+rate" needs telemetry that is opt-in and off by default, so it cannot gate
+anything today. "Adjacent tools consolidated behind common intents" has no
+threshold anyone could fail. A gate nobody can evaluate is a gate that gets
+waived on the first argument; better to state three that bind than four that
+sound thorough.
+
+**The fastest way out** is route-recall work.
+`benchmarks/route_recall/explain_misses.py` prints the live defect list with
+each miss labelled by the gate that caused it: as of v1.108.218, 7
+`rule_preempted` (a curated rule claims the query and the right action is never
+scored — ranking work cannot touch these) and 8 `no_lexical_overlap` (zero
+shared tokens; unreachable at any weight).
+
+---
+
 ## Adaptive large-repository data path (#398, @rknighton)
 
 Four accepted arcs from a five-arc proposal. **Arc 5 shipped in v1.108.210** and

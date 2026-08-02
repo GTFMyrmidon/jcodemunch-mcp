@@ -2,6 +2,73 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.219] - 2026-08-02 - the catalog moratorium, with a test rather than a promise
+
+No new top-level catalog actions until stated conditions are met. **A
+moratorium written only in CONTRIBUTING.md is a habit; this one is pinned by
+`tests/test_catalog_moratorium.py`.** Adding a 92nd action now fails a test
+whose message names the exit conditions. Raising the ceiling is one constant in
+one file — the point is not to make a new action impossible, it is to make it
+deliberate and visible in a diff.
+
+**Why now.** The deep-research report's blunt finding was that "the product has
+crossed the point where adding a tool automatically adds value." 91 actions, and
+`route` proposes the right one for a plain-language task 45.8% of the time at
+rank 1. An action `route` never proposes is functionally absent while still
+costing a schema, a 1.x compatibility promise, an output contract, a
+documentation obligation and a test matrix. #397 is the sharp end: generated
+`CLAUDE.md` named 25 tools against a server exposing 6.
+
+### The exit conditions, named before the work
+
+1. `route@1` >= **60%** on `benchmarks/route_recall/queries.json`;
+2. mean name leakage <= **0.15** at that same measurement;
+3. generated guidance references only actions callable under the active surface.
+
+⚠⚠ **Condition 2 is the one that matters most, and its absence would have made
+the gate actively harmful.** "Raise route@1 to 60%" is trivially satisfiable by
+writing queries that paraphrase tool descriptions — precisely the failure
+v1.108.218's audit was conducted to avoid. A recall bar with no leakage bar is
+not a weak gate; it is an incentive to corrupt the corpus. Both move together or
+neither counts.
+
+⚠ **Progress is measured from 45.8, never from 42.4.** That 3.4-point gap was
+.218's corpus correction, not routing work, and a reader anchoring to 42.4 will
+credit routing with a correction it did not make. A test pins the baseline.
+
+⚠ **Two of the report's four proposed conditions were DROPPED, deliberately
+rather than silently.** "Every catalog action has a clear usage rate" needs
+telemetry that is opt-in and off by default, so it cannot gate anything today.
+"Adjacent tools consolidated behind common intents" has no threshold anyone
+could fail. A gate nobody can evaluate is one that gets waived on the first
+argument; three that bind beat four that sound thorough.
+
+### We hold ourselves to it first
+
+Three capabilities built and tested in the last five releases are deliberately
+**not** exposed: `investigate_deletion_safety` (v1.108.214, 19 tests) and the
+retrieval counterfactuals `explain_route` / `explain_misses` (v1.108.217). They
+do not jump the queue merely because we wrote them.
+
+⚠ **The moratorium withholds a SURFACE, never a capability.** A test asserts
+both stay importable, so the policy cannot quietly become deletion.
+
+### A policy that expires silently is one nobody notices has expired
+
+`test_moratorium_still_in_force` **fails on the day the exit conditions are
+met.** That failure is a prompt, not a defect: when `route@1` crosses 60% at
+acceptable leakage, someone is forced to decide explicitly whether to lift the
+moratorium rather than letting it linger past its purpose.
+
+Nothing else changes for contributors. Bug fixes, language support, new
+parameters, output fields, performance work, docs and tests are unaffected —
+most merged contributions have never touched the catalog count, and
+`CONTRIBUTING.md` says so plainly rather than reading as "we are not taking
+features."
+
+Tests: `tests/test_catalog_moratorium.py` (10), the ceiling and withhold gates
+both proven non-vacuous against an injected 92nd action.
+
 ## [1.108.218] - 2026-08-02 - the benchmark was wrong about us, in our favour's direction
 
 Target audit of `benchmarks/route_recall/queries.json`. **No routing code
