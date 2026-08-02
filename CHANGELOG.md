@@ -2,6 +2,57 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.213] - 2026-08-02 - the Counter stopped ranking on the word "me"
+
+`menu()` and `route()` were ranking the catalog on English function words, and it
+cost roughly a third of retrieval recall.
+
+`_idf_weights` computes inverse document frequency over description *prose*. A
+pronoun appears in essentially no tool description, so idf handed it the
+**highest weight in the query**. `score_action` then spent that weight on a
+substring match against the tool *name* -- a different corpus entirely -- and a
+two-character token matches a large slice of snake_case names by accident.
+
+Measured on "draw me a diagram of that": `check_rena`**`me`**`_safe` scored
+**19.3** and beat `render_diagram`'s **16.5** for the actual word "diagram".
+`get_runti`**`me`**`_coverage` and `find_i`**`mple`**`mentations` placed above it
+on the same token. Even "a" scored 2.5 that way.
+
+A second defect sat underneath: the fragment branch (`qt in name_l`, +4.0)
+outranked the whole-word branch (`qt in name_toks`, +3.0), so a match *inside* a
+word beat an exact word hit. Since every token is trivially a substring of its
+own name, that whole-word branch was **unreachable**.
+
+Three changes: a stopword filter on query tokens, a four-character floor before a
+token may match as a fragment, and the whole-word branch promoted above the
+fragment branch. `_tokens` is unchanged and still returns the raw split; the new
+`_query_tokens` is what ranking uses.
+
+| | before | after |
+|---|---|---|
+| `menu` recall@1 | 23.7% | **40.7%** |
+| `menu` recall@3 | 44.1% | **61.0%** |
+| `menu` recall@10 | 67.8% | **76.3%** |
+| `route` recall@1 | 30.5% | **42.4%** |
+| `route` recall@3 | 49.2% | **59.3%** |
+
+26 queries improved on `menu` against 7 regressed; 15 improved on `route` against
+6. **This also closes the `menu` gap disclosed in 1.108.212** -- the three
+transform actions now reach 100% on both paths.
+
+⚠ Three of the hit-to-miss regressions were checked rather than waved off, and
+they have **zero** exact token overlap with their queries: their prior ranks of
+2, 3 and 4 were themselves stopword accidents. Losing a fake hit is the fix
+working, not a cost of it.
+
+⚠ **Known residual, named because the harness can now see it: there is no
+stemming.** "risky" does not reach `get_pr_risk_profile`, "concentrated" does not
+reach `get_architecture_metrics`, "nest" does not reach anything about nesting.
+Ranking cannot fix a query that shares no token with its target.
+
+Reproduce with `benchmarks/route_recall/run_route_recall.py`. Four regression
+tests pin the scorer in `tests/test_counter.py`.
+
 ## [1.108.212] - 2026-08-02 - route() can now reach the tools that render, plan, and assemble
 
 `route()` mapped a plain-language task onto three actions it could never propose,

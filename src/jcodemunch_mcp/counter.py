@@ -119,6 +119,39 @@ def _tokens(text: str) -> list[str]:
     return _WORD_RE.findall((text or "").lower())
 
 
+# Function words carry no retrieval signal, and in THIS corpus they are actively
+# harmful. idf is computed over description prose, where an English pronoun never
+# appears, so idf hands it the HIGHEST weight in the query -- and a short token
+# then substring-matches a large slice of snake_case names. Measured: "draw me a
+# diagram of that" ranked check_rena-me-_safe, get_runti-me-_coverage and
+# find_i-mple-mentations above render_diagram, all three on "me" alone, at 19.3
+# points against render_diagram's 16.5 for the actual word "diagram".
+#
+# Deliberately NOT listed: find / get / show / search. Those are real verbs in
+# this domain, they discriminate between tool families, and existing intent tests
+# depend on them.
+_STOPWORDS: frozenset[str] = frozenset({
+    "a", "an", "and", "any", "are", "as", "at", "be", "been", "but", "by",
+    "can", "could", "did", "do", "does", "for", "from", "had", "has", "have",
+    "how", "i", "if", "in", "into", "is", "it", "its", "just", "me", "my",
+    "of", "on", "or", "our", "out", "over", "should", "so", "some", "that",
+    "the", "their", "them", "then", "these", "this", "those", "to", "up",
+    "us", "was", "we", "were", "what", "when", "where", "which", "will",
+    "with", "would", "you", "your",
+})
+
+# A token shorter than this may only match a name as a WHOLE WORD, never as a
+# fragment inside one. Without the floor, two-character noise matches a third of
+# the catalog by accident.
+_MIN_SUBSTRING_LEN = 4
+
+
+def _query_tokens(text: str) -> list[str]:
+    """Tokens worth scoring a query on. ``_tokens`` stays pure for callers that
+    need the raw split (leakage measurement, description indexing)."""
+    return [t for t in _tokens(text) if t not in _STOPWORDS]
+
+
 def _first_sentence(desc: str, limit: int = 160) -> str:
     desc = (desc or "").strip().replace("\n", " ")
     # Cut at the first sentence boundary, else hard-truncate.
@@ -233,10 +266,15 @@ def score_action(
         w = weights.get(qt, 1.0) if weights else 1.0
         if qt == name_l:
             score += 10.0 * w
-        elif qt in name_l:
-            score += 4.0 * w
         elif qt in name_toks:
-            score += 3.0 * w
+            # Whole-word hit on a name segment. This MUST outrank the fragment
+            # branch below: matching "diagram" in render_diagram is evidence,
+            # matching "me" inside rename is coincidence. The two were inverted
+            # (4.0 fragment vs 3.0 whole-word), which also made this branch
+            # unreachable -- every token is trivially a substring of its own name.
+            score += 4.0 * w
+        elif len(qt) >= _MIN_SUBSTRING_LEN and qt in name_l:
+            score += 1.5 * w
         if qt in desc_toks:
             score += 1.0 * w
     return score
@@ -269,7 +307,9 @@ def search_catalog(
     rows = [r for r in catalog if r["action"] not in FRONT_DOOR]
     if not query:
         return rows[:limit]
-    qt = _tokens(query)
+    qt = _query_tokens(query)
+    if not qt:  # query was all function words; ranking on it is noise
+        return rows[:limit]
     weights = _idf_weights(qt, rows)
     scored = []
     for r in rows:

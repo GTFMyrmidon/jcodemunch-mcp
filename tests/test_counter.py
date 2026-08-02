@@ -222,6 +222,46 @@ def test_transform_rules_yield_primary_to_the_tool_that_feeds_them():
     assert "render_diagram" in actions, f"render must still be offered; got {actions}"
 
 
+# --- Scorer: function words must not outrank real terms --------------------- #
+
+def test_pronoun_does_not_outrank_the_matching_action():
+    """Regression: idf is computed over description prose, so "me" -- absent from
+    every description -- drew the HIGHEST weight in the query, then substring-hit
+    a third of the catalog inside snake_case names. Measured before the fix:
+    check_rena(me)_safe scored 19.3 on "draw me a diagram of that" against
+    render_diagram's 16.5 for the actual word "diagram"."""
+    rows = server._catalog_rows()
+    hits = [r["action"] for r in counter.search_catalog(rows, "draw me a diagram of that", 5)]
+    assert hits[0] == "render_diagram", f"expected render_diagram first; got {hits}"
+    assert "check_rename_safe" not in hits[:3], f"pronoun noise resurfaced: {hits}"
+
+
+def test_whole_word_name_hit_outranks_a_fragment():
+    """A token matching a name SEGMENT is evidence; the same token buried inside a
+    longer word is coincidence. These were inverted (fragment 4.0 > whole-word
+    3.0), which also made the whole-word branch unreachable."""
+    w_whole = counter.score_action(["diagram"], "render_diagram", "")
+    w_frag = counter.score_action(["diagram"], "diagrammatic_thing", "")
+    assert w_whole > w_frag, f"whole-word {w_whole} must beat fragment {w_frag}"
+
+
+def test_short_tokens_cannot_match_inside_a_word():
+    """Two-character noise must not substring-match. 'me' is a whole word in no
+    catalog name, so it should score nothing at all."""
+    assert counter.score_action(["me"], "check_rename_safe", "") == 0.0
+    # ...but a short token that IS a whole name segment still counts.
+    assert counter.score_action(["ast"], "search_ast", "") > 0.0
+
+
+def test_all_stopword_query_does_not_rank():
+    """A query of pure function words carries no signal; ranking on it invents
+    an order. Fall back to the stable catalog listing instead."""
+    rows = server._catalog_rows()
+    ranked = counter.search_catalog(rows, "what is it that i should do with this", 5)
+    unranked = counter.search_catalog(rows, None, 5)
+    assert [r["action"] for r in ranked] == [r["action"] for r in unranked]
+
+
 # --- Charter CI gate: the Counter can never expose an exec/write action ----- #
 
 def test_no_catalog_action_trips_exec_tripwire():
