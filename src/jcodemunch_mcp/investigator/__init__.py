@@ -33,6 +33,17 @@ from .deletion_safety import (  # noqa: F401
     UNSAFE,
     investigate_deletion_safety,
 )
+from .retrieval_counterfactual import (  # noqa: F401
+    CATALOG_ABSENT,
+    EMPTY_QUERY,
+    GATES,
+    NO_LEXICAL_OVERLAP,
+    RANKED_BELOW_CUTOFF,
+    RETURNED,
+    RULE_PREEMPTED,
+    explain_misses,
+    explain_route,
+)
 
 __all__ = [
     "Obligation",
@@ -46,4 +57,13 @@ __all__ = [
     "UNSAFE",
     "NOT_ESTABLISHED",
     "investigate_deletion_safety",
+    "GATES",
+    "RETURNED",
+    "CATALOG_ABSENT",
+    "EMPTY_QUERY",
+    "RULE_PREEMPTED",
+    "NO_LEXICAL_OVERLAP",
+    "RANKED_BELOW_CUTOFF",
+    "explain_route",
+    "explain_misses",
 ]

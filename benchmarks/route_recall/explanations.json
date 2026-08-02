@@ -1,0 +1,2013 @@
+{
+ "explained": 30,
+ "by_gate": {
+  "ranked_below_cutoff": 16,
+  "no_lexical_overlap": 8,
+  "rule_preempted": 6
+ },
+ "explanations": [
+  {
+   "task": "which file contains the message connection refused",
+   "expected_action": "search_text",
+   "decision_path": [
+    "catalog",
+    "intent_rules",
+    "tokenize",
+    "lexical_fallback"
+   ],
+   "rule_matches": [],
+   "query_tokens": [
+    "file",
+    "contains",
+    "message",
+    "connection",
+    "refused"
+   ],
+   "score": 1.184,
+   "contributions": [
+    {
+     "token": "file",
+     "idf": 1.184,
+     "channel": "description",
+     "points": 1.184
+    },
+    {
+     "token": "contains",
+     "idf": 4.822,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "message",
+     "idf": 4.822,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "connection",
+     "idf": 4.822,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "refused",
+     "idf": 4.822,
+     "channel": "none",
+     "points": 0.0
+    }
+   ],
+   "outcome": "ranked_below_cutoff",
+   "first_excluding_gate": "ranked_below_cutoff",
+   "experiment": "It scored but lost. This is the one gate where ranking work helps: compare the per-token contributions against the winner below.",
+   "rank": 36,
+   "cutoff": 3,
+   "top": [
+    "get_file_content",
+    "get_file_outline",
+    "get_file_risk"
+   ],
+   "beaten_by": {
+    "action": "get_file_content",
+    "score": 5.921,
+    "contributions": [
+     {
+      "token": "file",
+      "idf": 1.184,
+      "channel": "name_word+description",
+      "points": 5.921
+     },
+     {
+      "token": "contains",
+      "idf": 4.822,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "message",
+      "idf": 4.822,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "connection",
+      "idf": 4.822,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "refused",
+      "idf": 4.822,
+      "channel": "none",
+      "points": 0.0
+     }
+    ]
+   }
+  },
+  {
+   "task": "find every place we swallow an exception without logging",
+   "expected_action": "search_ast",
+   "decision_path": [
+    "catalog",
+    "intent_rules"
+   ],
+   "rule_matches": [
+    "search_symbols"
+   ],
+   "outcome": "rule_preempted",
+   "first_excluding_gate": "rule_preempted",
+   "experiment": "A curated rule fired, and `route` runs the lexical fallback only when NO rule matches. This action was never scored. Do not tune weights for this miss -- either add a rule for the intent, or narrow the pattern that claimed it.",
+   "preempted_by": "search_symbols",
+   "scored": false
+  },
+  {
+   "task": "list functions longer than 50 lines with deep nesting in the parser",
+   "expected_action": "winnow_symbols",
+   "decision_path": [
+    "catalog",
+    "intent_rules",
+    "tokenize",
+    "lexical_fallback"
+   ],
+   "rule_matches": [],
+   "query_tokens": [
+    "list",
+    "functions",
+    "longer",
+    "than",
+    "50",
+    "lines",
+    "deep",
+    "nesting",
+    "parser"
+   ],
+   "score": 5.133,
+   "contributions": [
+    {
+     "token": "list",
+     "idf": 2.257,
+     "channel": "description",
+     "points": 2.257
+    },
+    {
+     "token": "functions",
+     "idf": 2.876,
+     "channel": "description",
+     "points": 2.876
+    },
+    {
+     "token": "longer",
+     "idf": 4.822,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "than",
+     "idf": 3.03,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "50",
+     "idf": 4.822,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "lines",
+     "idf": 2.876,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "deep",
+     "idf": 4.129,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "nesting",
+     "idf": 3.723,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "parser",
+     "idf": 4.822,
+     "channel": "none",
+     "points": 0.0
+    }
+   ],
+   "outcome": "ranked_below_cutoff",
+   "first_excluding_gate": "ranked_below_cutoff",
+   "experiment": "It scored but lost. This is the one gate where ranking work helps: compare the per-token contributions against the winner below.",
+   "rank": 7,
+   "cutoff": 3,
+   "top": [
+    "list_repos",
+    "list_workspaces",
+    "get_untested_symbols"
+   ],
+   "beaten_by": {
+    "action": "list_repos",
+    "score": 11.284,
+    "contributions": [
+     {
+      "token": "list",
+      "idf": 2.257,
+      "channel": "name_word+description",
+      "points": 11.284
+     },
+     {
+      "token": "functions",
+      "idf": 2.876,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "longer",
+      "idf": 4.822,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "than",
+      "idf": 3.03,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "50",
+      "idf": 4.822,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "lines",
+      "idf": 2.876,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "deep",
+      "idf": 4.129,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "nesting",
+      "idf": 3.723,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "parser",
+      "idf": 4.822,
+      "channel": "none",
+      "points": 0.0
+     }
+    ]
+   }
+  },
+  {
+   "task": "pull together the most relevant code for this task under a token budget",
+   "expected_action": "get_ranked_context",
+   "decision_path": [
+    "catalog",
+    "intent_rules",
+    "tokenize",
+    "lexical_fallback"
+   ],
+   "rule_matches": [],
+   "query_tokens": [
+    "pull",
+    "together",
+    "most",
+    "relevant",
+    "code",
+    "task",
+    "under",
+    "token",
+    "budget"
+   ],
+   "score": 8.345,
+   "contributions": [
+    {
+     "token": "pull",
+     "idf": 4.822,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "together",
+     "idf": 4.129,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "most",
+     "idf": 3.435,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "relevant",
+     "idf": 4.822,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "code",
+     "idf": 1.731,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "task",
+     "idf": 2.876,
+     "channel": "description",
+     "points": 2.876
+    },
+    {
+     "token": "under",
+     "idf": 2.876,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "token",
+     "idf": 2.257,
+     "channel": "description",
+     "points": 2.257
+    },
+    {
+     "token": "budget",
+     "idf": 3.212,
+     "channel": "description",
+     "points": 3.212
+    }
+   ],
+   "outcome": "ranked_below_cutoff",
+   "first_excluding_gate": "ranked_below_cutoff",
+   "experiment": "It scored but lost. This is the one gate where ranking work helps: compare the per-token contributions against the winner below.",
+   "rank": 4,
+   "cutoff": 3,
+   "top": [
+    "assemble_task_context",
+    "find_dead_code",
+    "get_dead_code_v2"
+   ],
+   "beaten_by": {
+    "action": "assemble_task_context",
+    "score": 22.724,
+    "contributions": [
+     {
+      "token": "pull",
+      "idf": 4.822,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "together",
+      "idf": 4.129,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "most",
+      "idf": 3.435,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "relevant",
+      "idf": 4.822,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "code",
+      "idf": 1.731,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "task",
+      "idf": 2.876,
+      "channel": "name_word+description",
+      "points": 14.379
+     },
+     {
+      "token": "under",
+      "idf": 2.876,
+      "channel": "description",
+      "points": 2.876
+     },
+     {
+      "token": "token",
+      "idf": 2.257,
+      "channel": "description",
+      "points": 2.257
+     },
+     {
+      "token": "budget",
+      "idf": 3.212,
+      "channel": "description",
+      "points": 3.212
+     }
+    ]
+   }
+  },
+  {
+   "task": "I do not know this repo, what should I look at first",
+   "expected_action": "digest",
+   "decision_path": [
+    "catalog",
+    "intent_rules",
+    "tokenize",
+    "lexical_fallback"
+   ],
+   "rule_matches": [],
+   "query_tokens": [
+    "not",
+    "know",
+    "repo",
+    "look",
+    "first"
+   ],
+   "score": 1.061,
+   "contributions": [
+    {
+     "token": "not",
+     "idf": 2.519,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "know",
+     "idf": 3.435,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "repo",
+     "idf": 1.061,
+     "channel": "description",
+     "points": 1.061
+    },
+    {
+     "token": "look",
+     "idf": 4.129,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "first",
+     "idf": 2.742,
+     "channel": "none",
+     "points": 0.0
+    }
+   ],
+   "outcome": "ranked_below_cutoff",
+   "first_excluding_gate": "ranked_below_cutoff",
+   "experiment": "It scored but lost. This is the one gate where ranking work helps: compare the per-token contributions against the winner below.",
+   "rank": 25,
+   "cutoff": 3,
+   "top": [
+    "get_repo_map",
+    "get_parity_map",
+    "embed_repo"
+   ],
+   "beaten_by": {
+    "action": "get_repo_map",
+    "score": 11.258,
+    "contributions": [
+     {
+      "token": "not",
+      "idf": 2.519,
+      "channel": "description",
+      "points": 2.519
+     },
+     {
+      "token": "know",
+      "idf": 3.435,
+      "channel": "description",
+      "points": 3.435
+     },
+     {
+      "token": "repo",
+      "idf": 1.061,
+      "channel": "name_word+description",
+      "points": 5.303
+     },
+     {
+      "token": "look",
+      "idf": 4.129,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "first",
+      "idf": 2.742,
+      "channel": "none",
+      "points": 0.0
+     }
+    ]
+   }
+  },
+  {
+   "task": "I do not know this repo, what should I look at first",
+   "expected_action": "get_repo_outline",
+   "decision_path": [
+    "catalog",
+    "intent_rules",
+    "tokenize",
+    "lexical_fallback"
+   ],
+   "rule_matches": [],
+   "query_tokens": [
+    "not",
+    "know",
+    "repo",
+    "look",
+    "first"
+   ],
+   "score": 4.242,
+   "contributions": [
+    {
+     "token": "not",
+     "idf": 2.519,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "know",
+     "idf": 3.435,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "repo",
+     "idf": 1.061,
+     "channel": "name_word",
+     "points": 4.242
+    },
+    {
+     "token": "look",
+     "idf": 4.129,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "first",
+     "idf": 2.742,
+     "channel": "none",
+     "points": 0.0
+    }
+   ],
+   "outcome": "ranked_below_cutoff",
+   "first_excluding_gate": "ranked_below_cutoff",
+   "experiment": "It scored but lost. This is the one gate where ranking work helps: compare the per-token contributions against the winner below.",
+   "rank": 10,
+   "cutoff": 3,
+   "top": [
+    "get_repo_map",
+    "get_parity_map",
+    "embed_repo"
+   ],
+   "beaten_by": {
+    "action": "get_repo_map",
+    "score": 11.258,
+    "contributions": [
+     {
+      "token": "not",
+      "idf": 2.519,
+      "channel": "description",
+      "points": 2.519
+     },
+     {
+      "token": "know",
+      "idf": 3.435,
+      "channel": "description",
+      "points": 3.435
+     },
+     {
+      "token": "repo",
+      "idf": 1.061,
+      "channel": "name_word+description",
+      "points": 5.303
+     },
+     {
+      "token": "look",
+      "idf": 4.129,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "first",
+      "idf": 2.742,
+      "channel": "none",
+      "points": 0.0
+     }
+    ]
+   }
+  },
+  {
+   "task": "I do not know this repo, what should I look at first",
+   "expected_action": "suggest_queries",
+   "decision_path": [
+    "catalog",
+    "intent_rules",
+    "tokenize",
+    "lexical_fallback"
+   ],
+   "rule_matches": [],
+   "query_tokens": [
+    "not",
+    "know",
+    "repo",
+    "look",
+    "first"
+   ],
+   "score": 3.803,
+   "contributions": [
+    {
+     "token": "not",
+     "idf": 2.519,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "know",
+     "idf": 3.435,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "repo",
+     "idf": 1.061,
+     "channel": "description",
+     "points": 1.061
+    },
+    {
+     "token": "look",
+     "idf": 4.129,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "first",
+     "idf": 2.742,
+     "channel": "description",
+     "points": 2.742
+    }
+   ],
+   "outcome": "ranked_below_cutoff",
+   "first_excluding_gate": "ranked_below_cutoff",
+   "experiment": "It scored but lost. This is the one gate where ranking work helps: compare the per-token contributions against the winner below.",
+   "rank": 14,
+   "cutoff": 3,
+   "top": [
+    "get_repo_map",
+    "get_parity_map",
+    "embed_repo"
+   ],
+   "beaten_by": {
+    "action": "get_repo_map",
+    "score": 11.258,
+    "contributions": [
+     {
+      "token": "not",
+      "idf": 2.519,
+      "channel": "description",
+      "points": 2.519
+     },
+     {
+      "token": "know",
+      "idf": 3.435,
+      "channel": "description",
+      "points": 3.435
+     },
+     {
+      "token": "repo",
+      "idf": 1.061,
+      "channel": "name_word+description",
+      "points": 5.303
+     },
+     {
+      "token": "look",
+      "idf": 4.129,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "first",
+      "idf": 2.742,
+      "channel": "none",
+      "points": 0.0
+     }
+    ]
+   }
+  },
+  {
+   "task": "show me the body of this function",
+   "expected_action": "get_symbol_source",
+   "decision_path": [
+    "catalog",
+    "intent_rules",
+    "tokenize",
+    "lexical_fallback"
+   ],
+   "rule_matches": [],
+   "query_tokens": [
+    "show",
+    "body",
+    "function"
+   ],
+   "score": 0.0,
+   "contributions": [
+    {
+     "token": "show",
+     "idf": 3.435,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "body",
+     "idf": 3.435,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "function",
+     "idf": 3.03,
+     "channel": "none",
+     "points": 0.0
+    }
+   ],
+   "outcome": "no_lexical_overlap",
+   "first_excluding_gate": "no_lexical_overlap",
+   "experiment": "The query shares no token with this action's name or description, so no reweighting can rescue it -- the score is structurally zero. Add the user's vocabulary to the description, or add a curated rule. This is the no-stemming residual disclosed in v1.108.213.",
+   "scored": true,
+   "rank": null,
+   "top": [
+    "get_parity_map",
+    "finalize_handoff",
+    "get_call_hierarchy"
+   ]
+  },
+  {
+   "task": "I need this function plus everything it imports",
+   "expected_action": "get_context_bundle",
+   "decision_path": [
+    "catalog",
+    "intent_rules",
+    "tokenize",
+    "lexical_fallback"
+   ],
+   "rule_matches": [],
+   "query_tokens": [
+    "need",
+    "function",
+    "plus",
+    "everything",
+    "imports"
+   ],
+   "score": 2.519,
+   "contributions": [
+    {
+     "token": "need",
+     "idf": 3.435,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "function",
+     "idf": 3.03,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "plus",
+     "idf": 2.876,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "everything",
+     "idf": 4.822,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "imports",
+     "idf": 2.519,
+     "channel": "description",
+     "points": 2.519
+    }
+   ],
+   "outcome": "ranked_below_cutoff",
+   "first_excluding_gate": "ranked_below_cutoff",
+   "experiment": "It scored but lost. This is the one gate where ranking work helps: compare the per-token contributions against the winner below.",
+   "rank": 14,
+   "cutoff": 3,
+   "top": [
+    "get_parity_map",
+    "search_ast",
+    "get_file_risk"
+   ],
+   "beaten_by": {
+    "action": "get_parity_map",
+    "score": 6.466,
+    "contributions": [
+     {
+      "token": "need",
+      "idf": 3.435,
+      "channel": "description",
+      "points": 3.435
+     },
+     {
+      "token": "function",
+      "idf": 3.03,
+      "channel": "description",
+      "points": 3.03
+     },
+     {
+      "token": "plus",
+      "idf": 2.876,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "everything",
+      "idf": 4.822,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "imports",
+      "idf": 2.519,
+      "channel": "none",
+      "points": 0.0
+     }
+    ]
+   }
+  },
+  {
+   "task": "is this name used anywhere at all or can I drop it",
+   "expected_action": "check_delete_safe",
+   "decision_path": [
+    "catalog",
+    "intent_rules",
+    "tokenize",
+    "lexical_fallback"
+   ],
+   "rule_matches": [],
+   "query_tokens": [
+    "name",
+    "used",
+    "anywhere",
+    "all",
+    "drop"
+   ],
+   "score": 0.0,
+   "contributions": [
+    {
+     "token": "name",
+     "idf": 1.989,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "used",
+     "idf": 4.129,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "anywhere",
+     "idf": 4.129,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "all",
+     "idf": 1.931,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "drop",
+     "idf": 4.129,
+     "channel": "none",
+     "points": 0.0
+    }
+   ],
+   "outcome": "no_lexical_overlap",
+   "first_excluding_gate": "no_lexical_overlap",
+   "experiment": "The query shares no token with this action's name or description, so no reweighting can rescue it -- the score is structurally zero. Add the user's vocabulary to the description, or add a curated rule. This is the no-stemming residual disclosed in v1.108.213.",
+   "scored": true,
+   "rank": null,
+   "top": [
+    "find_unused_paths",
+    "get_group_contracts",
+    "get_parity_map"
+   ]
+  },
+  {
+   "task": "is this name used anywhere at all or can I drop it",
+   "expected_action": "check_references",
+   "decision_path": [
+    "catalog",
+    "intent_rules",
+    "tokenize",
+    "lexical_fallback"
+   ],
+   "rule_matches": [],
+   "query_tokens": [
+    "name",
+    "used",
+    "anywhere",
+    "all",
+    "drop"
+   ],
+   "score": 4.129,
+   "contributions": [
+    {
+     "token": "name",
+     "idf": 1.989,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "used",
+     "idf": 4.129,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "anywhere",
+     "idf": 4.129,
+     "channel": "description",
+     "points": 4.129
+    },
+    {
+     "token": "all",
+     "idf": 1.931,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "drop",
+     "idf": 4.129,
+     "channel": "none",
+     "points": 0.0
+    }
+   ],
+   "outcome": "ranked_below_cutoff",
+   "first_excluding_gate": "ranked_below_cutoff",
+   "experiment": "It scored but lost. This is the one gate where ranking work helps: compare the per-token contributions against the winner below.",
+   "rank": 5,
+   "cutoff": 3,
+   "top": [
+    "find_unused_paths",
+    "get_group_contracts",
+    "get_parity_map"
+   ],
+   "beaten_by": {
+    "action": "find_unused_paths",
+    "score": 6.193,
+    "contributions": [
+     {
+      "token": "name",
+      "idf": 1.989,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "used",
+      "idf": 4.129,
+      "channel": "name_fragment",
+      "points": 6.193
+     },
+     {
+      "token": "anywhere",
+      "idf": 4.129,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "all",
+      "idf": 1.931,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "drop",
+      "idf": 4.129,
+      "channel": "none",
+      "points": 0.0
+     }
+    ]
+   }
+  },
+  {
+   "task": "what breaks if I change the POST orders endpoint",
+   "expected_action": "get_endpoint_impact",
+   "decision_path": [
+    "catalog",
+    "intent_rules"
+   ],
+   "rule_matches": [
+    "get_blast_radius"
+   ],
+   "outcome": "rule_preempted",
+   "first_excluding_gate": "rule_preempted",
+   "experiment": "A curated rule fired, and `route` runs the lexical fallback only when NO rule matches. This action was never scored. Do not tune weights for this miss -- either add a rule for the intent, or narrow the pattern that claimed it.",
+   "preempted_by": "get_blast_radius",
+   "scored": false
+  },
+  {
+   "task": "what is the import chain from this file outward",
+   "expected_action": "get_dependency_graph",
+   "decision_path": [
+    "catalog",
+    "intent_rules",
+    "tokenize",
+    "lexical_fallback"
+   ],
+   "rule_matches": [],
+   "query_tokens": [
+    "import",
+    "chain",
+    "file",
+    "outward"
+   ],
+   "score": 3.116,
+   "contributions": [
+    {
+     "token": "import",
+     "idf": 1.931,
+     "channel": "description",
+     "points": 1.931
+    },
+    {
+     "token": "chain",
+     "idf": 3.03,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "file",
+     "idf": 1.184,
+     "channel": "description",
+     "points": 1.184
+    },
+    {
+     "token": "outward",
+     "idf": 4.822,
+     "channel": "none",
+     "points": 0.0
+    }
+   ],
+   "outcome": "ranked_below_cutoff",
+   "first_excluding_gate": "ranked_below_cutoff",
+   "experiment": "It scored but lost. This is the one gate where ranking work helps: compare the per-token contributions against the winner below.",
+   "rank": 16,
+   "cutoff": 3,
+   "top": [
+    "get_signal_chains",
+    "find_importers",
+    "import_runtime_signal"
+   ],
+   "beaten_by": {
+    "action": "get_signal_chains",
+    "score": 9.506,
+    "contributions": [
+     {
+      "token": "import",
+      "idf": 1.931,
+      "channel": "description",
+      "points": 1.931
+     },
+     {
+      "token": "chain",
+      "idf": 3.03,
+      "channel": "name_fragment+description",
+      "points": 7.575
+     },
+     {
+      "token": "file",
+      "idf": 1.184,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "outward",
+      "idf": 4.822,
+      "channel": "none",
+      "points": 0.0
+     }
+    ]
+   }
+  },
+  {
+   "task": "what directories and files are in here",
+   "expected_action": "get_file_tree",
+   "decision_path": [
+    "catalog",
+    "intent_rules",
+    "tokenize",
+    "lexical_fallback"
+   ],
+   "rule_matches": [],
+   "query_tokens": [
+    "directories",
+    "files",
+    "here"
+   ],
+   "score": 1.421,
+   "contributions": [
+    {
+     "token": "directories",
+     "idf": 4.129,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "files",
+     "idf": 1.421,
+     "channel": "description",
+     "points": 1.421
+    },
+    {
+     "token": "here",
+     "idf": 3.435,
+     "channel": "none",
+     "points": 0.0
+    }
+   ],
+   "outcome": "ranked_below_cutoff",
+   "first_excluding_gate": "ranked_below_cutoff",
+   "experiment": "It scored but lost. This is the one gate where ranking work helps: compare the per-token contributions against the winner below.",
+   "rank": 20,
+   "cutoff": 3,
+   "top": [
+    "get_repo_map",
+    "get_repo_outline",
+    "diff_health_radar"
+   ],
+   "beaten_by": {
+    "action": "get_repo_map",
+    "score": 4.856,
+    "contributions": [
+     {
+      "token": "directories",
+      "idf": 4.129,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "files",
+      "idf": 1.421,
+      "channel": "description",
+      "points": 1.421
+     },
+     {
+      "token": "here",
+      "idf": 3.435,
+      "channel": "description",
+      "points": 3.435
+     }
+    ]
+   }
+  },
+  {
+   "task": "what are the natural modules in this system",
+   "expected_action": "get_tectonic_map",
+   "decision_path": [
+    "catalog",
+    "intent_rules",
+    "tokenize",
+    "lexical_fallback"
+   ],
+   "rule_matches": [],
+   "query_tokens": [
+    "natural",
+    "modules",
+    "system"
+   ],
+   "score": 0.0,
+   "contributions": [
+    {
+     "token": "natural",
+     "idf": 4.822,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "modules",
+     "idf": 3.723,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "system",
+     "idf": 4.822,
+     "channel": "none",
+     "points": 0.0
+    }
+   ],
+   "outcome": "no_lexical_overlap",
+   "first_excluding_gate": "no_lexical_overlap",
+   "experiment": "The query shares no token with this action's name or description, so no reweighting can rescue it -- the score is structurally zero. Add the user's vocabulary to the description, or add a curated rule. This is the no-stemming residual disclosed in v1.108.213.",
+   "scored": true,
+   "rank": null,
+   "top": [
+    "get_coupling_metrics",
+    "index_dependency"
+   ]
+  },
+  {
+   "task": "where is every route annotation in the project",
+   "expected_action": "get_decorator_census",
+   "decision_path": [
+    "catalog",
+    "intent_rules"
+   ],
+   "rule_matches": [
+    "search_symbols"
+   ],
+   "outcome": "rule_preempted",
+   "first_excluding_gate": "rule_preempted",
+   "experiment": "A curated rule fired, and `route` runs the lexical fallback only when NO rule matches. This action was never scored. Do not tune weights for this miss -- either add a rule for the intent, or narrow the pattern that claimed it.",
+   "preempted_by": "search_symbols",
+   "scored": false
+  },
+  {
+   "task": "how concentrated is this codebase and how deep does it nest",
+   "expected_action": "get_architecture_metrics",
+   "decision_path": [
+    "catalog",
+    "intent_rules",
+    "tokenize",
+    "lexical_fallback"
+   ],
+   "rule_matches": [],
+   "query_tokens": [
+    "concentrated",
+    "codebase",
+    "deep",
+    "nest"
+   ],
+   "score": 0.0,
+   "contributions": [
+    {
+     "token": "concentrated",
+     "idf": 4.822,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "codebase",
+     "idf": 2.424,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "deep",
+     "idf": 4.129,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "nest",
+     "idf": 4.822,
+     "channel": "none",
+     "points": 0.0
+    }
+   ],
+   "outcome": "no_lexical_overlap",
+   "first_excluding_gate": "no_lexical_overlap",
+   "experiment": "The query shares no token with this action's name or description, so no reweighting can rescue it -- the score is structurally zero. Add the user's vocabulary to the description, or add a curated rule. This is the no-stemming residual disclosed in v1.108.213.",
+   "scored": true,
+   "rank": null,
+   "top": [
+    "get_call_hierarchy",
+    "check_delete_safe",
+    "check_edit_safe"
+   ]
+  },
+  {
+   "task": "what are the riskiest parts of this repo",
+   "expected_action": "get_file_risk",
+   "decision_path": [
+    "catalog",
+    "intent_rules",
+    "tokenize",
+    "lexical_fallback"
+   ],
+   "rule_matches": [],
+   "query_tokens": [
+    "riskiest",
+    "parts",
+    "repo"
+   ],
+   "score": 0.0,
+   "contributions": [
+    {
+     "token": "riskiest",
+     "idf": 4.129,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "parts",
+     "idf": 4.822,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "repo",
+     "idf": 1.061,
+     "channel": "none",
+     "points": 0.0
+    }
+   ],
+   "outcome": "no_lexical_overlap",
+   "first_excluding_gate": "no_lexical_overlap",
+   "experiment": "The query shares no token with this action's name or description, so no reweighting can rescue it -- the score is structurally zero. Add the user's vocabulary to the description, or add a curated rule. This is the no-stemming residual disclosed in v1.108.213.",
+   "scored": true,
+   "rank": null,
+   "top": [
+    "embed_repo",
+    "get_cross_repo_map",
+    "get_repo_map"
+   ]
+  },
+  {
+   "task": "what are the riskiest parts of this repo",
+   "expected_action": "get_hotspots",
+   "decision_path": [
+    "catalog",
+    "intent_rules",
+    "tokenize",
+    "lexical_fallback"
+   ],
+   "rule_matches": [],
+   "query_tokens": [
+    "riskiest",
+    "parts",
+    "repo"
+   ],
+   "score": 1.061,
+   "contributions": [
+    {
+     "token": "riskiest",
+     "idf": 4.129,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "parts",
+     "idf": 4.822,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "repo",
+     "idf": 1.061,
+     "channel": "description",
+     "points": 1.061
+    }
+   ],
+   "outcome": "ranked_below_cutoff",
+   "first_excluding_gate": "ranked_below_cutoff",
+   "experiment": "It scored but lost. This is the one gate where ranking work helps: compare the per-token contributions against the winner below.",
+   "rank": 26,
+   "cutoff": 3,
+   "top": [
+    "embed_repo",
+    "get_cross_repo_map",
+    "get_repo_map"
+   ],
+   "beaten_by": {
+    "action": "embed_repo",
+    "score": 5.303,
+    "contributions": [
+     {
+      "token": "riskiest",
+      "idf": 4.129,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "parts",
+      "idf": 4.822,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "repo",
+      "idf": 1.061,
+      "channel": "name_word+description",
+      "points": 5.303
+     }
+    ]
+   }
+  },
+  {
+   "task": "what are the riskiest parts of this repo",
+   "expected_action": "get_repo_health",
+   "decision_path": [
+    "catalog",
+    "intent_rules",
+    "tokenize",
+    "lexical_fallback"
+   ],
+   "rule_matches": [],
+   "query_tokens": [
+    "riskiest",
+    "parts",
+    "repo"
+   ],
+   "score": 4.242,
+   "contributions": [
+    {
+     "token": "riskiest",
+     "idf": 4.129,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "parts",
+     "idf": 4.822,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "repo",
+     "idf": 1.061,
+     "channel": "name_word",
+     "points": 4.242
+    }
+   ],
+   "outcome": "ranked_below_cutoff",
+   "first_excluding_gate": "ranked_below_cutoff",
+   "experiment": "It scored but lost. This is the one gate where ranking work helps: compare the per-token contributions against the winner below.",
+   "rank": 6,
+   "cutoff": 3,
+   "top": [
+    "embed_repo",
+    "get_cross_repo_map",
+    "get_repo_map"
+   ],
+   "beaten_by": {
+    "action": "embed_repo",
+    "score": 5.303,
+    "contributions": [
+     {
+      "token": "riskiest",
+      "idf": 4.129,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "parts",
+      "idf": 4.822,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "repo",
+      "idf": 1.061,
+      "channel": "name_word+description",
+      "points": 5.303
+     }
+    ]
+   }
+  },
+  {
+   "task": "am I going to break callers if I edit this signature",
+   "expected_action": "check_edit_safe",
+   "decision_path": [
+    "catalog",
+    "intent_rules"
+   ],
+   "rule_matches": [
+    "get_call_hierarchy",
+    "get_blast_radius"
+   ],
+   "outcome": "rule_preempted",
+   "first_excluding_gate": "rule_preempted",
+   "experiment": "A curated rule fired, and `route` runs the lexical fallback only when NO rule matches. This action was never scored. Do not tune weights for this miss -- either add a rule for the intent, or narrow the pattern that claimed it.",
+   "preempted_by": "get_call_hierarchy",
+   "scored": false
+  },
+  {
+   "task": "how risky is this pull request",
+   "expected_action": "get_pr_risk_profile",
+   "decision_path": [
+    "catalog",
+    "intent_rules",
+    "tokenize",
+    "lexical_fallback"
+   ],
+   "rule_matches": [],
+   "query_tokens": [
+    "risky",
+    "pull",
+    "request"
+   ],
+   "score": 0.0,
+   "contributions": [
+    {
+     "token": "risky",
+     "idf": 4.822,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "pull",
+     "idf": 4.822,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "request",
+     "idf": 4.822,
+     "channel": "none",
+     "points": 0.0
+    }
+   ],
+   "outcome": "no_lexical_overlap",
+   "first_excluding_gate": "no_lexical_overlap",
+   "experiment": "The query shares no token with this action's name or description, so no reweighting can rescue it -- the score is structurally zero. Add the user's vocabulary to the description, or add a curated rule. This is the no-stemming residual disclosed in v1.108.213.",
+   "scored": true,
+   "rank": null,
+   "top": []
+  },
+  {
+   "task": "how often does this file get touched",
+   "expected_action": "get_churn_rate",
+   "decision_path": [
+    "catalog",
+    "intent_rules",
+    "tokenize",
+    "lexical_fallback"
+   ],
+   "rule_matches": [],
+   "query_tokens": [
+    "often",
+    "file",
+    "get",
+    "touched"
+   ],
+   "score": 4.37,
+   "contributions": [
+    {
+     "token": "often",
+     "idf": 4.822,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "file",
+     "idf": 1.184,
+     "channel": "description",
+     "points": 1.184
+    },
+    {
+     "token": "get",
+     "idf": 0.796,
+     "channel": "name_word",
+     "points": 3.186
+    },
+    {
+     "token": "touched",
+     "idf": 3.723,
+     "channel": "none",
+     "points": 0.0
+    }
+   ],
+   "outcome": "ranked_below_cutoff",
+   "first_excluding_gate": "ranked_below_cutoff",
+   "experiment": "It scored but lost. This is the one gate where ranking work helps: compare the per-token contributions against the winner below.",
+   "rank": 16,
+   "cutoff": 3,
+   "top": [
+    "get_file_content",
+    "get_file_outline",
+    "get_file_tree"
+   ],
+   "beaten_by": {
+    "action": "get_file_content",
+    "score": 9.903,
+    "contributions": [
+     {
+      "token": "often",
+      "idf": 4.822,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "file",
+      "idf": 1.184,
+      "channel": "name_word+description",
+      "points": 5.921
+     },
+     {
+      "token": "get",
+      "idf": 0.796,
+      "channel": "name_word+description",
+      "points": 3.982
+     },
+     {
+      "token": "touched",
+      "idf": 3.723,
+      "channel": "none",
+      "points": 0.0
+     }
+    ]
+   }
+  },
+  {
+   "task": "how complicated is this one function",
+   "expected_action": "get_symbol_complexity",
+   "decision_path": [
+    "catalog",
+    "intent_rules",
+    "tokenize",
+    "lexical_fallback"
+   ],
+   "rule_matches": [],
+   "query_tokens": [
+    "complicated",
+    "one",
+    "function"
+   ],
+   "score": 0.0,
+   "contributions": [
+    {
+     "token": "complicated",
+     "idf": 4.822,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "one",
+     "idf": 1.877,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "function",
+     "idf": 3.03,
+     "channel": "none",
+     "points": 0.0
+    }
+   ],
+   "outcome": "no_lexical_overlap",
+   "first_excluding_gate": "no_lexical_overlap",
+   "experiment": "The query shares no token with this action's name or description, so no reweighting can rescue it -- the score is structurally zero. Add the user's vocabulary to the description, or add a curated rule. This is the no-stemming residual disclosed in v1.108.213.",
+   "scored": true,
+   "rank": null,
+   "top": [
+    "get_file_risk",
+    "get_parity_map",
+    "get_untested_symbols"
+   ]
+  },
+  {
+   "task": "how much of this code actually runs in production",
+   "expected_action": "get_runtime_coverage",
+   "decision_path": [
+    "catalog",
+    "intent_rules",
+    "tokenize",
+    "lexical_fallback"
+   ],
+   "rule_matches": [],
+   "query_tokens": [
+    "much",
+    "code",
+    "actually",
+    "runs",
+    "production"
+   ],
+   "score": 0.0,
+   "contributions": [
+    {
+     "token": "much",
+     "idf": 3.723,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "code",
+     "idf": 1.731,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "actually",
+     "idf": 3.435,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "runs",
+     "idf": 3.212,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "production",
+     "idf": 4.129,
+     "channel": "none",
+     "points": 0.0
+    }
+   ],
+   "outcome": "no_lexical_overlap",
+   "first_excluding_gate": "no_lexical_overlap",
+   "experiment": "The query shares no token with this action's name or description, so no reweighting can rescue it -- the score is structurally zero. Add the user's vocabulary to the description, or add a curated rule. This is the no-stemming residual disclosed in v1.108.213.",
+   "scored": true,
+   "rank": null,
+   "top": [
+    "find_dead_code",
+    "get_dead_code_v2",
+    "get_changed_symbols"
+   ]
+  },
+  {
+   "task": "pull down a github project so I can explore it",
+   "expected_action": "index_repo",
+   "decision_path": [
+    "catalog",
+    "intent_rules",
+    "tokenize",
+    "lexical_fallback"
+   ],
+   "rule_matches": [],
+   "query_tokens": [
+    "pull",
+    "down",
+    "github",
+    "project",
+    "explore"
+   ],
+   "score": 3.435,
+   "contributions": [
+    {
+     "token": "pull",
+     "idf": 4.822,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "down",
+     "idf": 4.822,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "github",
+     "idf": 3.435,
+     "channel": "description",
+     "points": 3.435
+    },
+    {
+     "token": "project",
+     "idf": 3.212,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "explore",
+     "idf": 4.129,
+     "channel": "none",
+     "points": 0.0
+    }
+   ],
+   "outcome": "ranked_below_cutoff",
+   "first_excluding_gate": "ranked_below_cutoff",
+   "experiment": "It scored but lost. This is the one gate where ranking work helps: compare the per-token contributions against the winner below.",
+   "rank": 5,
+   "cutoff": 3,
+   "top": [
+    "get_project_intel",
+    "assemble_task_context",
+    "get_churn_rate"
+   ],
+   "beaten_by": {
+    "action": "get_project_intel",
+    "score": 12.849,
+    "contributions": [
+     {
+      "token": "pull",
+      "idf": 4.822,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "down",
+      "idf": 4.822,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "github",
+      "idf": 3.435,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "project",
+      "idf": 3.212,
+      "channel": "name_word",
+      "points": 12.849
+     },
+     {
+      "token": "explore",
+      "idf": 4.129,
+      "channel": "none",
+      "points": 0.0
+     }
+    ]
+   }
+  },
+  {
+   "task": "I just edited a file, refresh it",
+   "expected_action": "index_file",
+   "decision_path": [
+    "catalog",
+    "intent_rules",
+    "tokenize",
+    "lexical_fallback"
+   ],
+   "rule_matches": [],
+   "query_tokens": [
+    "edited",
+    "file",
+    "refresh"
+   ],
+   "score": 5.921,
+   "contributions": [
+    {
+     "token": "edited",
+     "idf": 4.129,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "file",
+     "idf": 1.184,
+     "channel": "name_word+description",
+     "points": 5.921
+    },
+    {
+     "token": "refresh",
+     "idf": 4.129,
+     "channel": "none",
+     "points": 0.0
+    }
+   ],
+   "outcome": "ranked_below_cutoff",
+   "first_excluding_gate": "ranked_below_cutoff",
+   "experiment": "It scored but lost. This is the one gate where ranking work helps: compare the per-token contributions against the winner below.",
+   "rank": 5,
+   "cutoff": 3,
+   "top": [
+    "get_file_risk",
+    "get_file_content",
+    "get_file_outline"
+   ],
+   "beaten_by": {
+    "action": "get_file_risk",
+    "score": 10.05,
+    "contributions": [
+     {
+      "token": "edited",
+      "idf": 4.129,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "file",
+      "idf": 1.184,
+      "channel": "name_word+description",
+      "points": 5.921
+     },
+     {
+      "token": "refresh",
+      "idf": 4.129,
+      "channel": "description",
+      "points": 4.129
+     }
+    ]
+   }
+  },
+  {
+   "task": "I just edited a file, refresh it",
+   "expected_action": "register_edit",
+   "decision_path": [
+    "catalog",
+    "intent_rules",
+    "tokenize",
+    "lexical_fallback"
+   ],
+   "rule_matches": [],
+   "query_tokens": [
+    "edited",
+    "file",
+    "refresh"
+   ],
+   "score": 1.184,
+   "contributions": [
+    {
+     "token": "edited",
+     "idf": 4.129,
+     "channel": "none",
+     "points": 0.0
+    },
+    {
+     "token": "file",
+     "idf": 1.184,
+     "channel": "description",
+     "points": 1.184
+    },
+    {
+     "token": "refresh",
+     "idf": 4.129,
+     "channel": "none",
+     "points": 0.0
+    }
+   ],
+   "outcome": "ranked_below_cutoff",
+   "first_excluding_gate": "ranked_below_cutoff",
+   "experiment": "It scored but lost. This is the one gate where ranking work helps: compare the per-token contributions against the winner below.",
+   "rank": 33,
+   "cutoff": 3,
+   "top": [
+    "get_file_risk",
+    "get_file_content",
+    "get_file_outline"
+   ],
+   "beaten_by": {
+    "action": "get_file_risk",
+    "score": 10.05,
+    "contributions": [
+     {
+      "token": "edited",
+      "idf": 4.129,
+      "channel": "none",
+      "points": 0.0
+     },
+     {
+      "token": "file",
+      "idf": 1.184,
+      "channel": "name_word+description",
+      "points": 5.921
+     },
+     {
+      "token": "refresh",
+      "idf": 4.129,
+      "channel": "description",
+      "points": 4.129
+     }
+    ]
+   }
+  },
+  {
+   "task": "turn on semantic search for this project",
+   "expected_action": "embed_repo",
+   "decision_path": [
+    "catalog",
+    "intent_rules"
+   ],
+   "rule_matches": [
+    "search_symbols"
+   ],
+   "outcome": "rule_preempted",
+   "first_excluding_gate": "rule_preempted",
+   "experiment": "A curated rule fired, and `route` runs the lexical fallback only when NO rule matches. This action was never scored. Do not tune weights for this miss -- either add a rule for the intent, or narrow the pattern that claimed it.",
+   "preempted_by": "search_symbols",
+   "scored": false
+  },
+  {
+   "task": "how many tokens have I saved so far",
+   "expected_action": "get_session_stats",
+   "decision_path": [
+    "catalog",
+    "intent_rules"
+   ],
+   "rule_matches": [
+    "get_session_context"
+   ],
+   "outcome": "rule_preempted",
+   "first_excluding_gate": "rule_preempted",
+   "experiment": "A curated rule fired, and `route` runs the lexical fallback only when NO rule matches. This action was never scored. Do not tune weights for this miss -- either add a rule for the intent, or narrow the pattern that claimed it.",
+   "preempted_by": "get_session_context",
+   "scored": false
+  }
+ ]
+}

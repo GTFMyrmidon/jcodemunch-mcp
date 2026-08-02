@@ -2,6 +2,85 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.217] - 2026-08-02 - every route miss now names the gate that stopped it
+
+Retrieval counterfactuals. `investigator/retrieval_counterfactual.py` answers
+one question about the Counter's front door: **why was this action not
+proposed?**
+
+`benchmarks/route_recall/results.json` has recorded since .212 that `route`
+misses elementary intents — "show me the body of this function", "I need this
+function plus everything it imports", "is this name used anywhere at all or can
+I drop it". An evaluator could see THAT they missed and had no production-grade
+account of WHY. A recall number you cannot decompose is a number you cannot fix.
+
+**All 30 misses in the current artifact land on a named gate. None are
+unexplained.**
+
+| gate | count | what it means |
+|---|---|---|
+| `ranked_below_cutoff` | 16 (53%) | scored and lost — the only bucket ranking work helps |
+| `no_lexical_overlap` | 8 (27%) | zero shared tokens; structurally unreachable at any weight |
+| `rule_preempted` | 6 (20%) | **never scored at all** |
+
+⚠⚠ **`rule_preempted` is the gate that did not exist before this module, and it
+changes what the recall number means.** `route` runs the lexical fallback ONLY
+when `classify_intent` returns nothing. So when a curated rule fires for a
+plausible-but-wrong action, the right action is never scored — and in the recall
+figure that is indistinguishable from scoring and losing by a point. **No amount
+of weight tuning can move one of them.** Six live cases: "what breaks if I
+change the POST orders endpoint" wants `get_endpoint_impact` and
+`get_blast_radius` claims it; "am I going to break callers if I edit this
+signature" wants `check_edit_safe` and `get_call_hierarchy` claims it; "turn on
+semantic search for this project" wants `embed_repo` and `search_symbols` claims
+it.
+
+The 8 `no_lexical_overlap` misses quantify the no-stemming residual disclosed in
+.213: the query shares no token with the action's name or description, so the
+score is zero by construction.
+
+### Fidelity is the whole value
+
+Every gate is evaluated with the same `counter` functions the live front door
+uses — `_query_tokens`, `_idf_weights`, `score_action`, `_INTENT_RULES`. An
+explanation that disagrees with production is worse than none, because it sends
+a reader to tune a stage that was never consulted. A test reconstructs
+`classify_intent` + `search_catalog` independently and asserts agreement on
+**every** benchmark query, hits and misses alike, plus rank equality on hits.
+Per-token contributions are asserted to sum to `score_action`'s own result, and
+zero-contribution tokens are listed rather than dropped — omitting them is what
+makes a ranking look inexplicable.
+
+### The report's falsifier, run
+
+The 2026-08-02 deep-research report proposed this and named its own falsifier:
+*"more than roughly 80% of observed misses reduce to irreducible user
+ambiguity."* **Zero do.** Every miss lands on a mechanical gate. Negative
+falsifier; the idea survives its own test.
+
+⚠ **NOT registered as an MCP tool, and a test asserts it.** The same report
+recommends a moratorium on new top-level actions until route recall improves;
+adding a 92nd action to explain why the 91st is hard to reach would be
+self-refuting. Driven by `benchmarks/route_recall/explain_misses.py`, which is
+the contributor workflow the report says it must feed to matter at all.
+
+### Found while explaining, not acted on
+
+⚠ "I do not know this repo, what should I look at first" lost three times to
+`get_repo_map`, which is *"query-less, token-budgeted, signature-level repo
+overview — cold-start orientation"*. That is a correct answer the corpus's
+target list omits. **`queries.json` is deliberately unchanged**: editing the
+corpus until the number improves is the leakage failure mode in a different
+costume, and the harness already carries leakage scoring precisely because that
+failure is easy to commit by accident.
+
+⚠ **The six rule patterns and eight descriptions this surfaced are NOT fixed
+here.** Shipping an instrument together with the changes it recommends makes it
+impossible to tell whether the instrument was right.
+
+Tests: `tests/test_retrieval_counterfactual.py` (13). Full suite 6526 passed,
+7 skipped, 0 failed.
+
 ## [1.108.216] - 2026-08-02 - a narrow read stays narrow, or it promotes
 
 #398 Arc 2 (@rknighton), transactional selective code snapshots, built on the
