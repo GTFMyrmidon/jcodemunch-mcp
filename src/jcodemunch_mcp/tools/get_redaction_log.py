@@ -41,6 +41,7 @@ from typing import Optional
 
 from ._utils import index_status_to_tool_error, resolve_repo
 from ..storage import IndexStore
+from ..storage.generation import connect_readonly
 
 
 _VALID_SOURCES = ("otel", "sql_log", "stack_log", "apm")
@@ -91,7 +92,7 @@ def get_redaction_log(
 
     # Read-only / immutable connection so the LRU cache isn't evicted by
     # an mtime bump (matches the Phase 2 confidence-probe pattern).
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
+    conn = connect_readonly(db_path, isolation_level="")
     conn.row_factory = sqlite3.Row
     try:
         try:

@@ -33,6 +33,8 @@ import logging
 import sqlite3
 from typing import Iterable, Optional
 
+from ..storage import generation as _generation
+
 logger = logging.getLogger(__name__)
 
 _CONFIRMED = "confirmed"
@@ -205,10 +207,13 @@ def attach_runtime_confidence(
     if not db_path:
         return {}
     try:
-        # immutable=1 prevents SQLite from touching -shm/-wal files, which
-        # would otherwise bump the index db's mtime and invalidate the
-        # CodeIndex LRU cache (test_register_edit::test_clears_bm25_cache).
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
+        # A read-only open must not create -shm/-wal, which would bump the
+        # index db's mtime and invalidate the CodeIndex LRU cache
+        # (test_register_edit::test_clears_bm25_cache). #398 Arc 1: it must
+        # ALSO read the WAL when one is already there — `has_runtime` below is
+        # an existence check, so an invisible un-checkpointed table drops the
+        # runtime channel entirely rather than degrading it.
+        conn = _generation.connect_readonly(db_path, isolation_level="")
     except sqlite3.Error:
         return {}
     try:
@@ -238,10 +243,9 @@ def attach_runtime_confidence_by_file(
     if not db_path:
         return {}
     try:
-        # immutable=1 prevents SQLite from touching -shm/-wal files, which
-        # would otherwise bump the index db's mtime and invalidate the
-        # CodeIndex LRU cache (test_register_edit::test_clears_bm25_cache).
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
+        # See attach_runtime_confidence: same sidecar-aware read contract, same
+        # reason. #398 Arc 1.
+        conn = _generation.connect_readonly(db_path, isolation_level="")
     except sqlite3.Error:
         return {}
     try:

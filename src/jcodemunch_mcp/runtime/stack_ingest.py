@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from typing import Iterable
+from ..storage.generation import connect_readonly
 
 from .redact import redact_trace_record
 from .resolve import resolve_to_symbol_id
@@ -228,7 +229,7 @@ def _resolve_with_conn(
     function_name: Optional[str],
 ) -> Optional[str]:
     """Short-lived read-only resolver connection (mirrors otel/sql ingestors)."""
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn = connect_readonly(db_path, isolation_level="")
     conn.row_factory = sqlite3.Row
     try:
         return resolve_to_symbol_id(conn, file_path, line_no, function_name)

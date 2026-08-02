@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ..runtime.resolve import resolve_to_symbol_id
+from ..storage.generation import connect_readonly
 from .scip import (
     SYMBOL_ROLE_DEFINITION,
     SYMBOL_ROLE_IMPORT,
@@ -120,7 +121,7 @@ def ingest_scip_file(
             if occ.symbol and occ.symbol_roles & SYMBOL_ROLE_DEFINITION:
                 definitions.setdefault(occ.symbol, (doc.relative_path, occ.start_line))
 
-    ro = sqlite3.connect(f"file:{dbp}?mode=ro", uri=True)
+    ro = connect_readonly(dbp, isolation_level="")
     ro.row_factory = sqlite3.Row
 
     # scip symbol string → resolved jcm symbol_id (memoized; None = miss)

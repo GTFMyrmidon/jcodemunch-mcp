@@ -11,6 +11,8 @@ import sqlite3
 from pathlib import Path
 from typing import Optional
 
+from . import generation as _generation
+
 logger = logging.getLogger(__name__)
 
 _EMBEDDINGS_SCHEMA = """\
@@ -200,27 +202,28 @@ class EmbeddingStore:
         the honest answer to "are there embeddings for this repo" and is exactly
         what the caller does with a failure anyway.
 
-        ⚠ ``immutable=1`` is load-bearing and ``mode=ro`` alone is NOT enough,
-        which cost an hour to establish: read-only in SQLite means "cannot modify
-        the DATABASE", not "cannot touch the filesystem". A plain ``mode=ro``
-        connection to a WAL-mode database still creates the ``-wal`` and ``-shm``
-        sidecars, and ``_db_mtime_ns`` takes the max over the ``.db`` and the
-        ``-wal`` — so the mtime moved anyway and the spurious `rebuilding` verdict
-        came back. Measured: sidecars went None -> present across one fusion search.
+        ⚠ ``mode=ro`` alone is NOT enough, which cost an hour to establish:
+        read-only in SQLite means "cannot modify the DATABASE", not "cannot
+        touch the filesystem". A plain ``mode=ro`` connection to a WAL-mode
+        database CREATES the ``-wal`` and ``-shm`` sidecars when they are
+        absent, and ``_db_mtime_ns`` takes the max over the ``.db`` and the
+        ``-wal`` — so the mtime moved anyway and the spurious `rebuilding`
+        verdict came back. Measured: sidecars went None -> present across one
+        fusion search.
 
-        The trade-off ``immutable=1`` accepts, stated rather than hidden: vectors
-        sitting in an un-checkpointed WAL are not read, so the similarity channel
-        may be skipped when a watcher has just written embeddings. That can only
-        weaken the RANKING — the channel adds candidates and never removes any — so
-        it cannot manufacture a false absence, which is the opposite of what the
-        mtime bump did.
+        v1.108.185 answered that with an unconditional ``immutable=1`` and
+        stated the trade-off it accepted: vectors in an un-checkpointed WAL go
+        unread, which can only weaken a ranking. **#398 Arc 1 removes the
+        trade-off rather than balancing it**, via
+        ``storage.generation.connect_readonly``: read the WAL when its sidecar
+        is already there (nothing is created that was not), read immutably when
+        it is not (there is no WAL, so nothing is missed). See that function for
+        the measurements on both halves — including the one the old wording
+        understated, where an ``immutable=1`` reader raised "no such table"
+        rather than merely returning fewer rows.
         """
         try:
-            conn = sqlite3.connect(
-                f"file:{self._db_path}?mode=ro&immutable=1",
-                uri=True,
-                isolation_level=None,
-            )
+            conn = _generation.connect_readonly(self._db_path)
         except Exception:
             logger.debug("EmbeddingStore.get_all_readonly could not open %s",
                          self._db_path, exc_info=True)
@@ -247,13 +250,12 @@ class EmbeddingStore:
         (reported by @rknighton in #398: 2.63% to 7.65% of fetched vectors were
         actually used).
 
-        Uses the same ``mode=ro&immutable=1`` connection as
+        Uses the same sidecar-aware read-only connection as
         ``get_all_readonly`` and for the same reason: ``_connect`` runs a
         PRAGMA and a CREATE-TABLE on every connection, so a plain read bumps the
         database mtime and can make an unrelated scan report itself as
-        rebuilding. See that method's docstring for why ``mode=ro`` alone is not
-        enough, and for the stated trade-off (vectors sitting in an
-        un-checkpointed WAL are not read, which can only weaken a ranking).
+        rebuilding. See that method's docstring for why neither ``mode=ro`` nor
+        ``immutable=1`` is right on its own.
 
         Chunked: an ``IN (...)`` clause is bounded by SQLITE_MAX_VARIABLE_NUMBER,
         which is 999 on older builds. A candidate set large enough to matter here
@@ -266,11 +268,7 @@ class EmbeddingStore:
         if not ids:
             return {}
         try:
-            conn = sqlite3.connect(
-                f"file:{self._db_path}?mode=ro&immutable=1",
-                uri=True,
-                isolation_level=None,
-            )
+            conn = _generation.connect_readonly(self._db_path)
         except Exception:
             logger.debug("EmbeddingStore.get_many could not open %s",
                          self._db_path, exc_info=True)
@@ -309,10 +307,18 @@ class EmbeddingStore:
         was telling both of them to run ``embed_repo``, which is wrong advice for
         the second.
 
-        ``SELECT 1 ... LIMIT 1`` on the same ``mode=ro&immutable=1`` connection as
-        ``get_all_readonly``: no scan, no write, no WAL sidecars. See that
-        method's docstring for why ``mode=ro`` alone is not enough, and for the
-        un-checkpointed-WAL trade-off it accepts.
+        ``SELECT 1 ... LIMIT 1`` on the same sidecar-aware read-only connection
+        as ``get_all_readonly``: no scan, no write, no sidecars created.
+
+        ⚠⚠ **This method is why #398 Arc 1 stopped opening ``immutable=1``
+        unconditionally.** Measured 2026-08-02: against a database whose table
+        creation and rows were still in an un-checkpointed WAL, an
+        ``immutable=1`` reader raised ``no such table: symbol_embeddings`` —
+        and the branch below maps exactly that to ``False``. A repository that
+        had just been embedded would have answered "this repository has no
+        embeddings at all", with confidence, which is the false absence the
+        evidence work exists to prevent. The un-checkpointed tail is not a
+        weaker ranking here; it is the whole answer.
 
         ``False`` is reserved for the two cases that genuinely mean "nothing
         embedded": the database file is absent, or the table is. Anything else —
@@ -326,11 +332,7 @@ class EmbeddingStore:
         except Exception:
             return None
         try:
-            conn = sqlite3.connect(
-                f"file:{self._db_path}?mode=ro&immutable=1",
-                uri=True,
-                isolation_level=None,
-            )
+            conn = _generation.connect_readonly(self._db_path)
         except Exception:
             logger.debug("EmbeddingStore.has_any could not open %s",
                          self._db_path, exc_info=True)

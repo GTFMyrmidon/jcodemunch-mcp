@@ -33,6 +33,7 @@ from typing import Optional
 
 from ._utils import index_status_to_tool_error, resolve_repo
 from ..storage import IndexStore
+from ..storage.generation import connect_readonly
 
 
 def get_runtime_coverage(
@@ -85,7 +86,7 @@ def get_runtime_coverage(
 
     # Read-only + immutable so we never bump WAL mtime and invalidate the
     # CodeIndex LRU cache (same pattern as runtime/confidence.py).
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
+    conn = connect_readonly(db_path, isolation_level="")
     conn.row_factory = sqlite3.Row
     try:
         # Total symbols (in scope)

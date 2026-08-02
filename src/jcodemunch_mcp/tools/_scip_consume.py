@@ -18,6 +18,8 @@ import json
 import sqlite3
 from typing import Optional
 
+from ..storage.generation import connect_readonly
+
 
 def open_scip_reader(store, owner: str, name: str) -> Optional[sqlite3.Connection]:
     """Return an open read-only connection when the repo has ingested SCIP data,
@@ -32,7 +34,7 @@ def open_scip_reader(store, owner: str, name: str) -> Optional[sqlite3.Connectio
     except Exception:
         return None
     try:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn = connect_readonly(db_path, isolation_level="")
     except sqlite3.Error:
         return None
     conn.row_factory = sqlite3.Row

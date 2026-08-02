@@ -545,6 +545,21 @@ committed-revision contract, receipt semantics preserved byte-for-byte, and the
 read-only SQLite path sees committed WAL data when sidecars exist without
 creating them when they do not.
 
+✅ **SHIPPED v1.108.215.** `storage/generation.py` holds both halves:
+`IndexGeneration` / `describe()` for the generation contract, and
+`connect_readonly()` for the read contract. Receipts byte-identical.
+
+⚠ **The arc was worth more than its ~1.0x estimate, and the reason is worth
+keeping.** The v1.108.185 note said `immutable=1` costs only un-read vectors,
+i.e. a weaker ranking. Measured 2026-08-02: against an un-checkpointed WAL an
+`immutable=1` reader raises **`no such table`**, and `EmbeddingStore.has_any()`
+maps that to `False` — a confident "this repository has no embeddings" about a
+repository embedded moments earlier. **Fourteen call sites shared the hazard in
+both directions** (ten blind to the WAL, four creating sidecars, including a
+`token_tracker` loop that did it to every index in `~/.code-index` at once).
+A correctness arc with an honest ~1.0x throughput estimate was carrying a live
+false-absence defect; do not price these arcs on the multiplier alone.
+
 ### Arc 2 — transactional selective code snapshots
 
 Load repository/file metadata plus only the rows a tool needs, inside one SQLite
@@ -569,6 +584,12 @@ That makes Arc 1 a genuine prerequisite rather than a tidiness preference: Arc 1
 read contract is the thing that has to satisfy both sides at once - see committed
 WAL data when sidecars already exist, create nothing when they do not - and only
 that contract lets this path read exactly.
+
+✅ **That contract now exists**: `storage.generation.connect_readonly` (v1.108.215).
+Arc 2's exact-row reads open through it and inherit the guarantee, so the
+`immutable=1` prohibition below is enforced by using the shared opener rather
+than by remembering not to type the flag - `tests/test_generation_contract.py`
+fails on any hand-rolled read-only URI outside `storage/generation.py`.
 
 **Close condition:** supported narrow calls complete without hydrating the full
 `CodeIndex`; unsupported and broad modes promote once with no change to errors,

@@ -23,6 +23,7 @@ import time
 from typing import Optional
 
 from ..storage import IndexStore, record_savings, estimate_savings, cost_avoided
+from ..storage.generation import connect_readonly
 from .package_registry import build_package_registry, extract_root_package_from_specifier
 
 logger = logging.getLogger(__name__)
@@ -111,7 +112,7 @@ def _runtime_hits_for(
         db_path = store._sqlite._db_path(owner, name)
         if not db_path.exists():
             return None
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
+        conn = connect_readonly(db_path, isolation_level="")
         try:
             cur = conn.execute(
                 "SELECT COALESCE(SUM(hit_count), 0) FROM runtime_calls WHERE symbol_id = ?",

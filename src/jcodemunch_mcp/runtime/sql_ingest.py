@@ -34,6 +34,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
+from ..storage.generation import connect_readonly
 
 
 from .redact import redact_trace_record
@@ -258,7 +259,7 @@ class _ResolverMetadata:
 def _load_resolver_metadata(db_path: Path) -> _ResolverMetadata:
     """Build the three resolver lookups from the index DB."""
     meta = _ResolverMetadata()
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
+    conn = connect_readonly(db_path, isolation_level="")
     conn.row_factory = sqlite3.Row
     try:
         # File-stem → symbol_ids for every .sql file

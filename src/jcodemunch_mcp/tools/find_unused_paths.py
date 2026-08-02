@@ -57,6 +57,7 @@ from typing import Optional
 from ._utils import index_status_to_tool_error, resolve_repo
 from .find_dead_code import _is_test_file, _is_entry_point_filename
 from ..storage import IndexStore
+from ..storage.generation import connect_readonly
 
 
 def _load_declared_columns(conn: sqlite3.Connection) -> dict[str, set[str]]:
@@ -142,7 +143,7 @@ def find_unused_paths(
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=since_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
+    conn = connect_readonly(db_path, isolation_level="")
     conn.row_factory = sqlite3.Row
     try:
         # If runtime_calls is empty, every symbol would trivially qualify —

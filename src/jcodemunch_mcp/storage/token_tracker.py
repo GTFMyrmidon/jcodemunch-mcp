@@ -1132,7 +1132,13 @@ def _runtime_signal_summary(base_path: Optional[str] = None) -> dict:
             if db_path.name in non_repo:
                 continue
             try:
-                conn = _sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+                # #398 Arc 1: this loop touches EVERY index in ~/.code-index,
+                # so a plain `mode=ro` created a -wal beside each one and moved
+                # every repo's mtime at once — the v1.108.185 `rebuilding`
+                # defect at fleet scale.
+                from .generation import connect_readonly
+
+                conn = connect_readonly(db_path, isolation_level="")
                 conn.row_factory = _sqlite3.Row
                 # Skip dbs that don't have the runtime_calls table yet
                 row = conn.execute(

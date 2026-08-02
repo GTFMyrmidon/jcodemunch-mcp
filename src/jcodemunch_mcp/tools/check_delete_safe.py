@@ -24,6 +24,7 @@ import time
 from typing import Optional
 
 from ..storage import IndexStore, record_savings, estimate_savings, cost_avoided
+from ..storage.generation import connect_readonly
 from ._utils import index_status_to_tool_error, resolve_repo
 
 logger = logging.getLogger(__name__)
@@ -93,7 +94,7 @@ def _runtime_hits(store: IndexStore, owner: str, name: str, symbol_id: str) -> O
         db_path = store._sqlite._db_path(owner, name)
         if not db_path.exists():
             return None
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
+        conn = connect_readonly(db_path, isolation_level="")
         try:
             cur = conn.execute(
                 "SELECT COALESCE(SUM(hit_count), 0) FROM runtime_calls WHERE symbol_id = ?",
@@ -122,7 +123,7 @@ def _runtime_data_present(store: IndexStore, owner: str, name: str) -> bool:
         db_path = store._sqlite._db_path(owner, name)
         if not db_path.exists():
             return False
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
+        conn = connect_readonly(db_path, isolation_level="")
         try:
             row = conn.execute("SELECT 1 FROM runtime_calls LIMIT 1").fetchone()
             return row is not None

@@ -38,6 +38,7 @@ from typing import Optional
 
 from ._utils import index_status_to_tool_error, resolve_repo
 from ..storage import IndexStore
+from ..storage.generation import connect_readonly
 
 
 def find_hot_paths(
@@ -74,7 +75,7 @@ def find_hot_paths(
     if not db_path.exists():
         return index_status_to_tool_error(store.inspect_index(owner, name))
 
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
+    conn = connect_readonly(db_path, isolation_level="")
     conn.row_factory = sqlite3.Row
     try:
         # Aggregate per symbol_id across sources, then join symbols for

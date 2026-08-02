@@ -25,6 +25,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from ..storage import IndexStore
+from ..storage.generation import connect_readonly
 from ._utils import resolve_repo
 
 logger = logging.getLogger(__name__)
@@ -125,7 +126,7 @@ def _load_stack_frequency(
     by an mtime bump (matches the Phase 2 confidence-probe pattern).
     """
     try:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
+        conn = connect_readonly(db_path, isolation_level="")
     except sqlite3.OperationalError:
         return None
     conn.row_factory = sqlite3.Row

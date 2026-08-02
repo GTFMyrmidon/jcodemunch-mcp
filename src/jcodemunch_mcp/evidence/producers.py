@@ -359,7 +359,14 @@ def _snapshot(index, verdict: dict, coverage: Optional[dict], *, trust_channel: 
     """Bind the shipped snapshot primitives. Builds nothing new."""
     from ..retrieval import subject_state as _subject
     from ..retrieval.verdict import SCORER_VERSION
+    from ..storage.generation import describe
 
+    # #398 Arc 1: the generation half now comes from the one contract rather
+    # than from a second, differently-normalised reading of the index object.
+    # `capture` is still what probes the LIVE revision (a git subprocess behind
+    # a TTL cache), which is a property of the subject rather than of the
+    # index, so it is not part of the generation contract and stays here.
+    gen = describe(index)
     state = _subject.capture(index)
     channel = ((verdict.get("channels") or {}).get("index")) or ""
     # channels.index also carries `rebuilding` and `partial`, which are not
@@ -380,10 +387,11 @@ def _snapshot(index, verdict: dict, coverage: Optional[dict], *, trust_channel: 
         freshness = _repo_freshness(index)
     tree = verdict.get("working_tree") or {}
     return {
-        "index_generation": state.get("generation") or None,
+        "index_generation": gen.generation,
         # Empty string is not a revision. It means the index stored none, which
-        # is `unknown`, and null is how this envelope says that.
-        "indexed_revision": state.get("index_sha") or None,
+        # is `unknown`, and null is how this envelope says that. The
+        # normalisation moved into `storage.generation` so it happens once.
+        "indexed_revision": gen.indexed_revision,
         "live_revision": state.get("live_sha") or None,
         "freshness": freshness,
         # Measured only for a zero-result scan (probing the tree on every search

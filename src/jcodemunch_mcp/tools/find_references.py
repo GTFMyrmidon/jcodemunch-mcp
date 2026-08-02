@@ -5,6 +5,7 @@ import time
 from typing import Optional
 
 from ..storage import IndexStore, result_cache_get, result_cache_put
+from ..storage.generation import connect_readonly
 from ._utils import index_status_to_tool_error, resolve_repo
 
 
@@ -297,7 +298,7 @@ def _attach_scip_to_response(response: dict, store, owner: str, name: str) -> di
 
     db_path = store._sqlite._db_path(owner, name)
     try:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn = connect_readonly(db_path, isolation_level="")
     except sqlite3.Error:
         return response
     conn.row_factory = sqlite3.Row

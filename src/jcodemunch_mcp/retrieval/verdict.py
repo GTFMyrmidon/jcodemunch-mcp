@@ -717,15 +717,9 @@ def index_changed_since_load(index) -> bool:
     a hand-built CodeIndex) returns False rather than degrading every verdict.
     """
     try:
-        from pathlib import Path
+        from ..storage.generation import describe
 
-        from ..storage.sqlite_store import _db_mtime_ns
-
-        db_path = getattr(index, "_db_path", None)
-        loaded_at = getattr(index, "_loaded_mtime_ns", None)
-        if not db_path or loaded_at is None:
-            return False
-        return _db_mtime_ns(Path(db_path)) != int(loaded_at)
+        return describe(index).rewritten_since_load
     except Exception:
         return False
 

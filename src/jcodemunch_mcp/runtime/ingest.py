@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from typing import Iterable
+from ..storage.generation import connect_readonly
 
 from .otel import OtelSpan, iter_otel_from_text, parse_otel_file
 from .redact import redact_trace_record
@@ -246,7 +247,7 @@ def _resolve_with_conn(
     resolve loop we use a short-lived read-only connection so the
     persist step can take the writer slot without contention.
     """
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn = connect_readonly(db_path, isolation_level="")
     conn.row_factory = sqlite3.Row
     try:
         return resolve_to_symbol_id(conn, file_path, line_no, function_name)

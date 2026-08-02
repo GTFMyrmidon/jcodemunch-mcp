@@ -34,6 +34,7 @@ import time
 from typing import Optional
 
 from ..storage import IndexStore
+from ..storage.generation import connect_readonly
 from ..parser.imports import resolve_specifier
 from ._utils import resolve_repo
 
@@ -101,7 +102,7 @@ def _load_runtime_signal_for_changed(
     if not db_path.exists():
         return per_sym, frozenset(), False
     try:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
+        conn = connect_readonly(db_path, isolation_level="")
     except sqlite3.OperationalError:
         return per_sym, frozenset(), False
     conn.row_factory = sqlite3.Row

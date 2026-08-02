@@ -2,6 +2,69 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.215] - 2026-08-02 - one read contract, and a false absence it was hiding
+
+#398 Arc 1 (@rknighton), the generation-safe read contract. The reporter's own
+estimate for this arc was ~1.0x and that was honest: it buys correctness, not
+speed. It is the prerequisite for Arc 2, because Arc 2 reads exact rows, and a
+row that exists but is invisible to the reader is a false absence rather than a
+weaker ranking.
+
+Building it surfaced a live defect that was larger than the arc.
+
+**What v1.108.185 accepted, and what it actually cost.** That release fixed a
+real problem: a plain `mode=ro` connection to a WAL-mode database *creates* the
+`-wal` and `-shm` sidecars, `_db_mtime_ns` takes the max over `.db` and `-wal`,
+so a pure read moved the mtime mid-scan, `index_changed_since_load` reported
+`channels.index: "rebuilding"`, and a genuine absence could not reach `absent`.
+The fix was an unconditional `immutable=1`, with the trade-off stated rather
+than hidden: *vectors sitting in an un-checkpointed WAL are not read, which can
+only weaken a ranking.*
+
+⚠⚠ **Measured today, that understated it.** `immutable=1` tells SQLite the file
+cannot change, so the WAL is not consulted at all — and what goes invisible is
+not "some rows". Against a database whose table creation and inserts were still
+in an un-checkpointed WAL, an `immutable=1` reader raised **`no such table:
+symbol_embeddings`**. `EmbeddingStore.has_any()` maps exactly that to `False`,
+which is its spelling of *this repository has no embeddings at all*. A
+repository embedded moments earlier would have answered a confident, wrong
+absence — the failure class the whole evidence arc exists to prevent.
+
+**The fix removes the trade-off instead of balancing it.** New
+`storage/generation.py`: `connect_readonly()` reads the WAL when its sidecar is
+already there (nothing is created that was not) and reads immutably when it is
+not (there is no WAL, so nothing is missed). Both halves are measured, both
+cells are pinned by a named test, and the flag that is wrong in each cell has
+its own negative-control test — a future simplification back to one flag fails
+by name.
+
+⚠ **Fourteen call sites shared the hazard, in both directions.** Ten were on
+`immutable=1` and could not see un-checkpointed rows, including
+`check_delete_safe`'s runtime-evidence probe (an invisible `runtime_calls`
+reads as *no runtime evidence*, which is an input to a deletion verdict) and
+`get_redaction_log`, whose whole job is accounting for PII redactions. Four
+were on plain `mode=ro` and created sidecars, including `find_references` and a
+`token_tracker` loop that did it to **every** index in `~/.code-index` at once
+— the .185 defect at fleet scale. All fourteen now route through one function,
+and an AST-style convention test fails on any hand-rolled read-only URI,
+exempting the module that builds them by name.
+
+**The generation half.** Three surfaces were answering one question and
+normalising it differently: `subject_state.capture` published `indexed_at` and
+`git_head` raw, `evidence.producers._snapshot` re-exposed the same two with its
+own `or None`, and `verdict.index_changed_since_load` read `_db_mtime_ns`
+separately against its own baseline. The same index therefore described itself
+as `""` or `None` depending on which surface was asked. `IndexGeneration` +
+`describe(index)` is now the single place those four attributes are read, empty
+string normalises to `None` once, and `rewritten_since_load` keeps the rule that
+matters: **unknown is not changed**, so an unstamped index does not degrade
+every verdict it touches.
+
+Receipt semantics are preserved byte-for-byte; `evidence_id` determinism and the
+absence-link tests are unchanged and green.
+
+Tests: `tests/test_generation_contract.py` (15).
+
 ## [1.108.214] - 2026-08-02 - deletion safety as proof obligations, not a score
 
 New `jcodemunch_mcp.investigator` package. First investigation:

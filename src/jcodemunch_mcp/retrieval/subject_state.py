@@ -127,15 +127,15 @@ def capture(index, *, include_tree: bool = False, fresh_head: bool = False) -> d
     state: dict = {}
     try:
         source_root = getattr(index, "source_root", "") or None
-        state["generation"] = getattr(index, "indexed_at", "") or None
-        state["index_sha"] = getattr(index, "git_head", None)
-        try:
-            from ..storage.sqlite_store import _db_mtime_ns
+        # #398 Arc 1: one contract answers "which index is this", so this
+        # surface and `evidence.producers._snapshot` cannot disagree about
+        # whether an index with no stored revision reports "" or None.
+        from ..storage.generation import describe
 
-            db_path = getattr(index, "_db_path", None)
-            state["db_mtime_ns"] = _db_mtime_ns(Path(db_path)) if db_path else None
-        except Exception:
-            state["db_mtime_ns"] = None
+        gen = describe(index)
+        state["generation"] = gen.generation
+        state["index_sha"] = gen.indexed_revision
+        state["db_mtime_ns"] = gen.db_mtime_ns
         live = None
         if source_root:
             try:
