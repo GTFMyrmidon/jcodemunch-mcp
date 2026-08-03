@@ -2,6 +2,101 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.224] - 2026-08-02 - `verify_against="git_sha"` compares like with like
+
+Reported by **@rknighton** in
+[#400](https://github.com/jgravelle/jcodemunch-mcp/issues/400) and
+[#401](https://github.com/jgravelle/jcodemunch-mcp/issues/401), split into one
+issue per defect, each with a reproduction, a patch, and a measured before/after.
+
+Two independent defects in `_verify_against_git_sha`. Either one alone made the
+externally-attested verification mode report failure for most of what it was
+asked about.
+
+**#400 — the capture mode.** `text=True` did three things that all work against
+a byte-fidelity comparison:
+
+- Universal-newline translation, so every `\r\n` in git's output became `\n`
+  **on that side only**. On a Windows clone under the Git-for-Windows installer
+  default `core.autocrlf=true`, the blob is LF and the working tree the cache
+  was built from is CRLF — so *every symbol in every text file* reported
+  `git_sha_mismatch`, including the column-1 ASCII functions the existing tests
+  certified as working.
+- A decode with `locale.getpreferredencoding(False)` instead of UTF-8, so on a
+  default Windows box any non-ASCII source mismatched: the cached side is read
+  as raw bytes and decoded UTF-8, this side was decoded cp1252.
+- ⚠⚠ That decode runs on a **`subprocess` reader thread**. A `UnicodeDecodeError`
+  there cannot reach this frame's `except` clause and is not in its tuple
+  anyway: the thread dies, Python prints the traceback itself, `stdout` comes
+  back unset, and the empty-check converts a **decoding** problem into
+  `git_unavailable` — a verdict that means *git is unreachable*. That sends an
+  operator to check whether git is installed, whether the directory is a working
+  tree, and whether the file is tracked, when all three are fine. It also makes
+  legitimate `git_unavailable` counts silently wrong.
+
+**#401 — the units.** The cached side is a **byte range** starting at the
+declaration's first token (`parser/extractor.py` records
+`start_node.start_byte`), so it carries no leading indentation on its first line
+and stops at the symbol's last byte. The verifier sliced **whole lines**. Every
+symbol whose declaration is indented — the majority of symbols in most codebases
+— therefore compared an unindented body against an indented one. Not
+language-specific: Python methods failed identically to Java methods, and
+top-level symbols passed only because they happen to start at column 1.
+
+Fixed by capturing bytes and decoding explicitly with the same codec and error
+policy the cached side uses, normalising line endings on **both** sides, and
+realigning the HEAD line slice onto the cached range's own extent.
+
+⚠⚠ **One defect in the submitted patch, found writing its regression tests and
+fixed here.** Realigning by slicing HEAD to `len(cached_slice)` makes the
+comparison a **prefix match**: a cache holding only the first part of a symbol —
+a bad `byte_length`, a partial write, precisely the corruption this mode exists
+to catch — was attested as `git_sha_match` on the part it did hold. Requiring
+the same line **count** closes it while still permitting the one shortfall that
+is legitimate (the cached range stops at the symbol's last byte, so trailing text
+on the last line goes uncompared). Two tests pin it:
+`test_a_truncated_cache_is_still_divergence` and
+`test_a_cache_missing_its_last_line_is_still_divergence`.
+
+Two costs are accepted deliberately, and each is now pinned by a test rather than
+asserted in a docstring:
+
+1. **Line endings normalised on both sides**, so a change that is only a line
+   ending no longer reads as divergence. Not optional — situation 2 above
+   requires it.
+2. **Tokens outside the symbol are ignored.** A trailing comment after a method's
+   closing brace is not part of the symbol. Interior indentation is still
+   compared byte for byte, which is what keeps this from degrading into a
+   whitespace-insensitive compare.
+
+A third is worth naming because it is invisible: `errors="replace"` on both sides
+means two byte sequences differing only where **neither** is decodable as UTF-8
+compare equal. Symmetry is the invariant — an asymmetric error policy
+reintroduces false mismatches by another route — and
+`test_symmetric_replace_is_the_accepted_cost` asserts the consequence.
+
+⚠ **Why both shipped: the existing fixture is `def hello():` at line 1, column 1,
+ASCII, LF.** `tests/test_git_sha_verification.py` was structurally incapable of
+exercising either defect. Every test in `tests/test_v1_108_224.py` varies exactly
+one of those four properties.
+
+Measured: 8 of the new tests fail on v1.108.223 and all 27 pass here. The 8 that
+pass on both are the divergence guards plus a column-1 control — a fix that
+loosens a comparison can always be "passed" by loosening it into always-match,
+and those are what show it did not.
+
+One companion change: `test_git_show_redirects_stdin_to_devnull` mocked
+`subprocess.run` with a **str** `stdout`, which encoded the old capture mode. It
+now mocks bytes. Its own subject, the `stdin=subprocess.DEVNULL` Windows
+stdio-deadlock guard, is untouched and still asserted.
+
+**Still open, deliberately: [#402](https://github.com/jgravelle/jcodemunch-mcp/issues/402)**
+— the comparison target is live `HEAD` rather than the SHA the index recorded, so
+a cache built from a dirty working tree reports divergence while being a
+byte-exact record of what it indexed. That changes what a verdict *means* rather
+than fixing how one is computed, and it is a policy call. Both fixes above land
+without it.
+
 ## [1.108.223] - 2026-08-02 - semantic search stops re-reading the whole index on every query
 
 Reported by **@vondecron** in

@@ -138,7 +138,10 @@ class TestGitShaVerification:
         tool, so this redirect must never regress."""
         from unittest import mock
 
-        fake = mock.MagicMock(returncode=0, stdout="def hello():\n    return 'world'\n")
+        # v1.108.224 (#400): bytes, not str. The capture dropped `text=True`, so
+        # this mock is catching up with the real capture mode. The test's own
+        # subject — the DEVNULL redirect — is untouched and still asserted.
+        fake = mock.MagicMock(returncode=0, stdout=b"def hello():\n    return 'world'\n")
         with mock.patch(
             "src.jcodemunch_mcp.tools.get_symbol.subprocess.run", return_value=fake
         ) as run:

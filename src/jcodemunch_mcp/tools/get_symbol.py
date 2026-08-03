@@ -106,6 +106,18 @@ def _bound_source(
     }
 
 
+def _normalize_eol(text: str) -> str:
+    """Collapse CRLF/CR to LF.
+
+    ⚠ Applied to BOTH sides of the comparison, never one. Normalising a single
+    side is the v1.108.223-and-earlier bug (#400): git's output was newline-
+    translated by ``text=True`` while the cached side, read as raw bytes, was
+    not — so a Windows clone under the installer-default ``core.autocrlf=true``
+    reported every symbol in every file as diverged.
+    """
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def _verify_against_git_sha(
     cached_source: str,
     source_root: Optional[str],
@@ -127,6 +139,31 @@ def _verify_against_git_sha(
     derived from. The default ``verify_against="cache"`` mode is self-referential
     and only catches incoherent tamper of ``~/.code-index/<repo>/``; this mode
     catches divergence between the cache and the upstream source.
+
+    ⚠⚠ **The two sides are built differently and must be reconciled before they
+    are compared.** Both halves of that were wrong until v1.108.224
+    (@rknighton, #400 and #401), and between them they made the mode report
+    failure for most of what it was asked about:
+
+    * The cached side is a **byte range** starting at the declaration's first
+      token (``parser/extractor.py`` records ``start_node.start_byte``), read
+      back verbatim by ``sqlite_store.get_symbol_content`` and decoded as UTF-8
+      with ``errors="replace"``. It therefore carries **no leading indentation
+      on its first line** and stops at the symbol's last byte.
+    * This side is a **line range**. So the slice is realigned to the cached
+      extent below rather than either side being loosened.
+
+    Two costs are accepted deliberately, and each is pinned by a test:
+
+    1. **Line endings are normalised on both sides**, so a change that is only
+       a line ending no longer reads as divergence. Required, not optional: a
+       Windows clone's working tree is CRLF while its blob is LF and nothing is
+       wrong (#400 situation 2).
+    2. **Tokens outside the symbol are ignored** — a trailing comment after a
+       method's closing brace is not part of the symbol. Cost: edits confined to
+       that trailing text are invisible here. Interior indentation is still
+       compared byte for byte, which is what keeps this from degrading into a
+       whitespace-insensitive compare.
     """
     if not source_root or not file_path:
         return "git_unavailable"
@@ -139,7 +176,18 @@ def _verify_against_git_sha(
         result = subprocess.run(
             ["git", "-C", str(root), "show", f"HEAD:{file_path}"],
             capture_output=True,
-            text=True,
+            # ⚠ NO `text=True` (#400). It does three things that all work
+            # against a byte-fidelity comparison: universal-newline translation
+            # (so CRLF is silently rewritten on this side only), a decode with
+            # `locale.getpreferredencoding(False)` rather than UTF-8 (cp1252 on
+            # a default Windows box, which turns every non-ASCII symbol into a
+            # false mismatch), and — worst — it performs that decode on a
+            # `subprocess` reader THREAD. A UnicodeDecodeError there cannot
+            # reach the `except` below at all: the thread dies, Python prints
+            # the traceback itself, `stdout` comes back unset, and the empty
+            # check further down converts a decoding problem into
+            # `git_unavailable`. That sends an operator to check whether git is
+            # installed when git was never the problem.
             timeout=10,
             check=False,
             # Windows stdio-MCP deadlock guard: never inherit the JSON-RPC pipe
@@ -153,18 +201,45 @@ def _verify_against_git_sha(
     if result.returncode != 0:
         # File not in HEAD (untracked, new file, deleted from HEAD, etc.)
         return "git_unavailable"
-    head_content = result.stdout
+    # Decode here, explicitly, with the SAME codec and error policy the cached
+    # side uses in storage/sqlite_store.py::get_symbol_content. Symmetry is the
+    # invariant: an asymmetric error policy reintroduces false mismatches by
+    # another route. Accepted cost, pinned by a test — two byte sequences that
+    # differ only where neither is decodable as UTF-8 compare equal.
+    head_content = result.stdout.decode("utf-8", errors="replace")
     if not head_content:
         return "git_unavailable"
-    head_lines = head_content.split("\n")
+    head_lines = _normalize_eol(head_content).split("\n")
     if line < 1 or end_line < line or end_line > len(head_lines):
         # Symbol line range no longer falls within the HEAD file shape; treat
         # as divergence rather than match.
         return "git_sha_mismatch"
-    head_slice = "\n".join(head_lines[line - 1:end_line])
-    cached_slice = cached_source.rstrip("\n")
-    head_slice = head_slice.rstrip("\n")
-    return "git_sha_match" if head_slice == cached_slice else "git_sha_mismatch"
+    head_slice = "\n".join(head_lines[line - 1:end_line]).rstrip("\n")
+    cached_slice = _normalize_eol(cached_source).rstrip("\n")
+    # Realign the line slice onto the cached byte range's extent: drop the
+    # first line's indentation (the cached side starts at the first token) and
+    # stop where the cached side stops (the cached side ends at the symbol's
+    # last byte, not its last line).
+    #
+    # ⚠ The indent is measured on the FIRST LINE only, not with
+    # `head_slice.lstrip()`. `lstrip` walks across newlines, so a first line
+    # that is entirely whitespace would consume the line break and realign onto
+    # the wrong line — measuring within the line cannot.
+    first_line = head_slice.split("\n", 1)[0]
+    indent = len(first_line) - len(first_line.lstrip())
+    candidate = head_slice[indent:indent + len(cached_slice)]
+    # ⚠⚠ The truncation the length-bounded slice above would otherwise admit.
+    # Slicing HEAD to `len(cached_slice)` turns this into a PREFIX match, so a
+    # cache holding only the first part of a symbol — a bad `byte_length`, a
+    # partial write, exactly the corruption this mode exists to catch — would
+    # be attested as matching on the part it does hold. Requiring the same line
+    # COUNT rules that out while still permitting the one shortfall that is
+    # legitimate: the cached byte range stops at the symbol's last byte, so
+    # trailing text on the LAST line is allowed to go uncompared, but no line
+    # may go missing.
+    if cached_slice.count("\n") != head_slice.count("\n"):
+        return "git_sha_mismatch"
+    return "git_sha_match" if candidate == cached_slice else "git_sha_mismatch"
 
 
 def get_symbol_source(
