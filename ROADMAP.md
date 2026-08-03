@@ -305,6 +305,57 @@ harness rather than decide per publication.
 
 ---
 
+## Competitor head-to-head — GATED on a VM, and deliberately not scheduled
+
+Not part of the evidence arc above. Assessed and gated 2026-08-03.
+
+**The ask.** Measure jCodeMunch against a named same-lane MCP retrieval server,
+both sides live, on one corpus in one run — the standard this project already
+holds itself to everywhere else.
+
+**Why it is gated rather than queued.** Every nearest-lane candidate requires
+running third-party code on the measuring machine, and none of them is
+containable by a virtualenv. A venv isolates Python *packages*; it does not
+isolate `pip install`-time code execution (`setup.py` runs as the invoking
+user, before the venv boundary means anything), native binaries written outside
+`site-packages`, background daemons, listening ports, or self-updaters:
+
+| Candidate | What escapes a venv |
+|---|---|
+| LSP-backed same-lane leader | spawns language servers across 40+ languages (node/go toolchains) |
+| Graph-based reviewer | ships a background multi-repo watcher daemon |
+| Self-updating indexer | self-updating install — the undisclosed-persistence class that caused our own PyPI quarantine |
+| Single-binary graph store | native binary plus a visualiser bound to a localhost port |
+
+⚠ **This is not squeamishness about competitors' code.** It is the same rule we
+ask users to trust us on: no undisclosed background or network behaviour on a
+machine that did not ask for it. Running a daemon on the maintainer host to win
+an argument would be the one standard we cannot afford to apply asymmetrically.
+
+**What already exists, and why the gap is smaller than "nobody has run one"
+suggests.** Two selective-retrieval comparators ship today, both pure-pip and
+venv-safe, both measuring the other side live in the same run on the same
+corpus: `benchmarks/harness/run_rag_baseline.py` (LangChain + FAISS + MiniLM)
+and `run_odysseus_compare.py` (embedding retrieval layer). Their published
+numbers include rows where jCodeMunch **loses** — see `METHODOLOGY.md`. The
+substantive question ("how does this fare against something that already
+retrieves selectively?") is answered; what is missing is a brand name attached
+to the answer.
+
+⚠ **And a brand name is the one part we could not publish anyway.** Competitor
+names stay out of shipped artifacts by standing policy, `versus.php` excepted.
+So the deliverable is an internal number bought with a VM build and a daemon.
+
+**Close condition.** Run it when *both* hold: (1) a disposable VM or container
+exists that is not the maintainer host and not the release machine, and (2)
+there is a specific claim the existing two comparators cannot settle. Absent
+(2), a third comparator measures the same class again with more setup.
+
+⚠ **Do not re-open this as "we have never benchmarked a competitor."** That
+framing is false — it is a declined trade with recorded reasoning, not an
+untouched gap. Anyone reversing it should say which of the two close conditions
+changed.
+
 ## `install-pack --from`: install an index your own CI built
 
 `install-pack` fetches the pack catalog and pre-built indexes from one hardcoded
