@@ -82,8 +82,12 @@ Measured 2026-08-02 at jcodemunch-mcp 1.108.222:
 | fastapi/fastapi | `a64dfbbd21a4` | 1,182 | 6,841 | 823,784 |
 | gin-gonic/gin | `75ccf94d605a` | 98 | 1,179 | 151,842 |
 
-Grand total across 15 task-runs: 5,649,490 baseline tokens → 23,805 jCodeMunch
-tokens, a 99.6% reduction (237.3x).
+Grand total across 15 task-runs, both baselines measured in the same run:
+
+| Baseline | Tokens | jCodeMunch | Reduction | Ratio |
+|---|--:|--:|--:|--:|
+| **Grep-top-3** (quote this) | **664,975** | 23,805 | **96.4%** | **27.9x** |
+| Read-all (ceiling) | 5,649,490 | 23,805 | 99.6% | 237.3x |
 
 Small differences in `file_count` are expected across installations and are not
 a bug in either run: what a machine can index depends on its grammar pack and

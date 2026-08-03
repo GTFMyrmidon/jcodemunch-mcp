@@ -1,10 +1,10 @@
 # jcodemunch-mcp — Token Efficiency Benchmark
 
-**Result: 99.6% average token reduction · tiktoken cl100k_base · 15 task-runs · 3 repos**
+**Result: 96.4% average token reduction (27.9x) vs a grep-and-read agent · tiktoken cl100k_base · 15 task-runs · 3 repos**
 
 ## What this measures
 
-How many tokens a code-retrieval tool consumes versus an agent that reads every source file before acting.
+How many tokens a code-retrieval tool consumes versus an agent doing the same job without it. Two baselines are measured in the same run: **grep-top-3** (`rg -l`, then open the top 3 matching files whole — what a competent agent actually does) and **read-all** (every source file — a ceiling nobody pays).
 
 **Baseline:** concatenate all indexed source files and count tokens. This is the *minimum* cost for a "read everything first" agent — real agents typically read files multiple times, so production savings are higher.
 
@@ -47,14 +47,20 @@ Repos: `expressjs/express`, `fastapi/fastapi`, `gin-gonic/gin`
 
 Full per-task tables are in [`results.md`](results.md).
 
-| Repo | Files | Baseline tokens | Avg reduction |
-|------|------:|----------------:|--------------:|
-| expressjs/express | 165 | 137,978 | **99.4%** |
-| fastapi/fastapi | 951 | 699,425 | **99.8%** |
-| gin-gonic/gin | 98 | 187,018 | **99.4%** |
-| **Grand total** | — | 5,122,105 | **99.6%** |
+| Repo | Files | Grep-top-3 baseline | Read-all baseline | jCodeMunch | vs grep | vs read-all |
+|------|------:|--------------------:|------------------:|-----------:|--------:|------------:|
+| expressjs/express | 182 | 15,724 avg | 154,272 | 1,007 avg | **15.6x** | 153.2x |
+| fastapi/fastapi | 1,182 | 85,296 avg | 823,784 | 2,209 avg | **38.6x** | 372.9x |
+| gin-gonic/gin | 98 | 31,975 avg | 151,842 | 1,545 avg | **20.7x** | 98.3x |
+| **Grand total (15 task-runs)** | — | **664,975** | **5,649,490** | **23,805** | **27.9x** | **237.3x** |
 
-**99.6% average token reduction** across 15 task-runs · 263.9x ratio · tiktoken cl100k_base.
+**96.4% average token reduction · 27.9x** against grep-and-read; 99.6% · 237.3x
+against read-all. Per-query spread 7.3x–84.3x, median 25.5x. tiktoken cl100k_base.
+
+⚠ **This table was stale until 2026-08-03** — it carried a pre-v1.108.222 corpus
+(165/951/98 files, 5,122,105 tokens, 263.9x) that no other artifact had matched
+since the corpus was pinned. Per-repo rows are per query (`avg`); the grand total
+sums 15 task-runs.
 
 To regenerate:
 

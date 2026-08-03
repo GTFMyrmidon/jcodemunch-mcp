@@ -221,6 +221,11 @@ def _pin_volatile(obj):
 _WALLCLOCK_DERIVED_FIELDS = {
     "search_ms", "tokens", "search_tokens", "fetch_tokens",
     "jmunch_tokens", "reduction_pct", "ratio",
+    # Derived by dividing INTO jmunch_tokens, so they inherit its ±1-token
+    # jitter. The grep baseline's own counts (`grep_baseline_tokens` and
+    # friends) contain no wall-clock field and ARE compared — if grep-then-read
+    # is not bit-reproducible, that is a real defect and the gate should say so.
+    "grep_ratio", "grep_reduction_pct",
 }
 
 
@@ -347,6 +352,30 @@ def corpus_objection(state: dict) -> Optional[str]:
 # Baseline measurement
 # ---------------------------------------------------------------------------
 
+def _read_source(store: IndexStore, owner: str, name: str, index, content_dir: Path, rel_path: str) -> str:
+    """Read one indexed source file's text.
+
+    ⚠ **Both baselines go through this.** `measure_baseline` (read-everything)
+    and `measure_grep_baseline` (grep-then-read) must see byte-identical
+    content or the ratio between them describes two different corpora rather
+    than two different workflows. Extracted verbatim from `measure_baseline`;
+    it reads the same bytes it always did.
+    """
+    abs_path = content_dir / Path(rel_path.replace("/", "\\") if sys.platform == "win32" else rel_path)
+    # Try both path separator forms
+    if not abs_path.exists():
+        abs_path = content_dir / rel_path
+    try:
+        return abs_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        try:
+            # Store-backed fallback (the real reader; the old
+            # get_file_content_text name never existed → dead fallback).
+            return store.get_file_content(owner, name, rel_path, index) or ""
+        except Exception:
+            return ""
+
+
 def measure_baseline(store: IndexStore, owner: str, name: str) -> dict:
     """Count tokens across ALL raw source files stored in the index."""
     content_dir = store._content_dir(owner, name)
@@ -357,23 +386,96 @@ def measure_baseline(store: IndexStore, owner: str, name: str) -> dict:
     total_tokens = 0
     file_count = 0
     for rel_path in index.source_files:
-        abs_path = content_dir / Path(rel_path.replace("/", "\\") if sys.platform == "win32" else rel_path)
-        # Try both path separator forms
-        if not abs_path.exists():
-            abs_path = content_dir / rel_path
-        try:
-            content = abs_path.read_text(encoding="utf-8", errors="replace")
-        except Exception:
-            try:
-                # Store-backed fallback (the real reader; the old
-                # get_file_content_text name never existed → dead fallback).
-                content = store.get_file_content(owner, name, rel_path, index) or ""
-            except Exception:
-                content = ""
+        content = _read_source(store, owner, name, index, content_dir, rel_path)
         total_tokens += count_tokens(content)
         file_count += 1
 
     return {"tokens": total_tokens, "files": file_count}
+
+
+# ---------------------------------------------------------------------------
+# Realistic agent baseline: grep, then read the top N files
+# ---------------------------------------------------------------------------
+
+GREP_FILES_READ = 3        # files opened per query, mirroring SYMBOLS_FETCHED
+
+
+def measure_grep_baseline(
+    store: IndexStore, owner: str, name: str, index, query: str
+) -> dict:
+    """What a competent agent WITHOUT this tool actually pays for one query.
+
+    ``ripgrep`` the corpus for the query's terms, rank the matching files, open
+    the top ``GREP_FILES_READ`` in full. That is the workflow the
+    read-everything baseline does not model and no agent performs.
+
+    ⚠⚠ **Every modelling choice here is deliberately made in the baseline's
+    favour, i.e. against us.** A baseline tuned to look weak is not evidence:
+
+    * **The headline grep cost is ``rg -l`` — paths only, no matched lines.**
+      That is the leanest output a real agent gets, so it is the smallest
+      honest number. ``rg`` *with* matched lines is also measured
+      (``match_lines_tokens``) and is strictly larger; it is reported but not
+      used as the headline.
+    * **Files are ranked by match count.** Real grep output has no ranking at
+      all — the agent guesses. Ranking gives the baseline a better-than-chance
+      shot at the right file.
+    * **Matching is case-insensitive substring on ANY term** (``rg -i
+      'a|b|c'``), the most permissive reading, so the baseline finds more.
+
+    ⚠ **Files are read WHOLE**, because that is what agents do — this project's
+    own PreToolUse hook exists precisely to intercept whole-file ``Read`` calls.
+    An agent that reads a line range pays less, and no estimator for that is
+    offered here; see the note in ``tasks.json``.
+
+    Contains no wall-clock field, so unlike the jMunch counts this is
+    bit-reproducible and ``token_signature`` compares it directly.
+    """
+    content_dir = store._content_dir(owner, name)
+    terms = [t.lower() for t in query.split() if t]
+    if not terms:
+        return {"error": f"empty query: {query!r}"}
+
+    per_file: list[tuple[int, str]] = []   # (match_count, rel_path)
+    match_line_tokens = 0
+
+    for rel_path in index.source_files:
+        content = _read_source(store, owner, name, index, content_dir, rel_path)
+        if not content:
+            continue
+        hits = 0
+        for lineno, line in enumerate(content.splitlines(), 1):
+            low = line.lower()
+            if any(t in low for t in terms):
+                hits += 1
+                # `rg -i 'a|b|c'` output shape: path:lineno:line
+                match_line_tokens += count_tokens(f"{rel_path}:{lineno}:{line}\n")
+        if hits:
+            per_file.append((hits, rel_path))
+
+    # Deterministic: match count desc, then path asc. A tie broken by iteration
+    # order would make the file set depend on index insertion order, the exact
+    # class of defect v1.108.228 fixed in the ranker.
+    per_file.sort(key=lambda x: (-x[0], x[1]))
+    top = per_file[:GREP_FILES_READ]
+
+    # `rg -l` output: one path per line. The headline grep cost.
+    file_list_tokens = count_tokens("".join(f"{p}\n" for _, p in per_file))
+
+    read_tokens = 0
+    for _, rel_path in top:
+        read_tokens += count_tokens(_read_source(store, owner, name, index, content_dir, rel_path))
+
+    return {
+        "tokens": file_list_tokens + read_tokens,
+        "grep_tokens": file_list_tokens,
+        "read_tokens": read_tokens,
+        "files_matched": len(per_file),
+        "files_read": len(top),
+        # Reported for disclosure, never the headline: strictly larger, so
+        # using it would flatter us.
+        "match_lines_tokens": match_line_tokens,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -465,7 +567,8 @@ def benchmark_repo(repo_str: str) -> dict:
     baseline_tokens = baseline["tokens"]
     file_count = baseline["files"]
     symbol_count = matched.get("symbol_count", 0)
-    state = corpus_state(store.load_index(owner2, name2), repo_str)
+    index = store.load_index(owner2, name2)
+    state = corpus_state(index, repo_str)
 
     task_rows = []
     for query in TASKS:
@@ -473,14 +576,36 @@ def benchmark_repo(repo_str: str) -> dict:
         if "error" in jm:
             task_rows.append({"query": query, "error": jm["error"]})
             continue
+        # ⚠ Measured in THIS run against THIS corpus, never a stored constant.
+        # A live number beside a frozen one is the defect that ran four months
+        # (see jcm CLAUDE.md maintenance rule 4).
+        gb = measure_grep_baseline(store, owner2, name2, index, query)
         reduction_pct = (1 - jm["tokens"] / baseline_tokens) * 100 if baseline_tokens > 0 else 0
         ratio = baseline_tokens / jm["tokens"] if jm["tokens"] > 0 else float("inf")
+        grep_tokens = gb.get("tokens") if "error" not in gb else None
+        grep_ratio = (
+            round(grep_tokens / jm["tokens"], 2)
+            if grep_tokens and jm["tokens"] > 0 else None
+        )
+        grep_reduction_pct = (
+            round((1 - jm["tokens"] / grep_tokens) * 100, 1)
+            if grep_tokens else None
+        )
         task_rows.append({
             "query": query,
             "baseline_tokens": baseline_tokens,
             "jmunch_tokens": jm["tokens"],
             "reduction_pct": round(reduction_pct, 1),
             "ratio": round(ratio, 1),
+            # Realistic agent baseline (grep -l, then read the top 3 files).
+            "grep_baseline_tokens": grep_tokens,
+            "grep_grep_tokens": gb.get("grep_tokens"),
+            "grep_read_tokens": gb.get("read_tokens"),
+            "grep_files_matched": gb.get("files_matched"),
+            "grep_files_read": gb.get("files_read"),
+            "grep_match_lines_tokens": gb.get("match_lines_tokens"),
+            "grep_ratio": grep_ratio,
+            "grep_reduction_pct": grep_reduction_pct,
             "search_tokens": jm["search_tokens"],
             "fetch_tokens": jm["fetch_tokens"],
             "hits_fetched": jm["hits_fetched"],
@@ -682,10 +807,12 @@ def render_markdown(results: list[dict], tokenizer: str) -> str:
     lines.append("")
     lines.append(f"**Tokenizer:** `{tokenizer}` (tiktoken)  ")
     lines.append(f"**Workflow:** `search_symbols` (top {SEARCH_MAX_RESULTS}) + `get_symbol` x {SYMBOLS_FETCHED}  ")
-    lines.append(f"**Baseline:** all source files concatenated (minimum for \"open every file\" agent)  ")
+    lines.append("**Baseline A (read-all):** all source files concatenated  ")
+    lines.append(f"**Baseline B (grep-top-{GREP_FILES_READ}):** `rg -l` the query terms, then open the top {GREP_FILES_READ} files whole  ")
     lines.append("")
 
     grand_baseline = 0
+    grand_grep = 0
     grand_jmunch = 0
     grand_tasks = 0
 
@@ -718,31 +845,41 @@ def render_markdown(results: list[dict], tokenizer: str) -> str:
             )
         lines.append("")
 
-        lines.append("| Query | Baseline&nbsp;tokens | jMunch&nbsp;tokens | Reduction | Ratio |")
-        lines.append("|-------|---------------------:|-------------------:|----------:|------:|")
+        lines.append(
+            "| Query | Read-all&nbsp;tokens | Grep-top-%d&nbsp;tokens | jMunch&nbsp;tokens "
+            "| Ratio&nbsp;vs&nbsp;read-all | **Ratio&nbsp;vs&nbsp;grep** |" % GREP_FILES_READ
+        )
+        lines.append("|-------|---------------------:|----------------------:|-------------------:|--------------------------:|--------------------------:|")
 
         repo_jmunch_sum = 0
         valid_tasks = [t for t in res["tasks"] if "error" not in t]
         for t in valid_tasks:
+            gb = t.get("grep_baseline_tokens")
+            gr = t.get("grep_ratio")
             lines.append(
                 f"| `{t['query']}` "
                 f"| {t['baseline_tokens']:,} "
+                f"| {f'{gb:,}' if gb else '—'} "
                 f"| {t['jmunch_tokens']:,} "
-                f"| **{t['reduction_pct']}%** "
-                f"| {t['ratio']}x |"
+                f"| {t['ratio']}x "
+                f"| {f'**{gr}x**' if gr else '—'} |"
             )
             repo_jmunch_sum += t["jmunch_tokens"]
             grand_jmunch += t["jmunch_tokens"]
             grand_baseline += t["baseline_tokens"]
+            grand_grep += t.get("grep_baseline_tokens") or 0
             grand_tasks += 1
 
         if valid_tasks:
-            avg_reduction = sum(t["reduction_pct"] for t in valid_tasks) / len(valid_tasks)
             avg_ratio = sum(t["ratio"] for t in valid_tasks) / len(valid_tasks)
+            grep_ratios = [t["grep_ratio"] for t in valid_tasks if t.get("grep_ratio")]
+            avg_grep = (
+                f"**{sum(grep_ratios) / len(grep_ratios):.1f}x**" if grep_ratios else "—"
+            )
             lines.append(
-                f"| **Average** | — | — "
-                f"| **{avg_reduction:.1f}%** "
-                f"| **{avg_ratio:.1f}x** |"
+                f"| **Average** | — | — | — "
+                f"| {avg_ratio:.1f}x "
+                f"| {avg_grep} |"
             )
         lines.append("")
 
@@ -773,16 +910,35 @@ def render_markdown(results: list[dict], tokenizer: str) -> str:
         lines.append("")
         lines.append("| | Tokens |")
         lines.append("|--|-------:|")
-        lines.append(f"| Baseline total ({grand_tasks} task-runs) | {grand_baseline:,} |")
+        lines.append(f"| Baseline A total, read-all ({grand_tasks} task-runs) | {grand_baseline:,} |")
+        if grand_grep:
+            lines.append(f"| Baseline B total, grep-top-{GREP_FILES_READ} | {grand_grep:,} |")
         lines.append(f"| jMunch total | {grand_jmunch:,} |")
-        lines.append(f"| **Reduction** | **{grand_reduction:.1f}%** |")
-        lines.append(f"| **Ratio** | **{grand_ratio:.1f}x** |")
+        lines.append(f"| Reduction vs read-all | {grand_reduction:.1f}% |")
+        lines.append(f"| Ratio vs read-all | {grand_ratio:.1f}x |")
+        if grand_grep:
+            g_red = (1 - grand_jmunch / grand_grep) * 100
+            lines.append(f"| **Reduction vs grep-top-{GREP_FILES_READ}** | **{g_red:.1f}%** |")
+            lines.append(f"| **Ratio vs grep-top-{GREP_FILES_READ}** | **{grand_grep / grand_jmunch:.1f}x** |")
         lines.append("")
+        if grand_grep:
+            lines.append(
+                f"> **Baseline B is the number to quote.** Read-all is a ceiling nobody "
+                f"pays: it assumes an agent opens every file in the repository before "
+                f"acting. Grep-then-read is what a competent agent without this tool "
+                f"actually does, and it is {grand_grep / grand_baseline * 100:.1f}% of the "
+                f"read-all figure — so measuring against read-all overstates the "
+                f"advantage by about {grand_baseline / grand_grep:.0f}x."
+            )
+            lines.append("")
         lines.append(
             f"> Measured with tiktoken `{tokenizer}`. "
-            "Baseline = all indexed source files. "
+            f"Read-all = every indexed source file. "
+            f"Grep-top-{GREP_FILES_READ} = `rg -l` the query terms, then open the top "
+            f"{GREP_FILES_READ} matching files whole. "
             f"jMunch = search_symbols (top {SEARCH_MAX_RESULTS}) + "
-            f"get_symbol x {SYMBOLS_FETCHED} per query."
+            f"get_symbol x {SYMBOLS_FETCHED} per query. "
+            f"Both baselines are measured in THIS run against THIS corpus."
         )
 
     return "\n".join(lines)

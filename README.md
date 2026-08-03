@@ -1,11 +1,11 @@
 # jCodeMunch MCP
 
-**The leading, most token-efficient MCP server for precise GitHub source code retrieval via tree-sitter AST parsing.** Cut AI token costs **95%+** on code exploration — stop burning your context window reading entire files.
+**The leading, most token-efficient MCP server for precise GitHub source code retrieval via tree-sitter AST parsing.** Cut AI token costs **86–99%** on code exploration — 96% average, 27.9x fewer tokens than a grep-and-read agent — stop burning your context window reading entire files.
 
 > **Real results, live from production**
 > **621B+ tokens saved** · **83,000+ reporting installs** · **$3.1M+ in AI spend avoided** · **74,000+ kg CO₂ prevented**
 > Counter figures as of 2026-08-02, valued at the $5/MTok Claude Opus **input** rate. All four only grow, so read them as floors. Live at **[jcodemunch.com](https://jcodemunch.com/)**.
-> Benchmark: **99.6% average token reduction** (15 tasks / 3 repos, 99.9% peak; run 2026-08-02, v1.108.222, corpus pinned to upstream commits).
+> Benchmark: **96.4% average token reduction vs a grep-and-read agent** — 27.9x fewer tokens (15 tasks / 3 repos; 99.6% / 237.3x against an agent that reads every file, which nobody does); run 2026-08-03, v1.108.233, corpus pinned to upstream commits.
 
 Works with **Autohand Code**, **Claude Code**, **Cursor**, **VS Code**, **Codex CLI**, **Continue**, **Windsurf**, and any MCP-compatible client.
 
@@ -74,7 +74,7 @@ That is a **token incinerator**.
 
 **jCodeMunch indexes a codebase once and lets agents retrieve only the exact code they need**: functions, classes, methods, constants, outlines, and tightly scoped context bundles, with byte-level precision.
 
-In retrieval-heavy workflows, that routinely cuts code-reading token usage by **95%+** because the agent stops brute-reading giant files just to find one useful implementation.
+In retrieval-heavy workflows, that routinely cuts code-reading token usage by **86–99%** (96% average, benchmarked) because the agent stops brute-reading giant files just to find one useful implementation.
 
 | Task                   | Traditional approach      | With jCodeMunch                             |
 | ---------------------- | ------------------------- | ------------------------------------------- |
@@ -191,7 +191,7 @@ Instead of forcing an agent to open giant files, wade through imports, boilerpla
 
 That means:
 
-* **95%+ lower code-reading token usage** in many retrieval-heavy workflows 
+* **86–99% lower code-reading token usage** (96% average, benchmarked) in many retrieval-heavy workflows 
 * **less irrelevant context** polluting the prompt
 * **faster repo exploration**
 * **more accurate code lookup**
@@ -207,16 +207,27 @@ Recent releases have made that retrieval workflow sharper and more useful in rea
 
 ### Reproducible token efficiency benchmark
 
-Measured with `tiktoken cl100k_base` across three public repos. Workflow: `search_symbols` (top 5) + `get_symbol_source` × 3 per query. Baseline: all source files concatenated (minimum cost for an agent that reads everything). [Full methodology and harness →](benchmarks/METHODOLOGY.md)
+Measured with `tiktoken cl100k_base` across three public repos. Workflow: `search_symbols` (top 5) + `get_symbol_source` × 3 per query.
 
-| Repository | Commit | Files | Symbols | Baseline tokens | jCodeMunch tokens | Reduction |
-|------------|--------|------:|--------:|----------------:|------------------:|----------:|
-| expressjs/express | `1faf228935aa` | 182 | 200 | 154,272 | 1,007 avg | **99.3%** |
-| fastapi/fastapi | `a64dfbbd21a4` | 1,182 | 6,841 | 823,784 | 2,209 avg | **99.7%** |
-| gin-gonic/gin | `75ccf94d605a` | 98 | 1,179 | 151,842 | 1,545 avg | **99.0%** |
-| **Grand total (15 task-runs)** | | | | **5,649,490** | **23,805** | **99.6%** |
+Two baselines, measured in the same run against the same corpus through the same file reader:
 
-Per-query results range from 99.0% to 99.9%. The 99.6% figure is the aggregate (run 2026-08-02, v1.108.222), and it is dominated by one repo — fastapi contributes 73% of the baseline tokens. [How to reproduce it, commit by commit →](benchmarks/REPRODUCING.md)
+- **Grep-top-3** — `rg -l` the query terms, rank matching files by match count, open the top 3 whole. This is what a competent agent without the tool actually does, and it is the number to quote.
+- **Read-all** — every indexed source file concatenated. A ceiling nobody pays; retained for continuity with previously published figures.
+
+[Full methodology and harness →](benchmarks/METHODOLOGY.md)
+
+| Repository | Commit | Files | Symbols | Grep-top-3 baseline | Read-all baseline | jCodeMunch | vs grep | vs read-all |
+|------------|--------|------:|--------:|--------------------:|------------------:|-----------:|--------:|------------:|
+| expressjs/express | `1faf228935aa` | 182 | 200 | 15,724 avg | 154,272 | 1,007 avg | **15.6x** | 153.2x |
+| fastapi/fastapi | `a64dfbbd21a4` | 1,182 | 6,841 | 85,296 avg | 823,784 | 2,209 avg | **38.6x** | 372.9x |
+| gin-gonic/gin | `75ccf94d605a` | 98 | 1,179 | 31,975 avg | 151,842 | 1,545 avg | **20.7x** | 98.3x |
+| **Grand total (15 task-runs)** | | | | **664,975** | **5,649,490** | **23,805** | **27.9x** | **237.3x** |
+
+**Against a grep-and-read agent: 96.4% reduction, 27.9x fewer tokens.** Per-query results range from **7.3x to 84.3x** (median 25.5x) — no single multiple describes every query, and the floor is `middleware` on gin.
+
+The read-all column is the older published basis and is kept so the change is auditable. It is a ceiling: it assumes an agent opens every file before acting. Grep-then-read is 11.8% of it, so measuring against read-all overstates the advantage by roughly 8x.
+
+⚠ Per-repo rows are **per query** (`avg`); the grand-total row sums all 15 task-runs. That convention is inherited — the read-all column has always shown the tree once per repo and ×5 in the total — and the ratio columns are unaffected, since both operands share a basis in every row. [How to reproduce it, commit by commit →](benchmarks/REPRODUCING.md)
 
 ⚠ **This table changed on 2026-08-02, against an earlier version of itself.** Through v1.108.221 it said "full un-capped indexes" and reported fastapi at 1,000 files. The index actually held 1,000 of 1,182 eligible files, truncated by a file cap, and its coverage record was empty — so nothing in the published artifact could have caught it. Re-measuring the whole tree showed the 182 missing files were all empty `__init__.py` files worth zero tokens, so the reduction figures did not move. The corpus is now pinned to upstream commits and the harness refuses to publish a number measured against a truncated or unpinned tree.
 
@@ -1092,10 +1103,12 @@ suite stays usable in plan mode.
 ## FAQ
 
 **How much can I save on Claude / Opus tokens?**
-In retrieval-heavy workflows, code-reading tokens typically drop **95%+** because
+In retrieval-heavy workflows, code-reading tokens typically drop **86–99%** because
 the agent fetches exact symbols instead of brute-reading whole files — benchmarked
-at a 99.6% average reduction across 15 tasks / 3 repositories, with peaks of 99.9%
-on large repos. Compact [MUNCH](SPEC_MUNCH.md) encoding then trims another ~45%
+at **96.4% average reduction (27.9x)** against an agent that greps and opens the
+top files, across 15 tasks / 3 repositories. Per-query results span 7.3x to 84.3x.
+Against an agent that reads every file the figure is 99.6%, but that is a ceiling
+nobody pays. Compact [MUNCH](SPEC_MUNCH.md) encoding then trims another ~45%
 off the wire. Full methodology and harness: [TOKEN_SAVINGS.md](TOKEN_SAVINGS.md)
 and [benchmarks/](benchmarks/).
 

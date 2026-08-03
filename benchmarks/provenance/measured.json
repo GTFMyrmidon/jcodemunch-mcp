@@ -6,7 +6,7 @@
     "baseline_tokens": 5649490,
     "jcodemunch_tokens": 23805,
     "tokenizer": "cl100k_base",
-    "run_date": "2026-08-02",
+    "run_date": "2026-08-03",
     "methodology": "benchmarks/METHODOLOGY.md",
     "results": "benchmarks/results.md"
   },

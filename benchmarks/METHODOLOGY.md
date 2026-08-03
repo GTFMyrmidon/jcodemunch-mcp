@@ -53,10 +53,39 @@ These are defined in `tasks.json` for full reproducibility.
 
 ## Baseline Definition
 
-**Baseline tokens** = all indexed source files concatenated and tokenized.
-This represents the **minimum** cost for a "read everything first" agent.
-Real agents typically read files multiple times during a session, so
-production savings are higher than what the benchmark reports.
+Two baselines are measured, **in the same run, against the same corpus, through
+the same file reader**. Neither is a stored constant.
+
+**Baseline A — read-all.** All indexed source files concatenated and tokenized.
+This is the **minimum** cost for a "read everything first" agent. It is a
+ceiling nobody pays, and it is the basis of the historical 99.6% / 237.3x
+figures.
+
+**Baseline B — grep-top-3.** What a competent agent *without* this tool actually
+does: `rg -l` the query's terms across the same corpus (paths only), rank the
+matching files by match count, open the top 3 in full. Total = file-list tokens
++ 3 whole files.
+
+⚠ **Every modelling choice in Baseline B is made in the baseline's favour, i.e.
+against jCodeMunch.** A baseline its own vendor tunes is not evidence unless the
+thumb is on the other side of the scale:
+
+1. **The grep cost is `rg -l` — paths only.** That is the leanest output a real
+   agent gets. `rg` *with* matched lines is also measured
+   (`grep_match_lines_tokens`, 528,394 tokens across the corpus) and is strictly
+   larger; using it would roughly double Baseline B and report **~49x instead of
+   ~28x**. The smaller number is the published one.
+2. **Files are ranked by match count.** Real grep output has no ranking — the
+   agent guesses. Ranking gives the baseline a better-than-chance shot at the
+   right file.
+3. **Matching is case-insensitive substring on ANY term**, the most permissive
+   reading, so the baseline finds more.
+
+⚠ **Disclosed limit: Baseline B reads files WHOLE**, because that is what agents
+do — this project's own PreToolUse hook exists to intercept whole-file `Read`
+calls. An agent that reads a line range pays less, and **no estimator for that
+is offered.** The size-proportional estimator removed from the comparison
+harnesses is exactly why this project does not model an unmeasured side.
 
 ## jcodemunch Workflow
 
@@ -227,16 +256,22 @@ details.
 ## Common Misreadings
 
 **"The claim is up to 99%."**
-The primary claim is **99.6% average** across all 15 task-runs (5,649,490 baseline tokens →
-23,805 jCodeMunch tokens). Individual queries reach 99.9% on large repos with tight symbol
-matches (e.g., `error exception` on fastapi/fastapi). The 99.6% aggregate
-is the honest headline across the pinned corpus above (express 182 files, fastapi 1,182 files,
-gin 98 files; run 2026-08-02, v1.108.222).
+The primary claim is **96.4% average (27.9x)** across all 15 task-runs, measured
+against Baseline B — an agent that greps and opens the top 3 files (664,975 →
+23,805 tokens). Against Baseline A, the read-everything ceiling, the same run
+gives 99.6% / 237.3x (5,649,490 → 23,805). Both are published; B is the one to
+quote.
 
-⚠ It is an **aggregate**, and it is dominated by one repo: fastapi contributes
-73% of the baseline tokens. The aggregate ratio (237.3x) is therefore mostly a
-statement about fastapi. Whether that or the median per-question ratio is the
-honest headline is an open question, not a settled one.
+⚠ **Per-query results span 7.3x to 84.3x** (median 25.5x). No single multiple
+describes every query, and the floor — `middleware` on gin — is a number a real
+user can hit.
+
+⚠ The read-all aggregate is dominated by one repo: fastapi contributes 72.9% of
+its baseline tokens, so 237.3x is largely a statement about fastapi (aggregate
+237.3x vs median 134.5x). **That objection is much weaker for Baseline B**, whose
+aggregate and median nearly agree (27.9x vs 25.5x, fastapi share 64.1%), because
+grep cost tracks matches rather than repository size. Choosing B settles the
+aggregate-vs-median question rather than inheriting it.
 
 Every number above is re-measured by the same run, and the machine-readable copy lives in
 [`jcm_reference.json`](jcm_reference.json). The comparison harnesses in `harness/` read that
@@ -257,16 +292,35 @@ was applied. The harness (`benchmarks/harness/run_benchmark.py`) and query corpu
 (`benchmarks/tasks.json`) are open source — run them yourself and publish the results.
 
 **"The baseline is unrealistic."**
-If you mean *nobody reads the whole repository*, that is correct, and it is the
-objection worth answering. A competent agent greps, or runs a retrieval step of its
-own. Measured against that agent rather than against a read-everything one, this
-baseline is an **upper** bound, and 99.6% is not the number you would see.
+Correct, and this is now measured rather than conceded in prose. Nobody reads the
+whole repository; a competent agent greps and opens a few files. **Baseline B
+measures that agent**, on the same corpus in the same run:
 
-So the honest framing is that 99.6% measures **what symbol-level retrieval avoids
-relative to loading the corpus**. It is a ceiling on the waste this tool removes, and
-it is the right number for "how much of a repository does an agent actually need in
-context." It is not a prediction of anyone's bill, because it does not model an agent
-that was already retrieving selectively.
+| Against | Baseline tokens | Ratio | Reduction |
+|---|--:|--:|--:|
+| Read-all (Baseline A) | 5,649,490 | 237.3x | 99.6% |
+| **Grep-top-3 (Baseline B)** | **664,975** | **27.9x** | **96.4%** |
+
+**Baseline B is 11.8% of Baseline A, so measuring against read-all overstates the
+advantage by roughly 8x.** Quote the Baseline B figure.
+
+⚠ **The per-query spread on B is 7.3x to 84.3x** (median 25.5x), so no single
+multiple describes every query. The floor — `middleware` on gin at **7.3x** — is
+the honest worst case and is published here rather than left in the JSON.
+
+⚠ One thing that improved under the realistic baseline, and it is worth saying
+because it cuts our way: the read-all aggregate is badly distorted by the largest
+repo (aggregate 237.3x vs median 134.5x, with fastapi contributing 72.9% of
+baseline tokens). Baseline B's aggregate and median nearly agree (**27.9x vs
+25.5x**, fastapi share 64.1%), because grep cost tracks *matches* rather than
+repository size. **The realistic baseline is not merely smaller — it is a
+better-behaved statistic.**
+
+So 99.6% measures **what symbol-level retrieval avoids relative to loading the
+corpus** — a ceiling on removable waste, and the right answer to "how much of a
+repository does an agent actually need in context." It is not a prediction of
+anyone's bill. 96.4% / 27.9x is the closer thing to that, and it still does not
+model an agent that was already retrieving selectively.
 
 Against comparators that *do* retrieve selectively, the margins are single-digit
 multiples, and both sides are measured on the same corpus in the same run:

@@ -2,6 +2,81 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.233] - 2026-08-03 - a baseline an agent would actually recognise
+
+The published baseline has always been "concatenate every indexed source file".
+That is a **ceiling nobody pays** — no agent reads a repository before acting —
+so every ratio derived from it overstated the advantage. This measures the agent
+that actually exists.
+
+### Added
+
+- **Baseline B, grep-top-3.** `rg -l` the query's terms across the same corpus
+  (paths only), rank matching files by match count, open the top 3 whole.
+  Measured **in the same run, against the same corpus, through the same file
+  reader** as the read-everything baseline — `_read_source` was extracted so both
+  provably see identical bytes, and a test asserts both call it. A ratio between
+  two baselines reading different bytes describes two corpora, not two workflows.
+
+### The headline moved against us, which was the point
+
+| Baseline | Tokens | jCodeMunch | Reduction | Ratio |
+|---|--:|--:|--:|--:|
+| **Grep-top-3** (quote this) | **664,975** | 23,805 | **96.4%** | **27.9x** |
+| Read-all (ceiling, retained) | 5,649,490 | 23,805 | 99.6% | 237.3x |
+
+**Baseline B is 11.8% of Baseline A, so measuring against read-all overstated the
+advantage by roughly 8x.** Per-query results span **7.3x to 84.3x** (median
+25.5x); the floor is `middleware` on gin and it is published rather than buried.
+
+⚠ **Every modelling choice in Baseline B is made in the baseline's favour**, because
+a baseline its own vendor tunes is not evidence otherwise:
+
+1. The grep cost is `rg -l`, **paths only** — the leanest real output. `rg` *with*
+   matched lines is also measured (528,394 tokens) and would roughly double
+   Baseline B, reporting **~49x instead of ~28x**. The smaller number is published.
+2. Files are ranked by match count; real grep output has no ranking and the agent
+   guesses. Ranking gives the baseline a better-than-chance shot at the right file.
+3. Matching is case-insensitive substring on ANY term — the most permissive reading.
+
+⚠ **Disclosed limit: Baseline B reads files WHOLE**, because that is what agents do
+(this project's own PreToolUse hook exists to intercept whole-file `Read` calls). An
+agent reading a line range pays less and **no estimator for that is offered** — the
+size-proportional estimator removed from the comparison harnesses is exactly why.
+
+### One thing improved, and it cuts our way
+
+The read-all aggregate is badly distorted by the largest repo: aggregate 237.3x vs
+median 134.5x, fastapi supplying 72.9% of baseline tokens. **Baseline B's aggregate
+and median nearly agree** (27.9x vs 25.5x, fastapi share 64.1%), because grep cost
+tracks *matches* rather than repository size. Choosing B settles the
+aggregate-vs-median question rather than inheriting it.
+
+### Changed
+
+- `README.md`, `benchmarks/README.md`, `METHODOLOGY.md`, `REPRODUCING.md`,
+  `results.md` and `tasks.json` all lead with the Baseline B figure and keep the
+  read-all column so the change is auditable. ⚠ **`Cut AI token costs 95%+` did
+  NOT change** — 96.4% still clears it. The strongest claim on the page was never
+  resting on the ceiling; only the precise 99.6% / 237.3x figures were.
+- ⚠ `benchmarks/README.md` was **separately stale** and is corrected here: it
+  carried a pre-v1.108.222 corpus (165/951/98 files, 5,122,105 tokens, 263.9x) that
+  no other artifact had matched since the corpus was pinned.
+- `benchmarks/whitepaper.md` is left alone deliberately — it is a published paper
+  reporting its own older corpus, not a live artifact.
+
+### Reproducibility
+
+The grep baseline contains no wall-clock field, so unlike the jMunch counts it is
+bit-reproducible and `token_signature` compares it directly; `--verify-determinism`
+reports identical across two fresh processes. Only `grep_ratio` /
+`grep_reduction_pct` are excluded, because they divide into the jitter-carrying
+`jmunch_tokens`.
+
+Tests: `tests/test_benchmark_grep_baseline.py` (9), pinning each choice that would
+flatter us if quietly reversed — including that `match_lines_tokens` must never be
+folded into the headline. Suite 6738 passed, 7 skipped.
+
 ## [1.108.232] - 2026-08-03 - git output is decoded as UTF-8, not as cp1252
 
 In-house. Found while re-indexing the benchmark corpora, reproduced before it

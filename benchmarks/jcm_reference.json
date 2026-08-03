@@ -1,7 +1,7 @@
 {
   "schema": "jcm-benchmark-reference/v2",
-  "captured_at": "2026-08-02T20:19:29-0500",
-  "jcodemunch_version": "1.108.222",
+  "captured_at": "2026-08-03T16:09:01-0500",
+  "jcodemunch_version": "1.108.233",
   "tokenizer": "cl100k_base",
   "workflow": "search_symbols(max_results=5) + get_symbol_source x3",
   "baseline_definition": "all indexed source files concatenated",
