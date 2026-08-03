@@ -707,6 +707,17 @@ _COMPACT_STRIP_PARAMS: dict[str, set[str]] = {
     "get_symbol_source": {
         "source_start_line", "source_end_line", "max_source_lines",
         "max_source_bytes", "max_total_source_bytes", "receipt",
+        # v1.108.227: `verify_against` joins them, same rule and same reason.
+        # Externally-attested verification is an audit workflow, not a core
+        # retrieval path — `verify` alone stays visible, and the tool still
+        # honours `verify_against` when passed.
+        #
+        # ⚠ Measured while adding #402's `git_sha_rev`: core_compact had **4
+        # tokens** of headroom, so ANY core-tier description gaining a clause
+        # broke the ceiling. Shaving words to fit is the wrong instinct — it
+        # makes the next person shave again. Removing an advanced param from
+        # the minimal surface is the fix the budget was designed to take.
+        "verify_against",
     },
     "get_context_bundle": {"budget_strategy"},
     "get_ranked_context": {"detail_level", "compress", "receipt"},
@@ -1604,7 +1615,7 @@ def _build_tools_list() -> list[Tool]:
                     "verify_against": {
                         "type": "string",
                         "enum": ["cache", "git_sha"],
-                        "description": "Where to source the comparison target when verify=True. 'cache' (default) compares against the content_hash stored in the index — self-referential, only catches incoherent tamper of ~/.code-index/. 'git_sha' additionally compares the cached source against the file slice at the working-tree git HEAD — externally attested, catches divergence between the cache and the upstream source. Adds a git_sha_verification field to the response.",
+                        "description": "Where to source the comparison target when verify=True. 'cache' (default) compares against the content_hash stored in the index — self-referential, only catches incoherent tamper of ~/.code-index/. 'git_sha' additionally compares the cached source against the file slice at the commit the index was built at — externally attested, catches divergence between the cache and the upstream source. Adds git_sha_verification and git_sha_rev fields to the response.",
                         "default": "cache"
                     },
                     "context_lines": {

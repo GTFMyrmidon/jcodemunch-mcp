@@ -2,6 +2,77 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.227] - 2026-08-03 - `git_sha` verification answers the question it was asked
+
+Reported by **@rknighton** in
+[#402](https://github.com/jgravelle/jcodemunch-mcp/issues/402), filed without a
+patch and with the routing left explicitly to us: the index is built from the
+**working tree** at one moment and verified against **live HEAD** at another, so
+a cache that is a byte-exact record of what it indexed reported
+`git_sha_mismatch`.
+
+The report offered two readings and asked which we wanted. Measuring both is
+what settled it, because **the fix the report proposed does not fix the case the
+report reproduces**:
+
+| | before | after |
+|---|---|---|
+| **A.** a commit landed after indexing and changed this file | `git_sha_mismatch` | `git_sha_match` |
+| **B.** the working tree was **dirty at index time** | `git_sha_mismatch` | `git_sha_uncommitted` |
+| **C.** cache matches neither the commit nor the tree | `git_sha_mismatch` | `git_sha_mismatch` |
+
+All three were the same answer. They are three different questions.
+
+**Form A** is what the proposed `rev` parameter fixes, and it went in as
+proposed: the comparison now runs against the commit the index recorded
+(`index.git_head`), not live HEAD. Live HEAD answers "did the working tree at
+index time happen to equal HEAD at verification time", which is a different
+question and is routinely false during ordinary development.
+
+⚠⚠ **Form B is the report's headline reproduction, and a revision cannot fix
+it.** Measured: a tree that was dirty at index time has
+`index.git_head == live HEAD`, so passing the recorded revision changes
+*nothing* — **no commit anywhere contains those bytes, because the bytes were
+never committed.** Shipping the `rev` parameter alone would have looked like a
+fix while leaving the reported case broken.
+
+Form B is answered by asking a second question rather than inventing a third
+revision: **does the cache match the working tree?** If it does, the cache is
+faithful and the commit is simply behind it — an ordinary mid-change state, not
+corruption. That is the new `git_sha_uncommitted`.
+
+⚠ **`git_sha_uncommitted` is a softer verdict, so the guard against it becoming
+a hiding place is the load-bearing test.** A cache that matches the working tree
+no better than it matches the commit still returns `git_sha_mismatch`, *including
+on a dirty tree where the softer verdict is available* — and the v1.108.224
+truncation guard survives, because both comparisons run through the same
+`_slice_matches` rather than two rules that can drift apart. That drift is
+exactly what made #400 and #401 possible.
+
+**New response field: `git_sha_rev`**, the revision the verdict was actually
+computed against. The recorded revision can be gone — rebased away,
+force-pushed over, absent from a shallow clone — and failing there would make
+this mode *worse* than before for those repositories. It falls back to `HEAD`,
+and `git_sha_rev` is what stops that being a silent change of subject. It is
+reported on every `git_sha` response, not only on fallback, so a reader never
+has to assume.
+
+`_verify_against_git_sha` now returns `(status, rev_used)`. `verify_against="cache"`
+is untouched and grows no git fields, asserted by a test.
+
+⚠ **`verify_against` moved into `_COMPACT_STRIP_PARAMS`, and the measurement is
+why.** Adding `git_sha_rev` to its schema description broke
+`test_live_core_compact_under_4000_hard_ceiling` — and re-measuring showed
+core_compact had **4 tokens** of headroom, so *any* core-tier description
+gaining a clause would have broken it. That test's own guidance is to strip an
+advanced param rather than trim prose, and trimming would only make the next
+person trim again. Externally-attested verification is an audit workflow, not a
+core retrieval path, so it left the minimal surface — `verify` alone stays
+visible. **Hidden is not removed:** `_DECLARED_ARG_KEYS` is snapshotted before
+the strip precisely so a hidden-but-honoured param cannot read as a caller
+mistake (the v1.108.177 class), and a test calls the tool with the stripped
+param to prove the handler still acts on it.
+
 ## [1.108.226] - 2026-08-03 - the dead-code check stops calling live code dead
 
 Reported by **@rknighton** in

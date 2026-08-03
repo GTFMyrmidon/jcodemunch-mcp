@@ -38,7 +38,21 @@ from pathlib import Path
 
 import pytest
 
-from src.jcodemunch_mcp.tools.get_symbol import _normalize_eol, _verify_against_git_sha
+from src.jcodemunch_mcp.tools.get_symbol import (
+    _normalize_eol,
+    _verify_against_git_sha as _verify_impl,
+)
+
+def _verify_against_git_sha(*args, **kwargs) -> str:
+    """Status-only wrapper over the real verifier.
+
+    v1.108.227 (#402) changed the return to ``(status, rev_used)`` so a verdict
+    can never be silently about a different commit than the reader assumes.
+    Every assertion in this file is about the STATUS, so they read against this
+    wrapper; `tests/test_v1_108_227.py` is where the rev half is pinned.
+    """
+    return _verify_impl(*args, **kwargs)[0]
+
 
 
 pytestmark = pytest.mark.skipif(

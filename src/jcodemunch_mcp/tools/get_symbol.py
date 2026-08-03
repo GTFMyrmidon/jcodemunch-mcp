@@ -1,6 +1,7 @@
 """Get symbol source code."""
 
 import hashlib
+import logging
 import os
 import subprocess
 import time
@@ -10,6 +11,8 @@ from typing import Optional
 from ..retrieval.verdict import suggest_symbol_ids, symbol_verdict_for_index
 from ..storage import IndexStore, record_savings, estimate_savings, cost_avoided as _cost_avoided
 from ._utils import index_status_to_tool_error, resolve_repo, resolve_fqn
+
+logger = logging.getLogger(__name__)
 
 
 def _make_meta(timing_ms: float, **kwargs) -> dict:
@@ -124,21 +127,50 @@ def _verify_against_git_sha(
     file_path: str,
     line: int,
     end_line: int,
-) -> str:
-    """Compare cached source against the working-tree git HEAD content (P1.6).
+    rev: Optional[str] = None,
+) -> tuple[str, str]:
+    """Compare cached source against the git content it was BUILT FROM (P1.6).
 
-    Returns one of:
-    - ``"git_sha_match"``      — the cached source matches the HEAD slice
-                                  of the same file (lines line..end_line).
-    - ``"git_sha_mismatch"``   — the file exists in HEAD but the slice differs.
-    - ``"git_unavailable"``    — source_root unknown, file isn't tracked in
-                                  HEAD, or git is unreachable from this env.
+    Returns ``(status, rev_used)``. Statuses:
+    - ``"git_sha_match"``       — the cached source matches the slice of the
+                                   same file at ``rev`` (lines line..end_line).
+    - ``"git_sha_mismatch"``    — the file exists at ``rev`` and the cache
+                                   matches neither it nor the working tree.
+                                   This is the genuine cache-divergence answer.
+    - ``"git_sha_uncommitted"`` — the cache does not match ``rev`` but DOES
+                                   match the working tree. Nothing is wrong with
+                                   the cache; the checkout is simply ahead of
+                                   the commit. See below.
+    - ``"git_unavailable"``     — source_root unknown, file isn't tracked, or
+                                   git is unreachable from this env.
 
     This is an externally-attested verification mode: the comparison target
     comes from git, not from the same cache the symbol's content_hash was
     derived from. The default ``verify_against="cache"`` mode is self-referential
     and only catches incoherent tamper of ``~/.code-index/<repo>/``; this mode
     catches divergence between the cache and the upstream source.
+
+    ⚠⚠ **`rev` defaults to the commit the INDEX RECORDED, not live HEAD**
+    (v1.108.227, @rknighton #402). The index is built at one moment and verified
+    at another; comparing against live HEAD answers "did the working tree at
+    index time happen to equal HEAD at verification time", which is a different
+    question and is routinely false during normal development. The caller passes
+    ``index.git_head``; ``HEAD`` remains the fallback when the index recorded no
+    revision. **``rev_used`` is returned so a verdict can never be silently
+    about a different commit than the reader assumes** — including when the
+    recorded revision has been rebased or force-pushed away and this falls back
+    to ``HEAD``.
+
+    ⚠⚠ **A revision alone does NOT fix the reported case, which is why
+    `git_sha_uncommitted` exists.** Measured on the #402 reproduction: a tree
+    that was DIRTY at index time has ``index.git_head == live HEAD``, so passing
+    the recorded revision changes nothing — no commit anywhere contains those
+    bytes, because the bytes were never committed. Reporting that as
+    ``git_sha_mismatch`` tells an operator their cache diverged when the cache
+    is a byte-exact record of what it indexed, and it is indistinguishable from
+    real corruption. The two cases are separated by asking a second question the
+    caller already gave us everything to ask: does the cache match the WORKING
+    TREE? If it does, the cache is faithful and the commit is simply behind.
 
     ⚠⚠ **The two sides are built differently and must be reconciled before they
     are compared.** Both halves of that were wrong until v1.108.224
@@ -165,16 +197,18 @@ def _verify_against_git_sha(
        compared byte for byte, which is what keeps this from degrading into a
        whitespace-insensitive compare.
     """
+    rev_used = (rev or "").strip() or "HEAD"
     if not source_root or not file_path:
-        return "git_unavailable"
+        return "git_unavailable", rev_used
     root = Path(source_root)
     if not (root / ".git").exists() and not (root / ".git").is_file():
         # Not a git working tree (or worktree pointing elsewhere; bail rather
         # than guess).
-        return "git_unavailable"
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(root), "show", f"HEAD:{file_path}"],
+        return "git_unavailable", rev_used
+
+    def _show(revision: str):
+        return subprocess.run(
+            ["git", "-C", str(root), "show", f"{revision}:{file_path}"],
             capture_output=True,
             # ⚠ NO `text=True` (#400). It does three things that all work
             # against a byte-fidelity comparison: universal-newline translation
@@ -196,11 +230,26 @@ def _verify_against_git_sha(
             # read stdin). Mirrors the redirect across the other git spawns.
             stdin=subprocess.DEVNULL,
         )
+
+    try:
+        result = _show(rev_used)
+        if result.returncode != 0 and rev_used != "HEAD":
+            # ⚠ The recorded revision can be gone — rebased away, force-pushed
+            # over, or absent from a shallow clone. Failing there would make
+            # this mode WORSE than before for those repositories, so fall back
+            # to HEAD; `rev_used` comes back naming what was actually compared,
+            # which is the whole reason it is returned rather than assumed.
+            logger.debug(
+                "git_sha: recorded rev %s unreadable for %s, falling back to HEAD",
+                rev_used, file_path,
+            )
+            rev_used = "HEAD"
+            result = _show(rev_used)
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return "git_unavailable"
+        return "git_unavailable", rev_used
     if result.returncode != 0:
-        # File not in HEAD (untracked, new file, deleted from HEAD, etc.)
-        return "git_unavailable"
+        # File not tracked at that revision (untracked, new file, deleted).
+        return "git_unavailable", rev_used
     # Decode here, explicitly, with the SAME codec and error policy the cached
     # side uses in storage/sqlite_store.py::get_symbol_content. Symmetry is the
     # invariant: an asymmetric error policy reintroduces false mismatches by
@@ -208,38 +257,65 @@ def _verify_against_git_sha(
     # differ only where neither is decodable as UTF-8 compare equal.
     head_content = result.stdout.decode("utf-8", errors="replace")
     if not head_content:
-        return "git_unavailable"
-    head_lines = _normalize_eol(head_content).split("\n")
-    if line < 1 or end_line < line or end_line > len(head_lines):
-        # Symbol line range no longer falls within the HEAD file shape; treat
-        # as divergence rather than match.
-        return "git_sha_mismatch"
-    head_slice = "\n".join(head_lines[line - 1:end_line]).rstrip("\n")
+        return "git_unavailable", rev_used
+
     cached_slice = _normalize_eol(cached_source).rstrip("\n")
+    if _slice_matches(head_content, cached_slice, line, end_line):
+        return "git_sha_match", rev_used
+
+    # The cache does not match the commit. Before calling that divergence, ask
+    # the second question: does it match the WORKING TREE? If it does, the cache
+    # is a byte-exact record of what it indexed and the commit is simply behind
+    # it — an ordinary mid-change state, not corruption, and the one state a
+    # developer is most likely to be in when they ask (#402).
+    try:
+        tree_path = root / file_path
+        tree_content = tree_path.read_bytes().decode("utf-8", errors="replace")
+    except OSError:
+        tree_content = None
+    if tree_content and _slice_matches(tree_content, cached_slice, line, end_line):
+        return "git_sha_uncommitted", rev_used
+
+    return "git_sha_mismatch", rev_used
+
+
+def _slice_matches(file_content: str, cached_slice: str, line: int, end_line: int) -> bool:
+    """Does ``cached_slice`` equal lines ``line..end_line`` of ``file_content``?
+
+    Shared by the revision and working-tree comparisons so the two can never
+    drift into answering the same question two ways — the exact hazard that made
+    #400 and #401 possible, where the cached side and the compared side were
+    built by different rules.
+    """
+    lines = _normalize_eol(file_content).split("\n")
+    if line < 1 or end_line < line or end_line > len(lines):
+        # The symbol's line range no longer falls within this file's shape.
+        return False
+    file_slice = "\n".join(lines[line - 1:end_line]).rstrip("\n")
     # Realign the line slice onto the cached byte range's extent: drop the
     # first line's indentation (the cached side starts at the first token) and
     # stop where the cached side stops (the cached side ends at the symbol's
     # last byte, not its last line).
     #
     # ⚠ The indent is measured on the FIRST LINE only, not with
-    # `head_slice.lstrip()`. `lstrip` walks across newlines, so a first line
+    # `file_slice.lstrip()`. `lstrip` walks across newlines, so a first line
     # that is entirely whitespace would consume the line break and realign onto
     # the wrong line — measuring within the line cannot.
-    first_line = head_slice.split("\n", 1)[0]
+    first_line = file_slice.split("\n", 1)[0]
     indent = len(first_line) - len(first_line.lstrip())
-    candidate = head_slice[indent:indent + len(cached_slice)]
+    candidate = file_slice[indent:indent + len(cached_slice)]
     # ⚠⚠ The truncation the length-bounded slice above would otherwise admit.
-    # Slicing HEAD to `len(cached_slice)` turns this into a PREFIX match, so a
-    # cache holding only the first part of a symbol — a bad `byte_length`, a
-    # partial write, exactly the corruption this mode exists to catch — would
-    # be attested as matching on the part it does hold. Requiring the same line
+    # Slicing to `len(cached_slice)` turns this into a PREFIX match, so a cache
+    # holding only the first part of a symbol — a bad `byte_length`, a partial
+    # write, exactly the corruption this mode exists to catch — would be
+    # attested as matching on the part it does hold. Requiring the same line
     # COUNT rules that out while still permitting the one shortfall that is
     # legitimate: the cached byte range stops at the symbol's last byte, so
     # trailing text on the LAST line is allowed to go uncompared, but no line
     # may go missing.
-    if cached_slice.count("\n") != head_slice.count("\n"):
-        return "git_sha_mismatch"
-    return "git_sha_match" if candidate == cached_slice else "git_sha_mismatch"
+    if cached_slice.count("\n") != file_slice.count("\n"):
+        return False
+    return candidate == cached_slice
 
 
 def get_symbol_source(
@@ -481,13 +557,24 @@ def get_symbol_source(
             # working-tree git HEAD slice of the same file. Surfaced alongside
             # the cache-only verification so callers can see both signals.
             if verify_against == "git_sha":
-                entry["git_sha_verification"] = _verify_against_git_sha(
+                # v1.108.227 (#402): compare against the commit the INDEX
+                # RECORDED, not live HEAD. Live HEAD answers "did the working
+                # tree at index time happen to equal HEAD at verification time",
+                # which is a different question and routinely false mid-change.
+                # `git_sha_rev` reports which revision actually backed the
+                # verdict, so it can never be silently about another commit —
+                # the recorded revision may have been rebased away, in which
+                # case this falls back to HEAD and says so.
+                _status, _rev = _verify_against_git_sha(
                     cached_source=source,
                     source_root=getattr(index, "source_root", None),
                     file_path=symbol["file"],
                     line=symbol["line"],
                     end_line=symbol["end_line"],
+                    rev=getattr(index, "git_head", "") or None,
                 )
+                entry["git_sha_verification"] = _status
+                entry["git_sha_rev"] = _rev
 
         symbols_out.append(entry)
 
