@@ -1298,11 +1298,18 @@ def _search_symbols_semantic(
         return {"error": f"Failed to embed query: {exc}"}
 
     # ── Load / lazily compute symbol embeddings ────────────────────────────
+    # v1.108.223 (#399, @vondecron): the matrix is decoded and L2-normalised
+    # ONCE per (repo, store-stamp) and cached in process, instead of re-reading
+    # and re-parsing every stored vector on every semantic query. It also
+    # replaces `get_all()` with a read-only load, so this path no longer bumps
+    # the .db mtime as a side effect of reading it (same defect class as .185).
     db_path = store._sqlite._db_path(owner, name)
     emb_store = EmbeddingStore(db_path)
-    all_emb: dict[str, list[float]] = emb_store.get_all()
+    from ..storage import embedding_matrix as _embed_matrix
+    matrix = _embed_matrix.get_matrix(db_path)
+    embedded_ids = matrix.id_set if matrix is not None else set()
 
-    missing = [s for s in index.symbols if s["id"] not in all_emb]
+    missing = [s for s in index.symbols if s["id"] not in embedded_ids]
     if missing:
         new_emb: dict[str, list[float]] = {}
         for bi in range(0, len(missing), EMBED_BATCH_SIZE):
@@ -1322,7 +1329,14 @@ def _search_symbols_semantic(
                 emb_store.set_dimension(dim, model)
                 emb_store.set_task_type(doc_task_type or "")
             emb_store.set_many(new_emb)
-            all_emb.update(new_emb)
+
+    # Cosine for every embedded symbol, in one vectorised pass. `matrix` was
+    # loaded before the top-up above, so vectors embedded just now are scored
+    # individually rather than forcing a full re-decode for a handful of rows.
+    cos_by_id: dict[str, float] = matrix.score_all(query_vec) if matrix is not None else {}
+    if missing and new_emb:
+        for _sid, _vec in new_emb.items():
+            cos_by_id[_sid] = _cosine_similarity(query_vec, _vec)
 
     # ── Two-pass scoring ───────────────────────────────────────────────────
     # Pass 1: collect lexical BM25 (identity EXCLUDED), the identity signal, and
@@ -1363,8 +1377,7 @@ def _search_symbols_semantic(
         if lex + idn > max_bm25:
             max_bm25 = lex + idn
 
-        sym_vec = all_emb.get(sym["id"])
-        cos = _cosine_similarity(query_vec, sym_vec) if sym_vec else 0.0
+        cos = cos_by_id.get(sym["id"], 0.0)
         if cos > max_cos:
             max_cos = cos
 
@@ -1720,23 +1733,28 @@ def _search_symbols_fusion(
     #  _embed_texts forms all raised and were swallowed, so this channel never ran.)
     similarity_used = False
     try:
-        from ..storage.embedding_store import EmbeddingStore
-        emb_store = EmbeddingStore(store._sqlite._db_path(owner, name))
         # v1.108.185: read-only, because the plain read wrote. `_connect` runs a
         # WAL pragma and a CREATE-TABLE script on every connection, so probing for
         # embeddings here moved the .db mtime mid-scan and made this exit report
         # `rebuilding` + `moved_during_scan` on the first fusion search of any
         # process — which downgraded the verdict and put `absent` out of reach for
         # an entirely self-inflicted reason.
-        all_embeddings = emb_store.get_all_readonly()
-        if all_embeddings:
+        # v1.108.223 (#399): still read-only, and now decoded once per store
+        # stamp rather than once per query.
+        from ..storage import embedding_matrix as _embed_matrix
+        matrix = _embed_matrix.get_matrix(store._sqlite._db_path(owner, name))
+        if matrix is not None:
             from .embed_repo import _detect_provider, embed_texts
             provider = _detect_provider()
             if provider:
                 q_emb = embed_texts([query], provider[0], provider[1])
                 if q_emb and q_emb[0]:
-                    from ..retrieval.signal_fusion import build_similarity_channel
-                    sim_ch = build_similarity_channel(q_emb[0], all_embeddings)
+                    from ..retrieval.signal_fusion import (
+                        build_similarity_channel_from_scores,
+                    )
+                    sim_ch = build_similarity_channel_from_scores(
+                        matrix.score_all(q_emb[0])
+                    )
                     channels.append(sim_ch)
                     similarity_used = True
     except Exception:

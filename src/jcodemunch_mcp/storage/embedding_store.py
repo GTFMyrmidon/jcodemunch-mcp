@@ -239,6 +239,42 @@ class EmbeddingStore:
         finally:
             conn.close()
 
+    def iter_raw(self) -> list[tuple[str, bytes]]:
+        """Every stored embedding as (symbol_id, raw float32 BLOB), undecoded.
+
+        The one read path that does NOT pay ``_decode_embedding`` per row. It
+        exists for ``storage.embedding_matrix``, which decodes the whole table
+        once into a single normalised matrix and caches it — decoding to Python
+        lists first would throw away the representation it wants and allocate
+        ~8x the memory to do it (reported by @vondecron in #399).
+
+        Same sidecar-aware read-only connection as ``get_all_readonly``, and for
+        the same reason: see that method's docstring.
+
+        Returns an empty list when the file or the table is absent, which is
+        indistinguishable from "nothing embedded" on purpose — the caller's next
+        move (fall back to no similarity channel) is the same either way. Use
+        ``has_any()`` when the difference matters.
+        """
+        try:
+            conn = _generation.connect_readonly(self._db_path)
+        except Exception:
+            logger.debug("EmbeddingStore.iter_raw could not open %s",
+                         self._db_path, exc_info=True)
+            return []
+        try:
+            return [
+                (row[0], row[1])
+                for row in conn.execute(
+                    "SELECT symbol_id, embedding FROM symbol_embeddings"
+                )
+            ]
+        except Exception:
+            logger.debug("EmbeddingStore.iter_raw failed", exc_info=True)
+            return []
+        finally:
+            conn.close()
+
     def get_many(self, symbol_ids) -> dict[str, list[float]]:
         """Embeddings for a NAMED set of symbols, without touching the file.
 
@@ -369,6 +405,22 @@ class EmbeddingStore:
 
     # ── Write ──────────────────────────────────────────────────────────────
 
+    def _invalidate_matrix(self) -> None:
+        """Drop any cached normalised matrix for this database (#399).
+
+        The cache keys itself on the database's mtime/size stamp and would
+        notice a write on its own — every writer here goes through ``_connect``,
+        which bumps the file. This is the belt to that suspenders: a write and a
+        read landing inside the same filesystem mtime granularity is a real
+        window on Windows, and it is cheap to close from the side that knows a
+        write happened.
+        """
+        try:
+            from . import embedding_matrix as _matrix
+            _matrix.invalidate(self._db_path)
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("EmbeddingStore matrix invalidation failed", exc_info=True)
+
     def set_many(self, embeddings: dict[str, list[float]]) -> None:
         """Upsert multiple symbol embeddings in one transaction."""
         if not embeddings:
@@ -381,6 +433,7 @@ class EmbeddingStore:
                 [(sid, _encode_embedding(vec)) for sid, vec in embeddings.items()],
             )
             conn.execute("COMMIT")
+            self._invalidate_matrix()
         except Exception:
             try:
                 conn.execute("ROLLBACK")
@@ -403,6 +456,7 @@ class EmbeddingStore:
                 symbol_ids,
             )
             conn.execute("COMMIT")
+            self._invalidate_matrix()
         except Exception:
             try:
                 conn.execute("ROLLBACK")
@@ -419,6 +473,7 @@ class EmbeddingStore:
             conn.execute("BEGIN")
             conn.execute("DELETE FROM symbol_embeddings")
             conn.execute("COMMIT")
+            self._invalidate_matrix()
         except Exception:
             try:
                 conn.execute("ROLLBACK")

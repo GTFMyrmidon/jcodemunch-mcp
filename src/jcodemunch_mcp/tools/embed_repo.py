@@ -82,6 +82,16 @@ def warm_up_embedding_backend() -> Optional[str]:
     if os.environ.get("JCODEMUNCH_EAGER_EMBED_IMPORT", "").strip() == "0":
         return None
 
+    # numpy is a native extension too, and v1.108.223 (#399) made the semantic
+    # ranking pass reach for it from inside the same `asyncio.to_thread` worker.
+    # It is imported here for the same loader-lock reason as the backends below,
+    # and unconditionally — the fast path is worth having on the network-backed
+    # providers as well, and a missing numpy is a supported configuration.
+    try:
+        import numpy  # noqa: F401
+    except Exception as exc:  # pragma: no cover - depends on local install
+        logger.debug("numpy warm-up skipped: %s", exc)
+
     try:
         detected = _detect_provider()
     except Exception as exc:  # pragma: no cover - detection is defensive

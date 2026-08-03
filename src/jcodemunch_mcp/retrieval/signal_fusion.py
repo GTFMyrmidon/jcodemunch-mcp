@@ -234,12 +234,35 @@ def build_similarity_channel(
     """
     from ..tools.search_symbols import _cosine_similarity  # noqa: PLC0415
 
-    scored: list[tuple[float, str]] = []
-    for sid, emb in symbol_embeddings.items():
-        sim = _cosine_similarity(query_embedding, emb)
-        if sim >= min_similarity:
-            scored.append((sim, sid))
+    scores = {
+        sid: _cosine_similarity(query_embedding, emb)
+        for sid, emb in symbol_embeddings.items()
+    }
+    return build_similarity_channel_from_scores(
+        scores, weight=weight, min_similarity=min_similarity,
+    )
 
+
+def build_similarity_channel_from_scores(
+    scores: dict[str, float],
+    *,
+    weight: Optional[float] = None,
+    min_similarity: float = 0.1,
+) -> ChannelResult:
+    """Build the similarity channel from cosines that are ALREADY computed.
+
+    The scoring half of ``build_similarity_channel``, split out for #399 so the
+    fusion path can hand over one vectorised pass from
+    ``storage.embedding_matrix`` instead of paying a pure-Python cosine per
+    symbol. ``build_similarity_channel`` delegates here, so both entry points
+    rank identically by construction.
+
+    Insertion order of ``scores`` is the tie-break, exactly as the per-symbol
+    loop's dict order was.
+    """
+    scored: list[tuple[float, str]] = [
+        (sim, sid) for sid, sim in scores.items() if sim >= min_similarity
+    ]
     scored.sort(key=lambda x: x[0], reverse=True)
 
     return ChannelResult(

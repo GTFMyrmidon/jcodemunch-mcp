@@ -2,6 +2,77 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.223] - 2026-08-02 - semantic search stops re-reading the whole index on every query
+
+Reported by **@vondecron** in
+[#399](https://github.com/jgravelle/jcodemunch-mcp/issues/399), with a profile
+and a three-row bench, on a 30,479-symbol index embedded via the bundled
+`local_onnx` provider.
+
+Every semantic `search_symbols` call did two things that no warm process could
+amortise:
+
+1. `EmbeddingStore.get_all()` re-read and re-decoded **all N** stored vectors
+   out of SQLite. Nothing held the matrix between calls.
+2. `_cosine_similarity` ran in pure Python, once per symbol, recomputing the
+   *query* vector's norm inside every one of those N calls.
+
+**`storage/embedding_matrix.py`** decodes the table once per `(repo,
+store-stamp)` into a single L2-normalised matrix held in process memory, and
+scores it in one pass — `matrix @ q` when numpy is importable, and the same
+Python loop minus both redundant norms when it is not.
+
+Measured here, same box, 30,479 x 384:
+
+| | shipped (1.108.222) | 1.108.223 |
+|---|---|---|
+| warm query | 1942 ms (366 read + 1576 score) | **2.9 ms** |
+| warm query, no numpy | 1942 ms | 661 ms |
+| first query in a process | 1942 ms | 216 ms |
+
+Max deviation from the shipped per-symbol cosine: **2.0e-08**. Ranking is
+unchanged to floating point; the pre-normalisation is the only reason it is not
+bit-identical.
+
+⚠ **numpy is not a new dependency and the fallback is load-bearing.** It is
+imported opportunistically and the pure-Python path has its own test with numpy
+forced absent. The reason the fast path is nearly free in the zero-config
+configuration is @vondecron's point: `local_onnx` already pulls numpy in
+transitively via onnxruntime.
+
+⚠ **The cache invalidates on the store's size+mtime stamp over the `.db` AND
+its `-wal`/`-shm` sidecars, and every writer invalidates it directly as well.**
+A write commits into the WAL and may not touch the main file until a
+checkpoint, so a stamp over the `.db` alone would hold a stale matrix across
+exactly the write that must be noticed — a freshly embedded symbol scoring 0.0
+for the life of the process. Test: `test_a_new_symbol_is_scorable_after_a_write`.
+
+⚠ **Bounded on purpose.** At most 2 repositories are held (~46 MB each at 30k x
+384 float32), and `JCODEMUNCH_EMBED_MATRIX_CACHE=0` turns retention off
+entirely — matrices are still built per call, so the vectorised scoring pass
+survives and only the decode is re-paid.
+
+Two things fell out of the rewrite rather than being aimed at:
+
+- The semantic path no longer opens a read-**write** connection to read. It used
+  `get_all()`, whose `_connect` runs a WAL pragma and a CREATE-TABLE script on
+  every connection and so bumped the database mtime as a side effect of a pure
+  read. That is the v1.108.185 defect class, and it had a second consequence
+  here: an mtime-keyed cache built on top of it would have invalidated itself on
+  every single call. New `EmbeddingStore.iter_raw()` uses the same sidecar-aware
+  read-only connection as `get_all_readonly`.
+- `build_similarity_channel` is split into a scoring half
+  (`build_similarity_channel_from_scores`); the fusion search path hands over
+  one vectorised pass instead of paying a per-symbol cosine. The old entry point
+  delegates to the new one, so both rank identically by construction.
+
+numpy is warmed on the main thread in `warm_up_embedding_backend()` alongside
+onnxruntime/sentence-transformers, for the same Windows loader-lock reason: the
+scoring pass now reaches for a native extension from inside an
+`asyncio.to_thread` worker.
+
+Tests: `tests/test_v1_108_223.py` (19).
+
 ## [1.108.222] - 2026-08-02 - the benchmark can now be re-run by someone who is not us
 
 Every published token-efficiency number was measured by hand, on one machine,
