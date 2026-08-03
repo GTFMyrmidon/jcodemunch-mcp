@@ -348,3 +348,42 @@ def test_readme_benchmark_version_matches_the_reference():
         f"README does not name v{version}, the version jcm_reference.json was "
         f"measured under (captured {ref['captured_at'][:10]})."
     )
+
+
+# ── The determinism gate must name what moved (2026-08-02) ────────────────
+#
+# `--verify-determinism` went red on CI at v1.108.222 — the release that
+# introduced it — and stayed red through .223 and .224 while reproducing
+# identical on the maintainer's box. A bare "DIFFERENT" in a CI log cannot
+# distinguish the retrieval bug the gate exists to catch from the wall-clock
+# digit width `_measure_in_subprocess` already warns rides inside the counted
+# payload. Those two need opposite responses.
+
+
+def test_signature_diff_names_the_field_that_moved(rb):
+    diff = rb._signature_diff(
+        [{"repo": "a", "tokens": 10, "search_ms": 1.0}],
+        [{"repo": "a", "tokens": 11, "search_ms": 9.9}],
+    )
+    assert diff == ["[0].tokens: 10 != 11"]
+
+
+def test_signature_diff_ignores_search_ms_like_token_signature_does(rb):
+    assert rb._signature_diff({"search_ms": 1.0}, {"search_ms": 2.0}) == []
+
+
+def test_signature_diff_is_empty_for_identical_passes(rb):
+    same = [{"repo": "a", "tasks": [{"tokens": 1}]}]
+    assert rb._signature_diff(same, [{"repo": "a", "tasks": [{"tokens": 1}]}]) == []
+
+
+def test_signature_diff_reports_structural_divergence(rb):
+    assert "length" in rb._signature_diff({"t": [1, 2]}, {"t": [1, 2, 3]})[0]
+    assert "only one pass" in rb._signature_diff({"p": 1}, {})[0]
+
+
+def test_signature_diff_is_bounded(rb):
+    """A CI log is not a dumping ground: a wholly different pass must not
+    print one line per leaf."""
+    wide = {str(i): i for i in range(500)}
+    assert len(rb._signature_diff(wide, {str(i): -i for i in range(500)})) <= 40

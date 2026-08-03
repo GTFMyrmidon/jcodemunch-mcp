@@ -196,6 +196,41 @@ def token_signature(results: list[dict]) -> str:
     return json.dumps(strip(results), sort_keys=True, default=str)
 
 
+def _signature_diff(first, second, path: str = "", _out=None) -> list[str]:
+    """Every leaf that differs between two measurement passes, as `path: a != b`.
+
+    Exists because `--verify-determinism` failing tells you nothing you can act
+    on remotely. The interesting question is never *that* two passes differ, it
+    is *which field* — a `tokens` figure moving is the retrieval bug the gate
+    exists to catch, while `timing_ms` moving is the wall-clock digit width the
+    harness already knows rides inside the counted payload. Those need opposite
+    responses and a bare "DIFFERENT" cannot tell them apart.
+
+    `search_ms` is dropped on both sides, matching `token_signature`.
+    """
+    out = [] if _out is None else _out
+    if len(out) >= 40:
+        return out
+    if isinstance(first, dict) and isinstance(second, dict):
+        for key in sorted(set(first) | set(second)):
+            if key == "search_ms":
+                continue
+            here = f"{path}.{key}" if path else str(key)
+            if key not in first or key not in second:
+                out.append(f"{here}: present in only one pass")
+                continue
+            _signature_diff(first[key], second[key], here, out)
+    elif isinstance(first, list) and isinstance(second, list):
+        if len(first) != len(second):
+            out.append(f"{path}: length {len(first)} != {len(second)}")
+        else:
+            for i, (a, b) in enumerate(zip(first, second)):
+                _signature_diff(a, b, f"{path}[{i}]", out)
+    elif first != second:
+        out.append(f"{path}: {first!r} != {second!r}")
+    return out
+
+
 def _measure_in_subprocess(repos: list[str]) -> Optional[list[dict]]:
     """Re-measure `repos` in a fresh interpreter and return the raw results.
 
@@ -746,6 +781,16 @@ def main():
                 "expected to differ — see _measure_in_subprocess.)",
                 file=sys.stderr,
             )
+            # ⚠ Name the fields, do not just fail. This gate went red on CI at
+            # v1.108.222 — the release that introduced it — and stayed red
+            # through .223 and .224 while reproducing identical on the author's
+            # box. A bare "DIFFERENT" is unactionable from a CI log: it cannot
+            # distinguish the retrieval bug this exists to catch from the
+            # wall-clock digit width `_measure_in_subprocess` already warns
+            # about. Guessing from a remote failure is how the wrong thing gets
+            # fixed twice.
+            for line in _signature_diff(results, second):
+                print(f"    {line}", file=sys.stderr)
             return 1
 
     print()
