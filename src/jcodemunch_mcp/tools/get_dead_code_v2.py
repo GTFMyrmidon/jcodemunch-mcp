@@ -51,6 +51,11 @@ _ESM_REEXPORT_STAR_RE = re.compile(
     r"""export\s+\*(?:\s+as\s+\w+)?\s+from\s+['"]([^'"]+)['"]"""
 )
 # ES named re-export: `export { foo, bar } from './X'`
+# Identifier tokens in a file's module-level residue (#409). ``_IDENT_ONLY_RE``
+# decides whether a symbol name can be matched by token equality at all.
+_IDENT_RE = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")
+_IDENT_ONLY_RE = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")
+
 _ESM_REEXPORT_NAMED_RE = re.compile(
     r"""export\s*\{[^}]+\}\s*from\s+['"]([^'"]+)['"]"""
 )
@@ -262,6 +267,103 @@ def _package_json_entries(index, store, owner, repo_name) -> set[str]:
 # Main tool
 # ---------------------------------------------------------------------------
 
+def _sweep_module_level_callers(
+    index,
+    store,
+    owner: str,
+    name: str,
+    rev: dict[str, list[str]],
+    callee_has_caller: set[str],
+) -> None:
+    """Add callers that the per-symbol AST call index cannot record.
+
+    ``CodeIndex.get_callers_by_name`` is built by walking each symbol's
+    ``call_references``, so code at module level — which belongs to no symbol —
+    contributes nothing to it. This scans exactly that residue: each file's text
+    with every symbol body removed. That is both the precise blind spot and a
+    small fraction of the file, and it is consulted only for symbols the AST
+    pass left without a caller, so a repo whose callers all resolve reads no
+    file contents at all.
+
+    Mutates ``callee_has_caller`` in place. Only ever adds.
+
+    ⚠ Disclosed residual: this matches text, not calls, so a bare mention of the
+    name at module level (an ``__all__`` entry, a decorator line above a
+    neighbouring symbol) counts as a caller. That is the same trade the text
+    fallback below already makes, and it is the safe direction for a signal that
+    feeds deletion decisions: it can only fail to report something dead, never
+    report live code as dead.
+    """
+    symbols_by_file = build_symbols_by_file(index)
+    # Per-file: the identifier tokens appearing in that file's module-level
+    # residue. Tokenising each file ONCE and testing set membership per symbol
+    # is what makes this affordable — scanning the residue text per (symbol,
+    # importer) pair instead measured 12x slower than the whole tool on a
+    # 9.7k-function repo. This mirrors ``called_names_by_file`` above, which is
+    # the same shape for the same reason.
+    residue_names_cache: dict[str, set[str]] = {}
+    # Names that are not plain identifiers (Erlang ``add/2``, PHP FQNs) cannot
+    # be found by token equality, so they keep the regex path against the
+    # residue text. Rare, so the text is cached only when one shows up.
+    residue_text_cache: dict[str, str] = {}
+
+    def _residue_text(file_path: str) -> str:
+        """File text with every symbol's line span removed."""
+        if file_path in residue_text_cache:
+            return residue_text_cache[file_path]
+        content = store.get_file_content(owner, name, file_path) or ""
+        if content:
+            lines = content.splitlines()
+            covered = bytearray(len(lines))
+            for s in symbols_by_file.get(file_path, ()):
+                line = s.get("line") or 0
+                if line <= 0:
+                    # No usable span, so there is nothing to subtract. Leaving
+                    # the body in can only find a caller, never invent one's
+                    # absence — the safe direction, same call as .226's
+                    # unspanned_files.
+                    continue
+                start = max(0, line - 1)
+                end = min(len(lines), s.get("end_line") or line)
+                if end > start:
+                    covered[start:end] = b"\x01" * (end - start)
+            content = "\n".join(
+                ln for i, ln in enumerate(lines) if not covered[i]
+            )
+        residue_text_cache[file_path] = content
+        return content
+
+    def _residue_names(file_path: str) -> set[str]:
+        if file_path not in residue_names_cache:
+            residue_names_cache[file_path] = set(
+                _IDENT_RE.findall(_residue_text(file_path))
+            )
+        return residue_names_cache[file_path]
+
+    for sym in index.symbols:
+        if sym.get("kind") not in ("function", "method"):
+            continue
+        sid = sym.get("id", "")
+        if not sid or sid in callee_has_caller:
+            continue
+        sym_file = sym.get("file", "")
+        sym_name = sym.get("name", "")
+        if not sym_name or not sym_file:
+            continue
+        plain = _IDENT_ONLY_RE.fullmatch(sym_name) is not None
+        # Own file first (module-level call in the same module), then any file
+        # that imports it. Same search order as the fast path above.
+        for caller_file in (sym_file, *rev.get(sym_file, ())):
+            if plain:
+                hit = sym_name in _residue_names(caller_file)
+            else:
+                residue = _residue_text(caller_file)
+                hit = bool(residue) and _word_match(residue, sym_name)
+            if hit:
+                callee_has_caller.add(sid)
+                break
+
+
 def get_dead_code_v2(
     repo: str,
     min_confidence: float = 0.5,
@@ -368,6 +470,20 @@ def get_dead_code_v2(
                 if sym_name in called_names_by_file.get(caller_file, set()):
                     callee_has_caller.add(sym["id"])
                     break
+        # Sweep what the AST index structurally cannot see (#409).
+        # ``call_references`` are recorded PER SYMBOL, so a call written at
+        # module level belongs to no symbol and never enters ``callers_by_name``
+        # — CLI wiring, route tables, framework registration and ``__main__``
+        # blocks all live there. Worse, which path ran was decided by
+        # ``if callers_by_name:``, a repo-wide property: a tree where no symbol
+        # called another fell through to the text heuristic below and got these
+        # right, and adding a single intra-file call anywhere flipped the whole
+        # repo onto a path that could not. Both now run. The fast path keeps its
+        # precision because the sweep only ever ADDS callers, and only for
+        # symbols the fast path left unresolved.
+        _sweep_module_level_callers(
+            index, store, owner, name, rev, callee_has_caller
+        )
     else:
         # Fallback: text heuristic with file content caching
         symbols_by_file = build_symbols_by_file(index)

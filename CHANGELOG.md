@@ -2,6 +2,65 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.229] - 2026-08-03 - the dead-code check stops losing module-level callers
+
+`get_dead_code_v2` reported three shipped MCP tools — `get_pr_risk_profile`,
+`get_symbol_provenance` and `index_repo` — as dead code, along with every
+`main()` in the repository and all five CLI hook entry points. 50 symbols on
+jcm's own tree, all of them live.
+
+`CodeIndex.get_callers_by_name` is built by walking each symbol's
+`call_references`, so code written at **module level belongs to no symbol** and
+never enters it. That is where CLI wiring, route tables, framework registration
+and `if __name__ == '__main__':` blocks live.
+
+⚠⚠ **The part that made this hard to see: which caller-detection path ran was
+decided by `if callers_by_name:`, a repository-wide property.** A tree where no
+symbol called another produced an empty dict, which is falsy, and fell through
+to the text heuristic — which reads whole files and gets these right. Adding a
+single function that calls a sibling *anywhere in the tree* flipped the entire
+repository onto the AST path, which structurally cannot see an import-time call.
+So `alpha`'s verdict changed based on an unrelated edge between two other
+symbols. Every real repository has such an edge, which means the fallback that
+answered correctly was effectively unreachable in production.
+
+Both paths now run. The AST pass goes first and keeps its precision; a sweep
+then scans only the symbols it left unresolved, against each file's
+**module-level residue** — the file's text with every symbol's line span
+subtracted. That residue is exactly the fast path's blind spot.
+
+⚠ **Measured, not asserted: this costs 2.3x.** On jcm (9,697 functions, 743
+files) the tool goes 922 ms → 2,110 ms and drops 816 flagged symbols to 766,
+with **zero newly flagged** — strictly monotone in the safe direction. The first
+implementation scanned residue *text* per symbol and measured **11,344 ms, 12.3x
+slower**; tokenising each residue once into a name set and testing membership
+(the same shape as `called_names_by_file` directly above it) recovered that
+without changing a single verdict. Reads happen only for symbols the AST pass
+did not resolve, so a repo whose callers all resolve pays nothing.
+
+⚠ **Disclosed residual:** the sweep matches text, not calls, so a bare
+module-level mention of a name — an `__all__` entry, a decorator line above a
+neighbouring symbol — counts as a caller. That is the trade the text fallback
+already made, and it is the safe direction for a signal that feeds deletion
+decisions: it can fail to report something dead, never report live code as dead.
+
+⚠ **The fixture detail that let this survive:** a test needs **both** an
+intra-symbol call and a module-level call in the same tree. Either one alone
+passes on the broken code, so the obvious two-file fixture takes the fallback
+and proves nothing. Stashing the fix fails exactly 2 of the 6 new tests; the
+other 4 are guards (a genuinely dead symbol stays flagged, self-recursion is
+still not a caller, the AST path still resolves intra-symbol callers).
+
+Reported and fixed in-house.
+[#409](https://github.com/jgravelle/jcodemunch-mcp/issues/409). The sibling
+finding from the same pass — `get_dead_code_v2` scoring a signal at full weight
+in the same response that declares it invalid — is
+[#408](https://github.com/jgravelle/jcodemunch-mcp/issues/408) and is **not**
+addressed here: it changes confidence arithmetic, and shipping the instrument
+separately from the fix is the only way its before/after stays readable.
+
+Tests: `test_v1_108_229.py` (6).
+
 ## [1.108.228] - 2026-08-03 - ranking ties break on the symbol id, not on insertion order
 
 `ROADMAP.md` has said since 2026-08-02 that a `(score, symbol_id)` key "is
