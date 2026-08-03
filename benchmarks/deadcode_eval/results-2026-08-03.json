@@ -1,0 +1,82 @@
+[
+ {
+  "cutoff": 1.0,
+  "flagged": 766,
+  "false_positives": 482,
+  "fp_rate": 0.6292,
+  "alive_caught": 0.2107,
+  "proven_alive": 2288,
+  "examples": [
+   "src/jcodemunch_mcp/agent_selector.py::AgentSelectorConfig.from_config#method",
+   "src/jcodemunch_mcp/agent_selector.py::AgentSelectorConfig.resolve_provider_models#method",
+   "src/jcodemunch_mcp/agent_selector.py::_classify_language_mix#function",
+   "src/jcodemunch_mcp/agent_selector.py::_model_tier#function",
+   "src/jcodemunch_mcp/agent_selector.py::_resolve_tier_model#function",
+   "src/jcodemunch_mcp/agent_selector.py::_tier_rank#function",
+   "src/jcodemunch_mcp/agent_selector.py::route#function",
+   "src/jcodemunch_mcp/agent_selector.py::score_complexity#function",
+   "src/jcodemunch_mcp/cli/init.py::MCPClient.__init__#method",
+   "src/jcodemunch_mcp/cli/init.py::read_install_version#function"
+  ]
+ },
+ {
+  "cutoff": 0.95,
+  "flagged": 766,
+  "false_positives": 482,
+  "fp_rate": 0.6292,
+  "alive_caught": 0.2107,
+  "proven_alive": 2288,
+  "examples": [
+   "src/jcodemunch_mcp/agent_selector.py::AgentSelectorConfig.from_config#method",
+   "src/jcodemunch_mcp/agent_selector.py::AgentSelectorConfig.resolve_provider_models#method",
+   "src/jcodemunch_mcp/agent_selector.py::_classify_language_mix#function",
+   "src/jcodemunch_mcp/agent_selector.py::_model_tier#function",
+   "src/jcodemunch_mcp/agent_selector.py::_resolve_tier_model#function",
+   "src/jcodemunch_mcp/agent_selector.py::_tier_rank#function",
+   "src/jcodemunch_mcp/agent_selector.py::route#function",
+   "src/jcodemunch_mcp/agent_selector.py::score_complexity#function",
+   "src/jcodemunch_mcp/cli/init.py::MCPClient.__init__#method",
+   "src/jcodemunch_mcp/cli/init.py::read_install_version#function"
+  ]
+ },
+ {
+  "cutoff": 0.9,
+  "flagged": 154,
+  "false_positives": 74,
+  "fp_rate": 0.4805,
+  "alive_caught": 0.0323,
+  "proven_alive": 2288,
+  "examples": [
+   "src/jcodemunch_mcp/cli/upgrade.py::run_upgrade#function",
+   "src/jcodemunch_mcp/cli/upgrade.py::watch_extra_install_command#function",
+   "src/jcodemunch_mcp/counter.py::catalog_entry#function",
+   "src/jcodemunch_mcp/counter.py::classify_intent#function",
+   "src/jcodemunch_mcp/counter.py::example_for#function",
+   "src/jcodemunch_mcp/counter.py::order_gate#function",
+   "src/jcodemunch_mcp/counter.py::search_catalog#function",
+   "src/jcodemunch_mcp/counter.py::shape_execute_args#function",
+   "src/jcodemunch_mcp/encoding/generic.py::encode#function",
+   "src/jcodemunch_mcp/evidence/capability.py::certificate_id#function"
+  ]
+ },
+ {
+  "cutoff": 0.85,
+  "flagged": 154,
+  "false_positives": 74,
+  "fp_rate": 0.4805,
+  "alive_caught": 0.0323,
+  "proven_alive": 2288,
+  "examples": [
+   "src/jcodemunch_mcp/cli/upgrade.py::run_upgrade#function",
+   "src/jcodemunch_mcp/cli/upgrade.py::watch_extra_install_command#function",
+   "src/jcodemunch_mcp/counter.py::catalog_entry#function",
+   "src/jcodemunch_mcp/counter.py::classify_intent#function",
+   "src/jcodemunch_mcp/counter.py::example_for#function",
+   "src/jcodemunch_mcp/counter.py::order_gate#function",
+   "src/jcodemunch_mcp/counter.py::search_catalog#function",
+   "src/jcodemunch_mcp/counter.py::shape_execute_args#function",
+   "src/jcodemunch_mcp/encoding/generic.py::encode#function",
+   "src/jcodemunch_mcp/evidence/capability.py::certificate_id#function"
+  ]
+ }
+]

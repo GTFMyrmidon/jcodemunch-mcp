@@ -727,8 +727,9 @@ disagreements** against a 0.5% fail line. The thresholds were fixed in advance
 and neither side moved them.
 
 **What we verified ourselves, and what we did not.** We did not download the
-86.9 MB archive or re-run the harness; the figures above are as reported, and
-the repository still carries **no LICENSE**, so it remains read-and-rerun-only.
+86.9 MB archive or re-run the harness; the figures above are as reported.
+(The no-LICENSE caveat that stood here is **resolved**: relicensed **MIT-0** on
+2026-08-03, verified against the LICENSE file itself. Vendoring is permitted.)
 What we did check is the part that could invalidate the result from our side —
 the gate's own stated precondition — and it had NOT been met:
 
@@ -846,9 +847,13 @@ the archive retains earlier exploratory rows at `6996cc08` beside the `c2201a55`
 rows and **no `6996cc08` row backs a quoted figure** (filter on the provenance
 column first), and Arc 2's classification screen is one pair per case, so its 58
 Express/Gin sub-50ms cases cannot separate from timing variance - Django (5.17x)
-and FastAPI (2.59x) are the load-bearing part. ⚠ **The repository carries no
-LICENSE**, so nothing in it can be vendored into this tree until that changes;
-read it, re-run it, do not copy it in.
+and FastAPI (2.59x) are the load-bearing part. ✅ **Licensing resolved 2026-08-03: the repository is now
+[MIT-0](https://github.com/rknighton/jcm-398-evidence/blob/main/LICENSE)** (MIT
+No Attribution), relicensed by @rknighton on his own initiative after noticing
+the omission. Verified against the LICENSE file, not the announcement. No
+conditions, no attribution requirement, no notice to carry, so `verify.py` and
+the harnesses may be vendored into this tree outright. The earlier
+read-and-rerun-only restriction no longer applies.
 
 **Provenance.** Filed by @rknighton as #398 on 2026-08-01 with a full research
 archive offered on request. Split per the one-issue-one-verdict rule; #398 closed
