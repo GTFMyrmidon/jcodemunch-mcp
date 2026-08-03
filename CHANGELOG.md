@@ -2,6 +2,58 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.228] - 2026-08-03 - ranking ties break on the symbol id, not on insertion order
+
+`ROADMAP.md` has said since 2026-08-02 that a `(score, symbol_id)` key "is
+required regardless and ships FIRST, alone", because certifying a ranking whose
+ties fall back to insertion order means reproducing an arbitrary row order bit
+for bit. `fuse()` has always used it; the four channel builders that feed it and
+the semantic scorer did not — they sorted on score with a stable sort, so ties
+broke on the order SQLite handed the rows back.
+
+⚠⚠ **v1.108.223 turned this from correct-in-principle into urgent, and we did
+not notice at the time.** That release gave the semantic scorer two lanes — a
+numpy float32 matmul and a pure-Python float64 fallback — whose scores differ by
+~1e-7. Measured here on a deliberately near-tied 4,000-vector corpus, they
+**disagreed at rank 0**: two installs of the *same version* ranking differently
+based only on whether numpy was importable.
+
+⚠ **That corpus is synthetic and maximally homogeneous, and the counterweight
+belongs in the same breath.** On real embeddings @rknighton measured **zero**
+float32/float64 boundary disagreements across Django, FastAPI and jcm
+([#403](https://github.com/jgravelle/jcodemunch-mcp/issues/403)). The hazard is
+real in principle and does not fire in practice on those corpora. Neither fact
+is a reason to leave insertion order as a second, invisible source of divergence.
+
+A total order on `(score, id)` does not remove the float difference — nothing
+here does. It removes the other one, and it collapses the exact-tie bucket that
+#403's certification breadth measures, which is why the roadmap wanted it before
+that measurement rather than after.
+
+Guarded at the surface, not just the site: a test fails on a score-only ranking
+sort anywhere in `signal_fusion` or `search_symbols`, and each channel builder is
+asserted to produce the same order for symbols supplied in reverse.
+
+### #403 — Arc 4 evidence verdict: gate CLEARED
+
+Recorded in `ROADMAP.md` and on the issue. @rknighton measured the three-bucket
+breadth on real embeddings — Django 0.1591%, FastAPI 0.1809%, jcm control
+0.2686% against a 10% PASS ceiling, 0 genuine boundary disagreements against a
+0.5% fail line. Thresholds were fixed in advance; neither side moved them.
+
+⚠ **What we checked was the gate's own precondition, and it had not been met:**
+the tie-break key had not shipped when the measurement ran, so bucket (1) was
+never collapsed. That makes measured breadth an **upper** bound, so a 0.159%
+pass holds a fortiori — but it would have invalidated a FAIL or a borderline
+result, and a reader of "gate cleared" should know which half of the protocol
+ran. We did not re-run the harness or download the 86.9 MB archive, and the
+evidence repository still carries no LICENSE, so it stays read-and-rerun-only.
+
+**Lane 1 of that arc already shipped as v1.108.223**, answering #399 rather than
+as Arc 4 work — so bucket (3) now describes production code rather than parked
+design. **Lane 3 is parked on a premise that changed**: it exists to make an
+approximate scorer safe, and the exact scorer is now 2.9 ms warm.
+
 ## [1.108.227] - 2026-08-03 - `git_sha` verification answers the question it was asked
 
 Reported by **@rknighton** in

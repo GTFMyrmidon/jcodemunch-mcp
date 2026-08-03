@@ -1440,7 +1440,26 @@ def _search_symbols_semantic(
             continue
         scored.append((score, sym))
 
-    scored.sort(key=lambda x: x[0], reverse=True)
+    # ⚠⚠ `(-score, symbol_id)`, not score alone (v1.108.228, #398 Arc 4 / #403).
+    # A stable sort on score breaks ties on INSERTION ORDER — deterministic, but
+    # arbitrary: it is the order SQLite handed the rows back. A ranking must not
+    # depend on that.
+    #
+    # This became urgent rather than merely correct in v1.108.223. That release
+    # gave the semantic scorer two lanes — a numpy float32 matmul and a
+    # pure-Python float64 fallback — and their scores differ by ~1e-7. Measured
+    # on a deliberately near-tied 4,000-vector corpus, they disagreed at RANK 0:
+    # two installs of the SAME version ranked differently based only on whether
+    # numpy was importable. A total order on (score, id) does not remove the
+    # float difference, but it removes insertion order as a second, invisible
+    # source of divergence — and it collapses the exact-tie bucket that #403's
+    # certification breadth measures.
+    #
+    # ⚠ On real embeddings @rknighton measured ZERO float32/float64 boundary
+    # disagreements across Django, FastAPI and jcm. The 4,000-vector corpus above
+    # is synthetic and maximally homogeneous — it shows the hazard is real in
+    # principle, NOT that it fires in practice. Both facts belong together.
+    scored.sort(key=lambda x: (-x[0], x[1]["id"]))
     top = scored[:effective_limit]
     # Real ranking scores (top-first) for confidence/ledger (V6).
     _conf_scores = [s for s, _ in top]

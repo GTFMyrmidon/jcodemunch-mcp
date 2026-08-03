@@ -137,7 +137,10 @@ def build_lexical_channel(
         if score > 0:
             scored.append((score, sym["id"]))
 
-    scored.sort(key=lambda x: x[0], reverse=True)
+    # (-score, symbol_id): ties break on the id, not on the order SQLite
+    # happened to hand rows back. See `fuse()` — which has always used this
+    # key — and v1.108.228's note in search_symbols._search_symbols_semantic.
+    scored.sort(key=lambda x: (-x[0], x[1]))
 
     return ChannelResult(
         name="lexical",
@@ -178,7 +181,10 @@ def build_structural_channel(
         if pr > 0:
             scored.append((pr, sid))
 
-    scored.sort(key=lambda x: x[0], reverse=True)
+    # (-score, symbol_id): ties break on the id, not on the order SQLite
+    # happened to hand rows back. See `fuse()` — which has always used this
+    # key — and v1.108.228's note in search_symbols._search_symbols_semantic.
+    scored.sort(key=lambda x: (-x[0], x[1]))
 
     return ChannelResult(
         name="structural",
@@ -207,7 +213,10 @@ def build_identity_channel(
         if s > 0:
             scored.append((s, sym["id"]))
 
-    scored.sort(key=lambda x: x[0], reverse=True)
+    # (-score, symbol_id): ties break on the id, not on the order SQLite
+    # happened to hand rows back. See `fuse()` — which has always used this
+    # key — and v1.108.228's note in search_symbols._search_symbols_semantic.
+    scored.sort(key=lambda x: (-x[0], x[1]))
 
     return ChannelResult(
         name="identity",
@@ -263,7 +272,10 @@ def build_similarity_channel_from_scores(
     scored: list[tuple[float, str]] = [
         (sim, sid) for sid, sim in scores.items() if sim >= min_similarity
     ]
-    scored.sort(key=lambda x: x[0], reverse=True)
+    # (-score, symbol_id): ties break on the id, not on the order SQLite
+    # happened to hand rows back. See `fuse()` — which has always used this
+    # key — and v1.108.228's note in search_symbols._search_symbols_semantic.
+    scored.sort(key=lambda x: (-x[0], x[1]))
 
     return ChannelResult(
         name="similarity",

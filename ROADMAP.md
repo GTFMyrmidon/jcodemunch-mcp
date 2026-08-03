@@ -717,7 +717,63 @@ per-request fallback when the budget is full; expensive construction stays lazy;
 the same holder rather than by a parallel one; README background-behavior section
 updated in the same release.
 
-### Arc 4 — adaptive certified semantic scoring — GATED ON A MEASUREMENT
+### Arc 4 — adaptive certified semantic scoring — GATE CLEARED; LANE 1 SHIPPED, LANE 3 PARKED ON NEED
+
+**Disposition recorded 2026-08-03, closing [#403](https://github.com/jgravelle/jcodemunch-mcp/issues/403).
+Verdict: the measurement gate below is CLEARED.** @rknighton measured the
+three-bucket breadth on real embeddings — Django 0.1591%, FastAPI 0.1809%, jcm
+control 0.2686%, against a 10% PASS ceiling, with **0 genuine boundary
+disagreements** against a 0.5% fail line. The thresholds were fixed in advance
+and neither side moved them.
+
+**What we verified ourselves, and what we did not.** We did not download the
+86.9 MB archive or re-run the harness; the figures above are as reported, and
+the repository still carries **no LICENSE**, so it remains read-and-rerun-only.
+What we did check is the part that could invalidate the result from our side —
+the gate's own stated precondition — and it had NOT been met:
+
+⚠⚠ **The `(score, symbol_id)` tie-break key had not shipped when the measurement
+ran.** This section says it "is required regardless and ships FIRST, alone"
+precisely so bucket (1) collapses *before* the number is taken. Every ranking
+sort was still `key=lambda x: x[0]` at v1.108.227. **This does not invalidate the
+verdict, and the direction is why:** an uncollapsed exact-tie bucket makes
+measured breadth an UPPER bound, so a 0.159% pass holds a fortiori — it can only
+shrink. It would have invalidated a FAIL or anything near the 10% line. Recorded
+because the next person to read "gate cleared" should know which half of the
+protocol actually ran.
+
+**Lane 1 has already shipped, and not as Arc 4 work.** v1.108.223 answered
+[#399](https://github.com/jgravelle/jcodemunch-mcp/issues/399) with exactly this
+arc's first lane: a retained, L2-normalised float32 matrix cached per store
+stamp, NumPy as an optional accelerator with a tested pure-Python fallback and
+zero mandatory dependency. Measured 1942 ms → 2.9 ms warm on 30,479 × 384.
+
+⚠⚠ **That changes what this evidence is for.** Bucket (3) — float32 and float64
+disagreeing on ordering — now describes **production code**, not parked design.
+And measured here on a deliberately near-tied synthetic 4,000-vector corpus, the
+two shipped lanes **disagreed at rank 0**: two installs of the same version
+ranking differently based only on whether NumPy was importable. @rknighton's
+zero-disagreement result on real corpora is the counterweight, and both belong
+together — the hazard is real in principle and does not fire in practice on
+Django, FastAPI or jcm. **The tie-break key shipped in v1.108.228 on the strength
+of that**, which is a better reason than the one this section originally gave it.
+
+**Lane 3 (certified uncertainty-set rescoring) is PARKED, and the premise to
+re-examine is its own.** It exists to make an approximate scorer safe by
+rescoring only uncertain candidates. The exact scorer is now 2.9 ms warm. Before
+building it, someone has to show what it accelerates that is still slow —
+otherwise it is a certification subsystem and a memory cap bolted to a path that
+already costs single-digit milliseconds. **Lane 2 (chunked streaming) is
+likewise parked**; v1.108.223's 2-repo cache bound addresses part of the memory
+concern it was for.
+
+⚠ **Stated limit of the evidence, not held against it:** four fixed queries per
+corpus, one logical candidate row each. The gate never specified a query count,
+and picking one now — after seeing a result we like — is exactly the move the
+"neither side picks the bar after seeing results" rule forbids. It bounds how
+strongly the zero-disagreement figure generalises; it does not bound the verdict.
+
+---
 
 Three exact-result lanes (retained float32 matrix / chunked streaming / certified
 uncertainty-set rescoring), NumPy as an optional accelerator only.
