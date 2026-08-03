@@ -1,0 +1,150 @@
+name: Benchmark
+
+# Re-runs the published token-efficiency benchmark against the pinned upstream
+# corpora and reports whether the committed numbers still hold.
+#
+# Why this exists: through v1.108.221 the benchmark was run by hand, on one
+# machine, against indexes built from whatever the benchmark repos' default
+# branches pointed at that day. Nothing recorded which tree produced a number,
+# so "re-run it and see" was not an operation anyone could perform — including
+# us. The corpora are now pinned by commit in benchmarks/tasks.json and this
+# job rebuilds them from scratch every week.
+#
+# It does NOT gate merges. A drift here means the numbers we publish have moved
+# and the artifacts need re-syncing; it does not mean the change under test is
+# wrong. The gate that fails a PR is Replay (retrieval quality), not this one.
+
+on:
+  schedule:
+    # Mondays 07:00 UTC — an hour after the observatory cron, so the two never
+    # contend for the same runner minutes.
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+  push:
+    paths:
+      - "benchmarks/tasks.json"
+      - "benchmarks/harness/run_benchmark.py"
+      - ".github/workflows/benchmark.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: Token-efficiency benchmark (pinned corpora)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7
+        with:
+          python-version: "3.12"
+          version: "0.9.5"
+      - name: Install
+        run: uv sync --locked --group dev
+
+      - name: Clone the pinned corpora
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/bench-corpus"
+          # Read the pins from tasks.json rather than repeating them here. A
+          # SHA that lives in two places drifts, and this job exists to catch
+          # exactly that class of thing.
+          uv run python - <<'PY' > "${RUNNER_TEMP}/pins.txt"
+          import json, pathlib
+          corpus = json.loads(pathlib.Path("benchmarks/tasks.json").read_text(encoding="utf-8"))
+          for repo in corpus["repos"]:
+              print(repo["id"], repo["sha"])
+          PY
+          while read -r repo sha; do
+            dir="${RUNNER_TEMP}/bench-corpus/${repo//\//__}"
+            git clone --quiet --filter=blob:none --no-checkout "https://github.com/${repo}.git" "$dir"
+            git -C "$dir" checkout --quiet "$sha"
+            echo "${repo} @ $(git -C "$dir" rev-parse HEAD)"
+          done < "${RUNNER_TEMP}/pins.txt"
+
+      - name: Index them
+        env:
+          CODE_INDEX_PATH: ${{ runner.temp }}/bench-index
+        run: |
+          set -euo pipefail
+          for dir in "${RUNNER_TEMP}"/bench-corpus/*/; do
+            uv run python -c "
+          import sys
+          from jcodemunch_mcp import config; config.load_config()
+          from jcodemunch_mcp.tools.index_folder import index_folder
+          r = index_folder(sys.argv[1], use_ai_summaries=False, incremental=False, identity_mode='git')
+          print(sys.argv[1], '->', r.get('repo'), r.get('error') or '')
+          " "$dir"
+          done
+
+      - name: Run the benchmark
+        env:
+          CODE_INDEX_PATH: ${{ runner.temp }}/bench-index
+        run: |
+          set -euo pipefail
+          uv run python benchmarks/harness/run_benchmark.py \
+            --verify-determinism \
+            --json "${RUNNER_TEMP}/benchmark.json" \
+            --out "${RUNNER_TEMP}/benchmark.md"
+
+      - name: Compare against the committed artifact
+        env:
+          CODE_INDEX_PATH: ${{ runner.temp }}/bench-index
+        run: |
+          set -euo pipefail
+          uv run python - "${RUNNER_TEMP}/benchmark.json" <<'PY'
+          import json, pathlib, sys
+
+          run = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          ref = json.loads(pathlib.Path("benchmarks/jcm_reference.json").read_text(encoding="utf-8"))
+
+          drifted = []
+          for res in run:
+              if "error" in res:
+                  drifted.append(f"{res.get('repo')}: {res['error']}")
+                  continue
+              entry = ref["repos"].get(res["repo"])
+              if entry is None:
+                  drifted.append(f"{res['repo']}: absent from the committed artifact")
+                  continue
+              # The corpus is pinned, so a moved baseline means the INDEXER
+              # changed what it reads, not that upstream moved. That is worth
+              # seeing either way.
+              if entry["baseline_tokens"] != res["baseline_tokens"]:
+                  drifted.append(
+                      f"{res['repo']}: baseline {entry['baseline_tokens']:,} -> "
+                      f"{res['baseline_tokens']:,} tokens on the SAME commit"
+                  )
+              measured = sum(t["jmunch_tokens"] for t in res["tasks"] if "error" not in t)
+              if entry["jmunch_total_tokens"] != measured:
+                  drifted.append(
+                      f"{res['repo']}: jCodeMunch {entry['jmunch_total_tokens']:,} -> "
+                      f"{measured:,} tokens"
+                  )
+
+          if drifted:
+              print("::warning::published benchmark numbers have moved")
+              for line in drifted:
+                  print(f"  {line}")
+              print(
+                  "\nRe-sync with `python benchmarks/harness/run_benchmark.py "
+                  "--out benchmarks/results.md --reference`, which also rewrites "
+                  "benchmarks/provenance/measured.json. README.md and "
+                  "benchmarks/METHODOLOGY.md mirror the same run BY HAND and "
+                  "tests/test_provenance.py fails if you miss one."
+              )
+          else:
+              print("Published numbers reproduce exactly against the pinned corpora.")
+          PY
+
+      - name: Upload the run
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: benchmark-run
+          path: |
+            ${{ runner.temp }}/benchmark.json
+            ${{ runner.temp }}/benchmark.md
+          if-no-files-found: warn

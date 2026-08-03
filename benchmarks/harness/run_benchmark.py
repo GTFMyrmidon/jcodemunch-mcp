@@ -79,14 +79,18 @@ def _load_corpus():
         corpus = _json.loads(_CORPUS_PATH.read_text(encoding="utf-8"))
         repos = [r["id"] for r in corpus.get("repos", [])]
         tasks = [t["query"] for t in corpus.get("tasks", [])]
-        return repos, tasks
-    # Fallback hardcoded values (kept in sync with tasks.json)
+        pins = {r["id"]: r.get("sha") for r in corpus.get("repos", []) if r.get("sha")}
+        return repos, tasks, pins
+    # Fallback hardcoded values (kept in sync with tasks.json). No SHAs here on
+    # purpose: a pin that lives in two places drifts, and an unpinned run must
+    # be visibly unpinned rather than quietly pinned to a stale constant.
     return (
         ["expressjs/express", "fastapi/fastapi", "gin-gonic/gin"],
         ["router route handler", "middleware", "error exception", "request response", "context bind"],
+        {},
     )
 
-DEFAULT_REPOS, TASKS = _load_corpus()
+DEFAULT_REPOS, TASKS, PINNED_SHAS = _load_corpus()
 
 SEARCH_MAX_RESULTS = 5
 SYMBOLS_FETCHED = 3        # get_symbol calls per query in the jMunch workflow
@@ -115,6 +119,132 @@ def _parse_repo(repo_str: str) -> tuple[str, str]:
     if len(parts) == 2:
         return parts[0], parts[1]
     return "local", parts[0]
+
+
+# ---------------------------------------------------------------------------
+# Corpus state — which tree was measured, and was all of it there
+# ---------------------------------------------------------------------------
+
+def corpus_state(index, repo_str: str, pins: Optional[dict] = None) -> dict:
+    """Describe the corpus a measurement was taken against.
+
+    Two questions a published benchmark number has to be able to answer, and
+    neither was recorded before v1.108.222:
+
+    1. **Which upstream tree?** `index_repo` has no ref parameter — it fetches
+       whatever the default branch points at today — so a run reproduces a
+       published number only by accident. The pin lives in `tasks.json` and is
+       checked here against the index's own `git_head`.
+    2. **Was all of it indexed?** The file cap silently truncates. The
+       `fastapi/fastapi` index behind every number published through
+       v1.108.221 held 1,000 of 1,182 eligible files and said so nowhere; its
+       coverage record was `{}`. (What the cap dropped turned out to be 182
+       empty `__init__.py` files worth zero tokens, so the headline never moved
+       — but that was discovered by measuring it, not by anything the artifact
+       could tell you.)
+
+    `complete` is tri-state on purpose. An index with no coverage record has
+    not been found complete; it has not been measured. Collapsing that to
+    `False` invents a defect, and collapsing it to `True` is the false-absence
+    shape this project keeps closing.
+    """
+    pins = PINNED_SHAS if pins is None else pins
+    head = getattr(index, "git_head", None) or None
+    pinned = pins.get(repo_str)
+    if not pinned:
+        pin = "unpinned"
+    elif not head:
+        pin = "unknown"
+    elif head == pinned:
+        pin = "verified"
+    else:
+        pin = "mismatch"
+
+    coverage = getattr(index, "coverage", None)
+    if not isinstance(coverage, dict) or not coverage:
+        complete, accepted = "unknown", None
+    else:
+        raw = coverage.get("complete")
+        complete = raw if isinstance(raw, bool) else "unknown"
+        accepted = coverage.get("files_accepted") or coverage.get("files_indexed")
+
+    return {
+        "git_head": head,
+        "pinned_sha": pinned,
+        "pin": pin,
+        "complete": complete,
+        "files_accepted": accepted,
+    }
+
+
+def token_signature(results: list[dict]) -> str:
+    """Everything a reproduction has to match, with the wall-clock left out.
+
+    `search_ms` varies run to run and means nothing to a reader trying to
+    reproduce a token count. Every other field is expected to be bit-identical:
+    the retrieval path the benchmark exercises is lexical and has no RNG, so
+    there is no seed to pin — but that is a claim worth checking rather than
+    asserting, which is what `--verify-determinism` does with this.
+    """
+    def strip(obj):
+        if isinstance(obj, dict):
+            return {k: strip(v) for k, v in obj.items() if k != "search_ms"}
+        if isinstance(obj, list):
+            return [strip(x) for x in obj]
+        return obj
+
+    return json.dumps(strip(results), sort_keys=True, default=str)
+
+
+def _measure_in_subprocess(repos: list[str]) -> Optional[list[dict]]:
+    """Re-measure `repos` in a fresh interpreter and return the raw results.
+
+    ⚠ The second pass has to be a new PROCESS, not a second loop in this one.
+    Repeating the loop in-process measures a WARM cache and is expected to
+    disagree: `search_symbols` adds a ``_meta.cache_hit`` field once a query has
+    been served, which costs 5 more tokens per query (~0.4% of the jMunch side).
+    That is a real cost an agent pays on a repeated query, and it is not what
+    this benchmark reports — every published number is a cold first call, which
+    is the pessimistic direction. Comparing two loops in one process would fail
+    this check forever for a reason that has nothing to do with reproducibility.
+
+    `timing_ms` also rides inside the counted payload. Its rendered width has
+    been stable across every run measured so far, but it is wall-clock and
+    nothing guarantees that; a failure here that points only at timing digits is
+    that, not a retrieval bug.
+    """
+    import subprocess
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "second.json"
+        proc = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), *repos, "--json", str(out)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if proc.returncode != 0 or not out.exists():
+            print(proc.stderr[-2000:], file=sys.stderr)
+            return None
+        return json.loads(out.read_text(encoding="utf-8"))
+
+
+def corpus_objection(state: dict) -> Optional[str]:
+    """Why this corpus must not back a published number, or None when it may."""
+    if state["pin"] == "unpinned":
+        return "no SHA pinned in tasks.json"
+    if state["pin"] == "unknown":
+        return "index records no git_head, so the pin cannot be checked"
+    if state["pin"] == "mismatch":
+        return (
+            f"indexed tree {str(state['git_head'])[:12]} != pinned "
+            f"{str(state['pinned_sha'])[:12]}"
+        )
+    if state["complete"] is not True:
+        return f"corpus completeness is {state['complete']!r}, not True"
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -228,6 +358,7 @@ def benchmark_repo(repo_str: str) -> dict:
     baseline_tokens = baseline["tokens"]
     file_count = baseline["files"]
     symbol_count = matched.get("symbol_count", 0)
+    state = corpus_state(store.load_index(owner2, name2), repo_str)
 
     task_rows = []
     for query in TASKS:
@@ -255,6 +386,7 @@ def benchmark_repo(repo_str: str) -> dict:
         "file_count": file_count,
         "symbol_count": symbol_count,
         "baseline_tokens": baseline_tokens,
+        "corpus": state,
         "tasks": task_rows,
     }
 
@@ -263,7 +395,10 @@ def benchmark_repo(repo_str: str) -> dict:
 # Reference artifact — the jCodeMunch side of every comparison harness
 # ---------------------------------------------------------------------------
 
-REFERENCE_SCHEMA = "jcm-benchmark-reference/v1"
+# v2 adds the corpus block: the upstream SHA each number was measured against
+# and whether that corpus was complete. v1 rows carried a file count and a
+# baseline token total with no way to say which tree produced them.
+REFERENCE_SCHEMA = "jcm-benchmark-reference/v2"
 REFERENCE_PATH = _REPO_ROOT / "benchmarks" / "jcm_reference.json"
 
 
@@ -317,6 +452,9 @@ def build_reference(results: list[dict]) -> dict:
             "baseline_tokens": res["baseline_tokens"],
             "file_count": res["file_count"],
             "symbol_count": res.get("symbol_count", 0),
+            # Which upstream tree, and was all of it indexed. Without this a
+            # reader can see that two runs disagree but not which corpus moved.
+            "corpus": res.get("corpus", {}),
         }
         grand_baseline += sum(t["baseline_tokens"] for t in valid)
         grand_jmunch += jmunch_total
@@ -454,6 +592,18 @@ def render_markdown(results: list[dict], tokenizer: str) -> str:
         lines.append(f"| Files indexed | **{res['file_count']:,}** |")
         lines.append(f"| Symbols extracted | **{res['symbol_count']:,}** |")
         lines.append(f"| Baseline tokens (all files) | **{res['baseline_tokens']:,}** |")
+        state = res.get("corpus") or {}
+        if state:
+            head = state.get("git_head") or "unknown"
+            marks = {"verified": "pinned", "mismatch": "**DRIFTED from pin**",
+                     "unpinned": "**unpinned**", "unknown": "**unverifiable**"}
+            lines.append(f"| Upstream commit | `{head[:12]}` ({marks.get(state.get('pin'), '?')}) |")
+            complete = state.get("complete")
+            lines.append(
+                "| Corpus complete | "
+                + ("yes" if complete is True else f"**{complete!r}**")
+                + " |"
+            )
         lines.append("")
 
         lines.append("| Query | Baseline&nbsp;tokens | jMunch&nbsp;tokens | Reduction | Ratio |")
@@ -545,6 +695,18 @@ def main():
             f"(default: {REFERENCE_PATH.relative_to(_REPO_ROOT).as_posix()})"
         ),
     )
+    parser.add_argument(
+        "--allow-unpinned",
+        action="store_true",
+        help="write the reference artifact even when a corpus is unpinned, "
+             "drifted, or of unknown completeness; stamps it provisional",
+    )
+    parser.add_argument(
+        "--verify-determinism",
+        action="store_true",
+        help="measure the whole corpus twice and report whether the token "
+             "counts are identical (they should be; there is no seed to pin)",
+    )
     args = parser.parse_args()
 
     repos = args.repos or DEFAULT_REPOS
@@ -567,6 +729,24 @@ def main():
             avg_r = sum(t["reduction_pct"] for t in valid) / len(valid) if valid else 0
             print(f"done ({elapsed:.1f}s)  avg reduction {avg_r:.1f}%")
         results.append(res)
+
+    if args.verify_determinism:
+        print("\n  re-measuring in a fresh process ...", end=" ", flush=True)
+        second = _measure_in_subprocess(repos)
+        if second is None:
+            print("FAILED to run")
+            return 1
+        identical = token_signature(results) == token_signature(second)
+        print("identical" if identical else "DIFFERENT")
+        if not identical:
+            print(
+                "Two processes measuring the same corpus produced different "
+                "token counts. Nothing in this run is reproducible until that "
+                "is found. (A warm-cache re-measure inside ONE process is "
+                "expected to differ — see _measure_in_subprocess.)",
+                file=sys.stderr,
+            )
+            return 1
 
     print()
     md = render_markdown(results, TOKENIZER)
@@ -592,7 +772,34 @@ def main():
                 file=sys.stderr,
             )
             return 1
+        objections = []
+        for res in results:
+            if "error" in res:
+                continue
+            why = corpus_objection(res.get("corpus") or {"pin": "unpinned", "complete": "unknown"})
+            if why:
+                objections.append(f"  {res['repo']}: {why}")
+        if objections and not args.allow_unpinned:
+            # A published artifact whose corpus cannot be named is the defect
+            # this gate exists to stop, not a warning to scroll past.
+            print(
+                f"\nRefusing to write {ref_path}: these corpora cannot back a "
+                "published number.\n" + "\n".join(objections) +
+                "\n  Fix the pins (see benchmarks/REPRODUCING.md), or pass "
+                "--allow-unpinned to stamp the artifact as provisional.",
+                file=sys.stderr,
+            )
+            return 1
+
         reference = build_reference(results)
+        if objections:
+            reference["provisional"] = True
+            reference["caveats"] = [o.strip() for o in objections]
+            print(
+                "\nWARNING: writing a PROVISIONAL artifact — "
+                f"{len(objections)} corpus objection(s) recorded in it.",
+                file=sys.stderr,
+            )
         ref_path.write_text(json.dumps(reference, indent=2) + "\n", encoding="utf-8")
         print(f"Reference artifact written to: {ref_path}")
         if sync_measured_artifact(reference):

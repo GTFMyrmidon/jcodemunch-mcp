@@ -1,39 +1,60 @@
 {
-  "schema": "jcm-benchmark-reference/v1",
-  "captured_at": "2026-07-29T11:14:04-0500",
-  "jcodemunch_version": "1.108.199",
+  "schema": "jcm-benchmark-reference/v2",
+  "captured_at": "2026-08-02T20:19:29-0500",
+  "jcodemunch_version": "1.108.222",
   "tokenizer": "cl100k_base",
   "workflow": "search_symbols(max_results=5) + get_symbol_source x3",
   "baseline_definition": "all indexed source files concatenated",
   "grand": {
-    "baseline_tokens": 5657930,
-    "jmunch_tokens": 25090,
+    "baseline_tokens": 5649490,
+    "jmunch_tokens": 23805,
     "task_runs": 15
   },
   "repos": {
     "expressjs/express": {
-      "avg_tokens_per_query": 985,
-      "jmunch_total_tokens": 4924,
+      "avg_tokens_per_query": 1007,
+      "jmunch_total_tokens": 5034,
       "queries": 5,
-      "baseline_tokens": 155960,
-      "file_count": 185,
-      "symbol_count": 200
+      "baseline_tokens": 154272,
+      "file_count": 182,
+      "symbol_count": 200,
+      "corpus": {
+        "git_head": "1faf228935aa0a13111f92c28ee795be64ce3f0f",
+        "pinned_sha": "1faf228935aa0a13111f92c28ee795be64ce3f0f",
+        "pin": "verified",
+        "complete": true,
+        "files_accepted": 182
+      }
     },
     "fastapi/fastapi": {
-      "avg_tokens_per_query": 2494,
-      "jmunch_total_tokens": 12468,
+      "avg_tokens_per_query": 2209,
+      "jmunch_total_tokens": 11046,
       "queries": 5,
       "baseline_tokens": 823784,
-      "file_count": 1000,
-      "symbol_count": 6722
+      "file_count": 1182,
+      "symbol_count": 6841,
+      "corpus": {
+        "git_head": "a64dfbbd21a445288ff583d58e1f646fe6baf3af",
+        "pinned_sha": "a64dfbbd21a445288ff583d58e1f646fe6baf3af",
+        "pin": "verified",
+        "complete": true,
+        "files_accepted": 1182
+      }
     },
     "gin-gonic/gin": {
-      "avg_tokens_per_query": 1540,
-      "jmunch_total_tokens": 7698,
+      "avg_tokens_per_query": 1545,
+      "jmunch_total_tokens": 7725,
       "queries": 5,
       "baseline_tokens": 151842,
       "file_count": 98,
-      "symbol_count": 1179
+      "symbol_count": 1179,
+      "corpus": {
+        "git_head": "75ccf94d605a05fe24817fc2f166f6f2959d5cea",
+        "pinned_sha": "75ccf94d605a05fe24817fc2f166f6f2959d5cea",
+        "pin": "verified",
+        "complete": true,
+        "files_accepted": 98
+      }
     }
   }
 }

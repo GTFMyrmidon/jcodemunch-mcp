@@ -38,8 +38,9 @@ COMPARISON_HARNESSES = ("run_rag_baseline.py", "run_odysseus_compare.py")
 # quietly restoring an unmeasured, size-proportional estimate.
 BANNED_NAMES = {"_jmunch_avg_tokens_for_repo"}
 
-REFERENCE_SCHEMA = "jcm-benchmark-reference/v1"
+REFERENCE_SCHEMA = "jcm-benchmark-reference/v2"
 CANONICAL_REPOS = {"expressjs/express", "fastapi/fastapi", "gin-gonic/gin"}
+TASKS = BENCH / "tasks.json"
 
 
 def _tree(name: str) -> ast.Module:
@@ -74,6 +75,111 @@ def test_reference_entry_records_the_index_state_it_was_measured_against(repo):
     assert entry["avg_tokens_per_query"] == round(
         entry["jmunch_total_tokens"] / entry["queries"]
     ), f"{repo}: the published average does not match its own measured total"
+
+
+# ---------------------------------------------------------------------------
+# The corpus behind the numbers (v1.108.222)
+#
+# A published number has to be able to answer two questions: which upstream
+# tree, and was all of it indexed. Neither was recorded before v2 of the
+# artifact. The fastapi index behind every number published through v1.108.221
+# held 1,000 of 1,182 eligible files, silently truncated by a file cap, with an
+# empty coverage record. What it dropped turned out to be worth zero tokens —
+# but that was established by measuring it, not by reading the artifact.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("repo", sorted(CANONICAL_REPOS))
+def test_every_benchmark_repo_pins_an_upstream_commit(repo):
+    """`index_repo` has no ref parameter, so an unpinned corpus is unreproducible."""
+    corpus = json.loads(TASKS.read_text(encoding="utf-8"))
+    entry = next((r for r in corpus["repos"] if r["id"] == repo), None)
+    assert entry is not None, f"{repo} is missing from tasks.json"
+    sha = entry.get("sha", "")
+    assert len(sha) == 40 and all(c in "0123456789abcdef" for c in sha), (
+        f"{repo}: tasks.json must pin a full 40-hex commit SHA, got {sha!r}. "
+        "Without it a re-run measures whatever the default branch points at today."
+    )
+
+
+@pytest.mark.parametrize("repo", sorted(CANONICAL_REPOS))
+def test_published_numbers_were_measured_against_the_pinned_tree(repo):
+    entry = json.loads(REFERENCE.read_text(encoding="utf-8"))["repos"][repo]
+    corpus = json.loads(TASKS.read_text(encoding="utf-8"))
+    pinned = next(r["sha"] for r in corpus["repos"] if r["id"] == repo)
+    state = entry.get("corpus")
+    assert isinstance(state, dict) and state, (
+        f"{repo}: the reference entry carries no corpus block. Regenerate with "
+        "`python benchmarks/harness/run_benchmark.py --reference`."
+    )
+    assert state.get("git_head") == pinned, (
+        f"{repo}: published numbers were measured against "
+        f"{state.get('git_head')!r} but tasks.json pins {pinned!r}. One of the "
+        "two is wrong; a number measured on a different tree is not comparable."
+    )
+    assert state.get("pin") == "verified"
+
+
+@pytest.mark.parametrize("repo", sorted(CANONICAL_REPOS))
+def test_published_numbers_come_from_a_complete_corpus(repo):
+    """`"unknown"` must fail here. It is the state fastapi was in for months."""
+    state = json.loads(REFERENCE.read_text(encoding="utf-8"))["repos"][repo]["corpus"]
+    assert state.get("complete") is True, (
+        f"{repo}: corpus completeness is {state.get('complete')!r}. An index with "
+        "no coverage record has not been found complete — it has not been "
+        "measured, and a truncated corpus publishes a baseline for a tree that "
+        "was never fully read."
+    )
+
+
+def test_a_published_artifact_is_never_provisional():
+    data = json.loads(REFERENCE.read_text(encoding="utf-8"))
+    assert not data.get("provisional"), (
+        "The committed artifact was written with --allow-unpinned: "
+        f"{data.get('caveats')}. Fix the corpus, do not commit the override."
+    )
+
+
+def test_the_harness_refuses_to_publish_an_unpinnable_corpus(rb):
+    """The gate, exercised rather than assumed."""
+    verified = {"git_head": "a" * 40, "pinned_sha": "a" * 40,
+                "pin": "verified", "complete": True}
+    assert rb.corpus_objection(verified) is None
+
+    assert "no SHA pinned" in rb.corpus_objection({**verified, "pin": "unpinned"})
+    assert "!=" in rb.corpus_objection(
+        {**verified, "pin": "mismatch", "git_head": "b" * 40}
+    )
+    assert "cannot be checked" in rb.corpus_objection({**verified, "pin": "unknown"})
+    unknown = rb.corpus_objection({**verified, "complete": "unknown"})
+    assert unknown and "'unknown'" in unknown, (
+        "an index with no coverage record must be rejected as unknown, not "
+        "silently accepted as complete"
+    )
+    assert rb.corpus_objection({**verified, "complete": False})
+
+
+def test_corpus_state_reads_an_absent_coverage_record_as_unknown(rb):
+    class _Ix:
+        git_head = "c" * 40
+        coverage = {}
+
+    state = rb.corpus_state(_Ix(), "some/repo", pins={"some/repo": "c" * 40})
+    assert state["pin"] == "verified"
+    assert state["complete"] == "unknown", (
+        "Collapsing a missing coverage record to True is the false-absence shape "
+        "this project keeps closing; collapsing it to False invents a defect."
+    )
+    assert rb.corpus_objection(state)
+
+
+def test_reproducing_doc_exists_and_names_every_pin():
+    doc = (BENCH / "REPRODUCING.md").read_text(encoding="utf-8")
+    corpus = json.loads(TASKS.read_text(encoding="utf-8"))
+    for entry in corpus["repos"]:
+        assert entry["sha"] in doc, (
+            f"REPRODUCING.md does not name the pinned SHA for {entry['id']}. "
+            "A reproduction recipe that omits the commit reproduces nothing."
+        )
 
 
 def test_provenance_artifact_matches_the_reference_run():

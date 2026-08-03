@@ -2,6 +2,83 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.222] - 2026-08-02 - the benchmark can now be re-run by someone who is not us
+
+Every published token-efficiency number was measured by hand, on one machine,
+against indexes built from whatever the benchmark repos' default branches
+pointed at that day. `index_repo` has no ref parameter, so there was no way to
+reproduce a published number even deliberately — and the documented recipe named
+a command (`jcodemunch index_repo …`) that has never existed in the CLI.
+
+**The corpora are now pinned by upstream commit** in `benchmarks/tasks.json`,
+re-checked on every run, and rebuilt weekly by
+`.github/workflows/benchmark.yml`. `benchmarks/REPRODUCING.md` is the recipe,
+verified against the actual CLI.
+
+⚠⚠ **What the pin found, stated plainly because it moves a published table
+against an earlier version of itself.** The `fastapi/fastapi` index behind every
+number published through v1.108.221 held **1,000 of 1,182 eligible files**,
+truncated by a file cap that was 1,000 at index time. Its coverage record was
+`{}` — not `complete: false`, not a warning, *empty* — so nothing in the
+artifact could say the corpus was partial. Meanwhile README.md described these
+same numbers as measured on "full un-capped indexes".
+
+Re-measuring against the whole tree: the 182 missing files are **all empty
+`__init__.py` files under `docs_src/`, worth zero tokens**. `baseline_tokens`
+for fastapi is 823,784 either way and no reduction figure moved. That is the
+good outcome and it is not the point — it took a measurement to establish, and
+until this release the artifact could not have told anyone which way it went.
+
+The reference artifact goes to **`jcm-benchmark-reference/v2`**, adding a
+`corpus` block per repo: the `git_head` measured, the SHA pinned, whether they
+match, and whether that corpus was complete. `--reference` now **refuses to
+overwrite the published artifact** when any repo is unpinned, drifted, or of
+unknown completeness; `--allow-unpinned` overrides and stamps the result
+`provisional` with the objections recorded inside it.
+
+⚠ **`complete` is tri-state, and `"unknown"` fails the gate.** An index with no
+coverage record has not been found complete — it has not been measured.
+Collapsing that to `True` is the false-absence shape this project keeps closing;
+collapsing it to `False` invents a defect. `fastapi` was in exactly that state.
+
+**`--verify-determinism`** measures the whole corpus twice and fails if the
+token counts differ. There is no seed to pin — the retrieval path the benchmark
+exercises is lexical and has no RNG — but that is now checked rather than
+asserted. ⚠ **The second pass has to be a fresh PROCESS.** The first version of
+this check looped in-process and failed: `search_symbols` adds a
+`_meta.cache_hit` field once a query has been served, costing 5 more tokens per
+query (~0.4% of the jCodeMunch side). Every published number is a cold first
+call, which is the pessimistic direction; a warm re-measure reading 0.4% worse
+is not a regression. Both conditions are now documented in `REPRODUCING.md`
+rather than being properties nobody had written down.
+
+Numbers, re-measured on the pinned corpora. Both sides ran against the **same
+retrieval code** — only the harness changed in this release — so the delta is
+the corpus, isolated from version drift:
+
+| | old corpus | pinned corpus |
+|---|---:|---:|
+| baseline tokens | 5,657,930 | 5,649,490 |
+| jCodeMunch tokens | 25,318 | 23,805 |
+| ratio | 223.5x | 237.3x |
+| reduction | 99.6% | 99.6% |
+
+⚠ The 99.6% headline is an **aggregate dominated by one repo** — fastapi is 73%
+of the baseline tokens — and `METHODOLOGY.md` now says so. Whether that or the
+median per-question figure is the honest headline is still open.
+
+Also fixed: `expressjs/express` carried 3 files in `source_files` that a fresh
+walk does not accept (185 → 182), and both `METHODOLOGY.md` and `README.md`
+described repo file counts as properties of the repo. They are properties of the
+*installation* — which is what the v1.108.221 capability certificate exists to
+record — and the docs now say so.
+
+New tests in `tests/test_benchmark_reference.py` (12 added, 44 total): every
+repo pins a 40-hex SHA, published numbers were measured against it, corpus
+completeness is `True` and not `"unknown"`, the committed artifact is never
+provisional, the objection gate is exercised rather than assumed, and
+`REPRODUCING.md` names every pin.
+
 ## [1.108.221] - 2026-08-02 - what this install could establish, not just what it saw
 
 `evidence/capability.py` — the `munch.corpus-capability/v1` certificate, bound

@@ -5,7 +5,7 @@
 > **Real results, live from production**
 > **621B+ tokens saved** · **83,000+ reporting installs** · **$3.1M+ in AI spend avoided** · **74,000+ kg CO₂ prevented**
 > Counter figures as of 2026-08-02, valued at the $5/MTok Claude Opus **input** rate. All four only grow, so read them as floors. Live at **[jcodemunch.com](https://jcodemunch.com/)**.
-> Benchmark: **99.6% average token reduction** (15 tasks / 3 repos, 99.9% peak; run 2026-07-29, v1.108.199).
+> Benchmark: **99.6% average token reduction** (15 tasks / 3 repos, 99.9% peak; run 2026-08-02, v1.108.222, corpus pinned to upstream commits).
 
 Works with **Autohand Code**, **Claude Code**, **Cursor**, **VS Code**, **Codex CLI**, **Continue**, **Windsurf**, and any MCP-compatible client.
 
@@ -209,14 +209,16 @@ Recent releases have made that retrieval workflow sharper and more useful in rea
 
 Measured with `tiktoken cl100k_base` across three public repos. Workflow: `search_symbols` (top 5) + `get_symbol_source` × 3 per query. Baseline: all source files concatenated (minimum cost for an agent that reads everything). [Full methodology and harness →](benchmarks/METHODOLOGY.md)
 
-| Repository | Files | Symbols | Baseline tokens | jCodeMunch tokens | Reduction |
-|------------|------:|--------:|----------------:|------------------:|----------:|
-| expressjs/express | 185 | 200 | 155,960 | 985 avg | **99.4%** |
-| fastapi/fastapi | 1,000 | 6,722 | 823,784 | 2,494 avg | **99.7%** |
-| gin-gonic/gin | 98 | 1,179 | 151,842 | 1,540 avg | **99.0%** |
-| **Grand total (15 task-runs)** | | | **5,657,930** | **25,090** | **99.6%** |
+| Repository | Commit | Files | Symbols | Baseline tokens | jCodeMunch tokens | Reduction |
+|------------|--------|------:|--------:|----------------:|------------------:|----------:|
+| expressjs/express | `1faf228935aa` | 182 | 200 | 154,272 | 1,007 avg | **99.3%** |
+| fastapi/fastapi | `a64dfbbd21a4` | 1,182 | 6,841 | 823,784 | 2,209 avg | **99.7%** |
+| gin-gonic/gin | `75ccf94d605a` | 98 | 1,179 | 151,842 | 1,545 avg | **99.0%** |
+| **Grand total (15 task-runs)** | | | | **5,649,490** | **23,805** | **99.6%** |
 
-Per-query results range from 99.0% to 99.9%. The 99.6% figure is the aggregate (run 2026-07-29, v1.108.199, full un-capped indexes). Run `python benchmarks/harness/run_benchmark.py` to reproduce, or `--reference` to also refresh `benchmarks/jcm_reference.json` — the artifact the RAG and Odysseus comparison harnesses read instead of carrying their own copy of these numbers.
+Per-query results range from 99.0% to 99.9%. The 99.6% figure is the aggregate (run 2026-08-02, v1.108.222), and it is dominated by one repo — fastapi contributes 73% of the baseline tokens. [How to reproduce it, commit by commit →](benchmarks/REPRODUCING.md)
+
+⚠ **This table changed on 2026-08-02, against an earlier version of itself.** Through v1.108.221 it said "full un-capped indexes" and reported fastapi at 1,000 files. The index actually held 1,000 of 1,182 eligible files, truncated by a file cap, and its coverage record was empty — so nothing in the published artifact could have caught it. Re-measuring the whole tree showed the 182 missing files were all empty `__init__.py` files worth zero tokens, so the reduction figures did not move. The corpus is now pinned to upstream commits and the harness refuses to publish a number measured against a truncated or unpinned tree.
 
 ### A/B test on production codebase
 

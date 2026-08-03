@@ -11,15 +11,31 @@ It does **not** measure answer quality, latency, or end-to-end task completion.
 
 ## Repositories Under Test
 
-All repositories are public and pinned to their default branches at the time
-of indexing. No filtering or cherry-picking of files was applied beyond
+All repositories are public and pinned to a specific upstream **commit**, not
+to a branch. No filtering or cherry-picking of files was applied beyond
 jcodemunch's standard skip patterns (node_modules, __pycache__, etc.).
 
-| Repository | Files Indexed | Symbols Extracted | Baseline Tokens |
-|------------|:------------:|:-----------------:|:--------------:|
-| expressjs/express | 185 | 200 | 155,960 |
-| fastapi/fastapi | 1,000 | 6,722 | 823,784 |
-| gin-gonic/gin | 98 | 1,179 | 151,842 |
+| Repository | Commit | Files Indexed | Symbols Extracted | Baseline Tokens |
+|------------|--------|:------------:|:-----------------:|:--------------:|
+| expressjs/express | `1faf228935aa` | 182 | 200 | 154,272 |
+| fastapi/fastapi | `a64dfbbd21a4` | 1,182 | 6,841 | 823,784 |
+| gin-gonic/gin | `75ccf94d605a` | 98 | 1,179 | 151,842 |
+
+The commits are pinned in [`tasks.json`](tasks.json) and re-checked on every
+run: the harness refuses to overwrite the published artifact when a measured
+index reports a different `git_head`, or when its corpus completeness is
+anything other than `True`.
+
+⚠ **The fastapi row above changed on 2026-08-02, and the reason is worth
+stating.** Every number published through v1.108.221 was measured against a
+`fastapi/fastapi` index holding **1,000 of 1,182 eligible files** — truncated
+by a file cap that was 1,000 at index time, with an empty coverage record and
+nothing in the artifact able to say so. Re-measuring against the whole tree
+showed the 182 dropped files were all empty `__init__.py` files under
+`docs_src/`, worth zero tokens: `baseline_tokens` for fastapi is 823,784 either
+way and the headline never moved. That is the good outcome, not the point. The
+point is that it took a measurement to find out, and until v1.108.222 the
+artifact could not have told anyone.
 
 ## Query Corpus
 
@@ -72,16 +88,25 @@ non-ASCII content or heavily minified files. The `_meta` envelope includes
 
 ## Reproducing Results
 
+Full instructions, including the pinned upstream commits, are in
+[`REPRODUCING.md`](REPRODUCING.md). The short form:
+
 ```bash
 pip install jcodemunch-mcp tiktoken
 
-# Index the three repos
-jcodemunch index_repo expressjs/express
-jcodemunch index_repo fastapi/fastapi
-jcodemunch index_repo gin-gonic/gin
+# Index the three repos from clones checked out at the SHAs in tasks.json.
+# `index_repo` is deliberately NOT used here: it has no ref parameter and
+# always fetches whatever the default branch points at today, so it cannot
+# reproduce a pinned corpus.
+jcodemunch-mcp index ./express --no-ai-summaries
+jcodemunch-mcp index ./fastapi --no-ai-summaries
+jcodemunch-mcp index ./gin     --no-ai-summaries
 
 # Run the benchmark
 python benchmarks/harness/run_benchmark.py
+
+# Check your machine reproduces its own run before comparing to ours
+python benchmarks/harness/run_benchmark.py --verify-determinism
 
 # Write to file
 python benchmarks/harness/run_benchmark.py --out benchmarks/results.md
@@ -173,11 +198,16 @@ details.
 ## Common Misreadings
 
 **"The claim is up to 99%."**
-The primary claim is **99.6% average** across all 15 task-runs (5,657,930 baseline tokens →
-25,090 jCodeMunch tokens). Individual queries reach 99.9% on large repos with tight symbol
+The primary claim is **99.6% average** across all 15 task-runs (5,649,490 baseline tokens →
+23,805 jCodeMunch tokens). Individual queries reach 99.9% on large repos with tight symbol
 matches (e.g., `error exception` on fastapi/fastapi). The 99.6% aggregate
-is the honest headline across the current index state (express 185 files, fastapi 1,000 files,
-gin 98 files; run 2026-07-29, v1.108.199).
+is the honest headline across the pinned corpus above (express 182 files, fastapi 1,182 files,
+gin 98 files; run 2026-08-02, v1.108.222).
+
+⚠ It is an **aggregate**, and it is dominated by one repo: fastapi contributes
+73% of the baseline tokens. The aggregate ratio (237.3x) is therefore mostly a
+statement about fastapi. Whether that or the median per-question ratio is the
+honest headline is an open question, not a settled one.
 
 Every number above is re-measured by the same run, and the machine-readable copy lives in
 [`jcm_reference.json`](jcm_reference.json). The comparison harnesses in `harness/` read that
