@@ -312,25 +312,55 @@ class FreshnessProbe:
         Every ``unknown`` below is a comparison that could not be made. None of
         them may answer ``fresh``: that would assert current-snapshot
         equivalence off a measurement that never happened.
+
+        ⚠⚠ **Per-file evidence outranks the repo-wide SHA** (v1.108.225,
+        @rknighton #405). ``repo_is_stale`` used to short-circuit here, so one
+        commit touching one file answered ``stale_index`` for *every* file in
+        the repository — including files whose recorded mtime proves they are
+        byte-identical to what was indexed. That is not conservatism: ``unknown``
+        would cost nothing, but ``stale_index`` is a positive claim that the
+        indexed content no longer describes the file, made against a measurement
+        we already had and did not read. It also made the signal carry no
+        information exactly where it should discriminate — on a repository under
+        active commit, every row read ``stale_index`` until the next full
+        reindex, which is the cost side of #395.
+
+        The repo-wide signal still decides the **label** for a file that did
+        move, so a committed change reads ``stale_index`` rather than degrading
+        to ``edited_uncommitted``, and it remains available whole on
+        ``repo_freshness`` / ``_meta.freshness.repo_is_stale``.
+
+        ⚠ So ``repo_is_stale: true`` alongside rows reading ``fresh`` is now a
+        legitimate, non-contradictory payload: the repository moved, these files
+        did not. A reader expecting "stale repo implies stale rows" is reading
+        the old contract.
+
+        ⚠ **Disclosed residual: mtime is a proxy for content.** Checking a file
+        out and back again advances its mtime without changing its bytes, so it
+        reads ``stale_index`` when the content matches. That is the safe
+        direction and is what this already did for the uncommitted case. The
+        exact answer is ``git diff --name-only <index_sha>..HEAD``, one
+        subprocess per call rather than a stat, and it is not paid here.
         """
-        if self.repo_is_stale:
-            return _STALE
         if not file_rel:
             # No path to stat, so nothing to compare. An entry that carries no
             # file cannot be attested either way.
             return _UNKNOWN_FILE
         mtime_now = self._file_mtime(file_rel)
+        # Prefer per-file indexed mtime when available (more accurate than
+        # the single index-wide indexed_at timestamp) AND more specific than
+        # the repo-wide SHA, which is why this now runs before it.
+        per_file_indexed = self._indexed_mtimes_s.get(file_rel)
+        if mtime_now is not None and per_file_indexed is not None:
+            if mtime_now > per_file_indexed + 1.0:
+                return _STALE if self.repo_is_stale else _EDITED
+            return _FRESH
+        if self.repo_is_stale:
+            return _STALE
         if mtime_now is None:
             # No source root, the root moved, the file is gone from the tree,
             # or the stat raised. All four are "could not find out".
             return _UNKNOWN_FILE
-        # Prefer per-file indexed mtime when available (more accurate than
-        # the single index-wide indexed_at timestamp).
-        per_file_indexed = self._indexed_mtimes_s.get(file_rel)
-        if per_file_indexed is not None:
-            if mtime_now > per_file_indexed + 1.0:
-                return _EDITED
-            return _FRESH
         # We have a current mtime but no baseline to measure it against: the
         # index recorded no per-file mtime AND no parseable indexed_at.
         if not self._indexed_ts:

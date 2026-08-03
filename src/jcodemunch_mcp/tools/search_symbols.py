@@ -106,6 +106,18 @@ def _result_cache_get(key: tuple) -> Optional[dict]:
                 _v = result["_meta"].get("verdict")
                 if isinstance(_v, dict):
                     result["_meta"]["verdict"] = dict(_v)
+            # The ROWS need the same treatment, and for the same reason
+            # (v1.108.225, @rknighton #404). Annotators downstream of this
+            # return — `_freshness`, `_runtime_confidence` — write per-row IN
+            # PLACE. With a shared list of shared dicts those writes land in the
+            # stored entry and replay to every later hit: the `evidence_ref`
+            # leak of #377 item 3, one level down. Re-annotating a cache hit
+            # without this copy would reintroduce it.
+            _rows = result.get("results")
+            if isinstance(_rows, list):
+                result["results"] = [
+                    dict(_r) if isinstance(_r, dict) else _r for _r in _rows
+                ]
             return result
     return None
 
@@ -721,6 +733,35 @@ def search_symbols(
                 _why = _subject.changed(_cached_state, _now_state)
                 if _why:
                     _subject.revalidate_verdict(_cv, _why)
+                    # The verdict now discloses that the subject moved — but the
+                    # rows still carry the `_freshness` computed when this entry
+                    # was FILLED, and `_meta.freshness` still summarises that
+                    # pass. Left alone, one payload asserts both
+                    # `revalidated.stale_cache: true` and `_freshness: "fresh"`,
+                    # and the field an agent reads to decide whether to trust the
+                    # content is the one that is wrong (@rknighton #404).
+                    #
+                    # ⚠ This is NOT a reversal of the v1.108.178 cached-positive
+                    # policy: the results really were in the index at that
+                    # generation and they keep serving. The defect is that the
+                    # disclosure reached `verdict` and stopped. Re-annotating
+                    # costs the same few stats that policy already accepts and
+                    # does not re-run the search.
+                    #
+                    # Safe to annotate in place: `_result_cache_get` copies the
+                    # rows, so this cannot write through to the stored entry.
+                    from ..retrieval.freshness import FreshnessProbe as _RevalFP
+                    _reval_rows = _cached.get("results") or []
+                    _reval_probe = _RevalFP(
+                        source_root=getattr(index, "source_root", "") or None,
+                        indexed_at=getattr(index, "indexed_at", ""),
+                        index_sha=getattr(index, "git_head", None),
+                        file_mtimes=getattr(index, "file_mtimes", None),
+                    )
+                    _reval_probe.annotate(_reval_rows)
+                    _cached.setdefault("_meta", {})["freshness"] = (
+                        _reval_probe.summary(_reval_rows)
+                    )
             except Exception:
                 logger.debug("Cached-result revalidation failed", exc_info=True)
             # Cache hit — return immediately with fresh timing.

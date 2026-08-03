@@ -2,6 +2,86 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.225] - 2026-08-03 - freshness stops contradicting itself, twice
+
+Reported by **@rknighton** in
+[#405](https://github.com/jgravelle/jcodemunch-mcp/issues/405) and
+[#404](https://github.com/jgravelle/jcodemunch-mcp/issues/404) — a matched pair,
+each with a reproduction, a patch, and a measured before/after. One is a per-file
+classifier answering a per-file question with a repo-wide fact; the other is a
+cached row keeping an answer computed for a different moment.
+
+**#405 — the repo-wide SHA short-circuited per-file evidence.**
+`FreshnessProbe.classify()` returned `stale_index` the instant the index SHA
+differed from live HEAD — ten lines above the per-file mtime comparison that
+would have shown the file byte-identical to what was indexed. One commit
+touching one file therefore marked **every** file in the repository stale.
+
+⚠ **This is not the safe-direction caution it looks like.** `unknown` costs
+nothing and invites a check. `stale_index` is a *positive claim* that the indexed
+content no longer describes the file, and it invites a reindex — asserted here
+against a measurement we had already taken and did not read. On a repository
+under active commit, every row of every `search_symbols` / `get_symbol_source` /
+`get_context_bundle` / `get_ranked_context` result read `stale_index` until the
+next full reindex, so the signal carried no information exactly where it should
+discriminate. That is the cost side of
+[#395](https://github.com/jgravelle/jcodemunch-mcp/issues/395).
+
+Per-file evidence now runs first. The repo-wide signal still decides the **label**
+for a file that did move, so a committed change reads `stale_index` rather than
+degrading to `edited_uncommitted`, and it stays available whole on
+`repo_freshness` / `_meta.freshness.repo_is_stale`.
+
+⚠⚠ **Contract change worth reading twice: `repo_is_stale: true` alongside rows
+reading `fresh` is now a legitimate, non-contradictory payload.** The repository
+moved; those files did not. Anyone expecting "stale repo implies stale rows" is
+reading the old contract. `test_the_repo_level_fact_is_still_reported` pins it.
+
+**#404 — a revalidated cache hit still reported `fresh`.** On a cache hit whose
+subject had moved, the verdict was re-checked and correctly disclosed
+`revalidated.stale_cache: true` — while the rows kept the `_freshness` stamped
+when the entry was filled and `_meta.freshness` still summarised that pass. One
+payload asserted both, and the field an agent reads to decide whether to trust
+the content was the wrong one. The failure direction was unsafe: it vouched for
+stale content rather than declining to vouch for good content.
+
+⚠ **Not a reversal of the v1.108.178 cached-positive policy.** Those results
+really were in the index at that generation and they keep serving. The defect was
+that the disclosure reached `verdict` and stopped. Re-annotating costs the same
+few stats that policy already accepts and does not re-run the search.
+
+⚠ **`_result_cache_get` now copies the rows, and that half is load-bearing rather
+than tidying.** It copied the top level and `_meta` but not the row dicts, so
+annotating them in place would write through to the stored entry and replay to
+every later hit — the `evidence_ref` leak of #377 item 3, one level down.
+Re-annotating without the copy would have reintroduced it.
+`test_a_revalidated_hit_does_not_corrupt_later_hits` guards it.
+
+**A third correction fell out of #405's reorder and is disclosed here because
+nobody asked for it.** An entry carrying no `file` at all, on a stale repo, used
+to report `stale_index`; it now reports `unknown`. `stale_index` is a positive
+claim about a file whose path we do not even have, and the function's own
+docstring already said such an entry "cannot be attested either way". Pinned by
+`test_empty_file_field_is_unknown_not_fresh`, which fails on v1.108.224.
+
+Measured: 8 of the 14 new tests fail on v1.108.224 and all pass here. The 6 that
+pass on both are the guards — both fixes make a signal say `fresh` more often,
+and both could be "passed" by always saying it.
+
+Two guards are ours rather than the reports': **`file_mtimes` can be sparse**, so
+a file present in the index but absent from it must not inherit a sibling's
+exemption (`test_a_file_with_no_recorded_mtime_still_falls_back`), and the
+v1.108.209 invariant is re-asserted on the branch the reorder actually moved
+(`test_missing_file_on_a_stale_repo_is_not_reported_fresh`) — a recorded mtime
+for a file no longer on disk must not reach `fresh`.
+
+⚠ **Residual, disclosed rather than fixed: mtime is a proxy for content.**
+Checking a file out and back again advances its mtime without changing its bytes,
+so it reads `stale_index` when the content matches. That is the safe direction
+and is what the uncommitted case already did. The exact answer is
+`git diff --name-only <index_sha>..HEAD`, one subprocess per call rather than a
+stat, and it is not paid here.
+
 ## [1.108.224] - 2026-08-02 - `verify_against="git_sha"` compares like with like
 
 Reported by **@rknighton** in
