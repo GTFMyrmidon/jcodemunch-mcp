@@ -55,6 +55,64 @@ or `.gitignore` rule).
 
 ---
 
+## Ranking feels diluted after indexing a whole project directory
+
+**Symptom:** You point jcodemunch at a project root rather than at the code
+itself. Search quality drops, results are crowded by files you did not mean to
+index, and some queries come back empty. Re-indexing the package or crate alone
+fixes it.
+
+**Cause — usually not the one people reach for.** jcodemunch has **no filetype
+ignore list**, because it works the other way round: a **157-extension
+allow-list across 77 languages** (`parser/languages.py`). Anything unrecognised
+is already dropped, counted as `wrong_extension`. That means `.md`, `.rst`,
+`.txt`, `.html`, `.ini`, `.cfg`, `.csv`, `.env` and every backup suffix
+(`.bak`, `.old`, `.orig`, `.backup`) are **never indexed today**. Adding a
+default ignore list for "non-source extensions" would therefore change very
+little.
+
+Two things do dilute, and neither is an extension problem:
+
+1. **Config and data files with legitimate source extensions.** `.json`,
+   `.yaml`, `.yml`, `.toml`, `.xml`, `.sql`, `.sh` are deliberately indexed —
+   they carry manifests, CI definitions and framework wiring that
+   `get_project_intel` and route detection rely on.
+2. **Duplicate source trees.** A `backup/`, `old/`, `archive/`, `copy/` or
+   vendored directory holding real `.py` / `.go` / `.ts` files gets indexed
+   alongside the originals, so the same symbols appear twice and compete with
+   each other. This is a **ranking** problem wearing an extension problem's
+   clothes, it is the more common cause, and those directory names are not in
+   the built-in skip list.
+
+**Fix, most effective first:**
+
+1. **Scope the index.** Point at the package, crate or module rather than the
+   repository root, or pass `paths=["src", "lib"]` to `index_folder` to index
+   only named subdirectories. Cheapest fix and usually sufficient.
+2. **Exclude duplicate trees by path**, not by extension:
+
+   ```bash
+   export JCODEMUNCH_EXTRA_IGNORE_PATTERNS="backup/,old/,archive/,**/vendor-copy/**"
+   ```
+
+   Gitignore-style, comma-separated or a JSON array. Per call, pass
+   `extra_ignore_patterns=[...]` to `index_folder`.
+3. **Read `discovery_skip_counts` in the index response.** It reports which rule
+   dropped what — `extra_ignore`, `gitignore`, `wrong_extension`, `too_large`,
+   `secret`, `binary`. If the count you expect is zero, the rule you assumed was
+   filtering is not the one doing the work.
+4. `.gitignore` is already honoured; a tree ignored by git is not indexed.
+
+⚠ **`wrong_extension` answers two different questions and cannot tell them
+apart:** "that file is not source code" (a scope decision) and "this
+installation cannot parse that language" (a capability gap). Since
+`tree-sitter-language-pack` 1.x stopped bundling grammars, what a given install
+can parse depends on its grammar pack, not on the repository. If a language you
+expected is missing rather than merely crowded out, check that first — see
+`evidence/capability.py`.
+
+---
+
 ## AI Summarization Not Working
 
 **Symptom:** All symbols have generic "signature fallback" summaries instead
