@@ -2,6 +2,79 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.226] - 2026-08-03 - the dead-code check stops calling live code dead
+
+Reported by **@rknighton** in
+[#406](https://github.com/jgravelle/jcodemunch-mcp/issues/406) and
+[#407](https://github.com/jgravelle/jcodemunch-mcp/issues/407), each with a
+reproduction, a patch, and a verified before/after.
+
+**#406(1) — `check_references` discarded the defining FILE when only the
+DEFINITION should be excluded.** `_check_single` built `defining_files` from
+every file containing a symbol of the matching name and `continue`d past those
+files entirely. The intent — "finding the name in the defining file is not a
+reference" — was right; the implementation threw away the file, so every
+**same-file call site** was lost. A helper defined and used in one module
+reported `is_referenced: false`, which is exactly the question the tool exists
+to answer, answered backwards. Single-file modules were hit hardest.
+
+Now the definition's own **line span** is excluded, as a list of spans per file
+— @rknighton measured 102 duplicate `(file, name)` pairs on a real 1837-symbol
+index (overloads, nested defs), so one span per file would leave the others
+counting their own signatures. A self-recursive call sits inside the span and
+stays excluded, which is correct for the dead-code question.
+
+⚠⚠ **A regression this fix would have introduced, caught by an EXISTING test
+rather than a new one.** A symbol carrying no usable `line` gives nothing to
+exclude, so counting its file reports the **definition as a reference to
+itself** — trading a false negative for a false positive on exactly the indexes
+with the least metadata. `tests/test_check_references.py::test_no_import_data_searches_content`
+went 1 → 2 references and said so. Where the span evidence is missing, the file
+is now skipped whole (the pre-.226 behaviour) instead of guessed at. Unknown is
+a third bucket, not a default.
+
+**#406(2) — the TaskCompleted hook read a key that has never existed.**
+`run_taskcomplete` tested `ref_result.get("total_references", 0) == 0` against a
+payload that carries no `total_references` in either singular or batch mode, so
+it was **always true**: every symbol the hook inspected was labelled
+unreferenced, and the first five were rendered into the agent-facing message.
+Same defect class as #338 — a caller reading a shape the callee does not
+produce; that sweep (`7d0e996`) moved `check_edit_safe` / `check_delete_safe`
+onto the batch form and did not reach `cli/hooks.py`. A test now fails on any
+**read** of that key anywhere in the package.
+
+⚠⚠ **And the one neither issue reported: `check_delete_safe` said
+`safe_to_delete` for a symbol called one line below it.** Both safety preflights
+skipped `ref_file == target_file`, which is #406's defect one layer up — the
+file discarded where only the definition should be. **The skip was unreachable
+before this release**, because `check_references` never returned a reference in
+the defining file, so nothing could show it was wrong. Measured on the two-
+function module in the new tests: `helper`, called by `main()`, came back
+`safe_to_delete` with **zero blockers**. It now returns `internal_uses_blocking`
+with an `internal_reference` blocker, while a genuinely unused symbol in the
+same index still clears as `safe_to_delete`. The `internal_reference` machinery
+already existed; nothing but the skip was stopping it.
+
+This is a **verdict change in a safety tool**, in the safe direction: symbols
+with same-file callers move from `safe_to_delete` to a blocking tier.
+`check_edit_safe` takes the same correction — for an edit preflight, the
+same-file caller is the one most likely to break first.
+
+**#407 — `httpx.AsyncClient()` defaults `follow_redirects=False`.** GitHub
+answers a renamed or transferred repository with `301 Moved Permanently`, which
+does not match the `(403, 429)` retry branch and fell through to
+`raise_for_status()`, so **every renamed repo was simply unindexable**. Both
+call sites in `tools/index_repo.py` now pass `follow_redirects=True`, matching
+`cli/install_pack.py` and `org/license.py`.
+
+Safe with a token, as @rknighton established: httpx drops the `Authorization`
+header on a cross-origin redirect (anything but a bare HTTP→HTTPS upgrade), and
+GitHub's rename redirects stay on `api.github.com` regardless. A test drives the
+real `fetch_repo_tree` through a `MockTransport` that 301s, and asserts the
+second request actually goes to `/repositories/<id>/`.
+
+Measured: 7 of the new tests fail on v1.108.225 and all 18 pass here.
+
 ## [1.108.225] - 2026-08-03 - freshness stops contradicting itself, twice
 
 Reported by **@rknighton** in

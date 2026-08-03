@@ -111,7 +111,17 @@ async def fetch_repo_tree(owner: str, repo: str, token: Optional[str] = None) ->
         headers["Authorization"] = f"token {token}"
 
     max_retries = 3
-    async with httpx.AsyncClient() as client:
+    # follow_redirects (#407, @rknighton): GitHub answers a RENAMED or
+    # TRANSFERRED repository with 301 to /repositories/<id>/..., and httpx
+    # defaults this to False. A 301 does not match the (403, 429) retry branch
+    # below, so it fell through to raise_for_status() and surfaced as an
+    # indexing failure — every renamed repo was simply unindexable.
+    #
+    # Safe with a token: httpx drops the Authorization header on a cross-origin
+    # redirect (anything but a bare HTTP->HTTPS upgrade), so the token cannot
+    # leak to another host, and GitHub's rename redirects stay on api.github.com
+    # regardless. Matches install_pack.py and org/license.py.
+    async with httpx.AsyncClient(follow_redirects=True) as client:
         for attempt in range(max_retries):
             response = await client.get(url, params=params, headers=headers)
             if response.status_code in (403, 429):
@@ -277,7 +287,9 @@ async def fetch_file_content(
     if token:
         headers["Authorization"] = f"token {token}"
     
-    async with httpx.AsyncClient() as client:
+    # follow_redirects: same reason as fetch_repo_tree (#407). A renamed repo
+    # 301s here too, and this call site has no retry branch at all.
+    async with httpx.AsyncClient(follow_redirects=True) as client:
         response = await client.get(url, headers=headers)
         response.raise_for_status()
         return response.text

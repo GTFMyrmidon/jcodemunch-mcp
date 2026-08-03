@@ -49,22 +49,62 @@ def _check_single(
     import_count = len(import_references)
 
     # ── Content-level check ─────────────────────────────────────────────────
-    # Find files where this identifier is *defined* (via symbol index)
-    # so we can skip them — finding the name in the defining file is not a "reference".
-    defining_files: set[str] = set()
+    # Exclude the definition's own LINE SPAN, not its whole file (#406,
+    # @rknighton).
+    #
+    # ⚠⚠ The intent — "finding the name in the defining file is not a
+    # reference" — was right; the implementation discarded the file rather than
+    # the definition, so every SAME-FILE call site was lost and this tool
+    # answered `is_referenced: false` for symbols that are demonstrably called.
+    # Single-file modules were hit hardest: a helper defined and used in one
+    # module read as dead code, which is the exact question this tool exists to
+    # answer.
+    #
+    # A list of spans per file, not one span: 102 duplicate `(file, name)` pairs
+    # were measured on a real 1837-symbol index (overloads, nested defs), so one
+    # span per file would leave the others counting their own signatures.
+    #
+    # A self-recursive call sits inside the definition span and stays excluded,
+    # which is correct for the dead-code question — a function calling itself is
+    # not evidence anyone else uses it.
+    # ⚠ `unspanned_files` is the third bucket, and it is not optional. A symbol
+    # carrying no usable `line` gives us nothing to exclude, so counting its
+    # file would report the DEFINITION as a reference to itself — trading this
+    # fix's false negative for a false positive on exactly the indexes with the
+    # least metadata (older indexes, and any writer that omits `line`). Where
+    # the evidence is missing we degrade to the pre-v1.108.226 behaviour and
+    # skip the file, which is the honest answer rather than a guess.
+    defining_spans: dict[str, list[tuple[int, int]]] = {}
+    unspanned_files: set[str] = set()
     for sym in index.symbols:
-        if sym.get("name", "").lower() == ident_lower:
-            file_path = sym.get("file", "")
-            if file_path:
-                defining_files.add(file_path)
+        if sym.get("name", "").lower() != ident_lower:
+            continue
+        file_path = sym.get("file", "")
+        if not file_path:
+            continue
+        start_line = sym.get("line")
+        if not start_line:
+            unspanned_files.add(file_path)
+            continue
+        try:
+            lo = int(start_line)
+            hi = int(sym.get("end_line") or lo)
+        except (TypeError, ValueError):
+            unspanned_files.add(file_path)
+            continue
+        # An inverted or absent span must still hide the declaration line
+        # itself; `lo > hi` would match nothing and report the signature as a
+        # reference to itself.
+        defining_spans.setdefault(file_path, []).append((lo, max(lo, hi)))
 
     content_references = []
 
     if search_content:
         content_dir = store._content_dir(owner, name)
         for file_path in index.source_files:
-            if file_path in defining_files:
+            if file_path in unspanned_files:
                 continue
+            spans = defining_spans.get(file_path, ())
 
             full_path = store._safe_content_path(content_dir, file_path)
             if not full_path or not full_path.exists():
@@ -78,11 +118,15 @@ def _check_single(
 
             file_matches = []
             for line_index, line in enumerate(content.split("\n")):
-                if ident_lower in line.lower():
-                    file_matches.append({
-                        "line": line_index + 1,
-                        "text": line.rstrip()[:200],
-                    })
+                if ident_lower not in line.lower():
+                    continue
+                line_no = line_index + 1
+                if any(lo <= line_no <= hi for lo, hi in spans):
+                    continue
+                file_matches.append({
+                    "line": line_no,
+                    "text": line.rstrip()[:200],
+                })
 
             if file_matches:
                 content_references.append({"file": file_path, "matches": file_matches})

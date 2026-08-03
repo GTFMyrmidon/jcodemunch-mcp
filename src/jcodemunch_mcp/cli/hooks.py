@@ -735,7 +735,17 @@ def run_taskcomplete() -> int:
                 for sym_name in edited_syms:
                     ref_result = check_references(repo_id, identifier=sym_name, max_content_results=3)
                     if ref_result and not ref_result.get("error"):
-                        if ref_result.get("total_references", 0) == 0:
+                        # `total_references` is a key check_references has never
+                        # returned, in either singular or batch mode (#406,
+                        # @rknighton) — so `.get(..., 0) == 0` was ALWAYS true
+                        # and this diagnostic labelled every symbol it inspected
+                        # as unreferenced, then rendered the first five into the
+                        # agent-facing message. Same defect class as #338: a
+                        # caller reading a shape the callee does not produce.
+                        # That sweep (7d0e996) moved check_edit_safe /
+                        # check_delete_safe onto the batch form and did not
+                        # reach this file.
+                        if not ref_result.get("is_referenced"):
                             diag.setdefault("unreferenced_symbols", []).append(sym_name)
         except Exception:
             pass

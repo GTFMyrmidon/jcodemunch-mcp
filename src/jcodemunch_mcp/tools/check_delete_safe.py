@@ -261,8 +261,21 @@ def check_delete_safe(
         for entry in ref_out.get("results", []) or []:
             for ref in entry.get("content_references", []) or []:
                 ref_file = ref.get("file", "")
-                if not ref_file or ref_file == target_file:
+                if not ref_file:
                     continue
+                # ⚠⚠ `ref_file == target_file` used to be skipped here, and it
+                # was #406's defect one layer up: it discarded the FILE when the
+                # thing that must be excluded is the DEFINITION. Before
+                # v1.108.226 the skip was unreachable — `check_references` never
+                # returned a reference in the defining file — so nothing showed
+                # it was wrong. Measured on the two-function module in
+                # tests/test_v1_108_226.py: `helper`, called by `main()` one line
+                # below it, came back **`safe_to_delete` with zero blockers**.
+                # That is this tool's whole job, answered backwards.
+                #
+                # `check_references` now excludes the definition's own line span,
+                # so a reference reported in `target_file` is a genuine
+                # same-file use and belongs in the count.
                 if _is_test_file(ref_file):
                     test_ref_count += 1
                     if test_ref_count <= 3:

@@ -155,8 +155,13 @@ def check_edit_safe(
         for entry in ref_out.get("results", []) or []:
             for ref in entry.get("content_references", []) or []:
                 ref_file = ref.get("file", "")
-                if not ref_file or ref_file == target_file:
+                if not ref_file:
                     continue
+                # Same correction as check_delete_safe (#406, v1.108.226): the
+                # skip discarded the defining FILE when only the DEFINITION must
+                # be excluded, and `check_references` now does that exclusion by
+                # line span. A same-file caller is a real caller — for an edit
+                # preflight it is the one most likely to break first.
                 if _is_test_file(ref_file):
                     test_ref_count += 1
                 else:
