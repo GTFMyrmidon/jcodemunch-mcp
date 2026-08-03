@@ -108,7 +108,6 @@ def _runtime_hits_for(
 ) -> Optional[int]:
     """Best-effort runtime hit count over the indexed trace window."""
     try:
-        import sqlite3  # noqa: PLC0415
         db_path = store._sqlite._db_path(owner, name)
         if not db_path.exists():
             return None

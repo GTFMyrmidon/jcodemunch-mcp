@@ -90,7 +90,6 @@ def _detect_entry_point(target: dict) -> Optional[str]:
 def _runtime_hits(store: IndexStore, owner: str, name: str, symbol_id: str) -> Optional[int]:
     """Best-effort runtime hit count over the indexed trace window."""
     try:
-        import sqlite3  # noqa: PLC0415
         db_path = store._sqlite._db_path(owner, name)
         if not db_path.exists():
             return None
@@ -119,7 +118,6 @@ def _runtime_data_present(store: IndexStore, owner: str, name: str) -> bool:
     populated.
     """
     try:
-        import sqlite3  # noqa: PLC0415
         db_path = store._sqlite._db_path(owner, name)
         if not db_path.exists():
             return False
