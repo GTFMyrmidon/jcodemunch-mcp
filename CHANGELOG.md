@@ -2,6 +2,77 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.230] - 2026-08-03 - the dead-code signals report what they measured
+
+Instrument only. **No verdict and no confidence value changes in this release**,
+and a test asserts it: `confidence` is still `len(signals) / 3.0`, and the
+flagged set on this repository is byte-identical to 1.108.229. The weighting fix
+for [#408](https://github.com/jgravelle/jcodemunch-mcp/issues/408) follows
+separately, so it can be read against a measured before rather than argued from
+first principles.
+
+`_meta.signal_diagnostics` now reports, per call:
+
+- `fire_rate` — the fraction of **analysed** symbols each signal fired on.
+  A signal that fires on everything is a constant, not a discriminator, and it
+  still contributes its full third to every score. Counted over analysed rather
+  than returned symbols, so the reading does not move with `min_confidence`.
+- `cofire_rate` — how often each pair fired together, which is the testable form
+  of the docstring's "three independent signals" claim.
+- `uninformative` — signals whose rate is degenerate (0.0 or 1.0).
+- `entry_points_detected` and `degraded`, the machine-readable form of the prose
+  in `framework_warning`.
+
+### What the instrument measured, across 31 indexed repositories
+
+Python, Go, TypeScript, JavaScript and Rust, at the default `min_confidence`.
+
+⚠⚠ **The tool flags a mean 57.3% of all analysed functions as dead code.** gin
+and seaborn return **100.0%** — literally every function they were asked about.
+jdocmunch 96.8%, langchain 93.1%, authlib 85.2%, django 67.1%.
+
+⚠ **Two claims on #408 did not survive contact with the data, and both were
+ours.**
+
+**The `framework_warning` trigger is wrong, not just its consequence.** The issue
+attributes the degradation to `entry_point_count == 0`, which is 3 of 31 repos.
+But `unreachable_file` fires on 100% of symbols in **6 of 31**, including
+langchain (7 entry points detected), seaborn (1) and jdocmunch (1). So
+`entry_points_detected > 0` is not evidence that the reachability signal
+discriminates, and the warning stays silent for half the repositories where
+Signal 1 is provably degenerate. This is why `uninformative` is derived from the
+measured rate and not from the entry-point count.
+
+**The correlation claim is withdrawn.** #408 asserts `unreachable_file` and
+`not_barrel_exported` are strongly correlated, so a 2-of-3 verdict is often one
+fact counted twice. Measured mean cofire rate is **0.312**, and on most repos the
+two rates move in opposite directions. That claim was reasoning from the shape of
+the signals rather than from data.
+
+**What actually drives the 57.3% is `not_barrel_exported`, which nobody
+suspected.** Its rate is above 0.80 on roughly two thirds of the corpus and above
+0.90 on a dozen (gin 1.000, jdatamunch 0.968, fastapi 0.954, jcm 0.943). Most
+symbols therefore start at 0.33 from that signal alone, which makes the default
+`min_confidence=0.5` reduce in practice to *"any one signal other than
+`not_barrel_exported`"*. The three-signal vote is a one-and-a-half-signal vote,
+and the free third is the one that fires almost everywhere.
+
+Tests: `test_v1_108_230.py` (5), including verdict-invariance and a test that the
+fire rates do not move when `min_confidence` does.
+
+### Also: repairs CI on 1.108.229
+
+⚠ **1.108.229 shipped with `uv.lock` still pinning 1.108.228**, so `uv sync
+--locked` failed before any test ran and took Tests, Benchmark and Replay red on
+that commit. The published wheel and sdist are unaffected; only the CI run was.
+The lockfile now tracks the project version again.
+
+`test_lockfile_version_sync` exists to catch precisely this and did not, because
+the release suite was started **before** the version bump: it compared .228
+against .228 and passed. A suite run that predates the bump does not validate the
+release, and a `git ls-remote` matching HEAD proves the push landed rather than
+that the tree builds.
+
 ## [1.108.229] - 2026-08-03 - the dead-code check stops losing module-level callers
 
 `get_dead_code_v2` reported three shipped MCP tools — `get_pr_risk_profile`,

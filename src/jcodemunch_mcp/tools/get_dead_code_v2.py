@@ -51,6 +51,10 @@ _ESM_REEXPORT_STAR_RE = re.compile(
     r"""export\s+\*(?:\s+as\s+\w+)?\s+from\s+['"]([^'"]+)['"]"""
 )
 # ES named re-export: `export { foo, bar } from './X'`
+# The three signals, in the order they are evaluated. Named once so the
+# instrument (#408) and the scorer cannot drift apart on spelling.
+_SIGNAL_NAMES = ("unreachable_file", "no_callers", "not_barrel_exported")
+
 # Identifier tokens in a file's module-level residue (#409). ``_IDENT_ONLY_RE``
 # decides whether a symbol name can be matched by token equality at all.
 _IDENT_RE = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")
@@ -266,6 +270,58 @@ def _package_json_entries(index, store, owner, repo_name) -> set[str]:
 # ---------------------------------------------------------------------------
 # Main tool
 # ---------------------------------------------------------------------------
+
+def _signal_diagnostics(
+    analysed: int,
+    fire_counts: dict[str, int],
+    cofire_counts: dict[str, int],
+    entry_point_count: int,
+) -> dict:
+    """Report what each signal actually measured on THIS repository (#408).
+
+    ``confidence`` is an unweighted vote: each of the three signals contributes
+    exactly one third, whatever it is worth here. Two facts decide what a vote
+    is worth, and neither was visible in the response before this:
+
+    * **fire_rate** — the fraction of analysed symbols the signal fired on. A
+      signal that fires on everything is a constant, not a discriminator, and it
+      still contributes its full third. This is the machine-readable form of the
+      ``framework_warning`` prose: when no entry point is found, Signal 1's rate
+      goes to 1.0 by construction.
+    * **cofire_rate** — how often a pair fired together. The docstring calls
+      these "three independent signals"; ``unreachable_file`` and
+      ``not_barrel_exported`` are in fact strongly correlated, so a 2-of-3
+      verdict built from that pair can be one underlying fact counted twice.
+
+    ⚠ **This is an instrument, not a fix.** It changes no verdict and no
+    confidence value. It exists so the weighting change that follows can be read
+    against a measured before, rather than argued from first principles — the
+    reason the two ship in separate releases.
+
+    ``uninformative`` names a signal whose rate is at the degenerate end (0.0 or
+    1.0). At 1.0 it accuses everything; at 0.0 it accuses nothing. Either way it
+    moved no verdict relative to the others while still setting the scale.
+    """
+    diag: dict = {
+        "analysed": analysed,
+        "entry_points_detected": entry_point_count,
+        "confidence_basis": "unweighted_vote_of_3",
+    }
+    if not analysed:
+        return diag
+    diag["fire_rate"] = {
+        s: round(fire_counts.get(s, 0) / analysed, 4) for s in _SIGNAL_NAMES
+    }
+    diag["cofire_rate"] = {
+        k: round(v / analysed, 4) for k, v in sorted(cofire_counts.items())
+    }
+    diag["uninformative"] = sorted(
+        s for s, r in diag["fire_rate"].items() if r in (0.0, 1.0)
+    )
+    if entry_point_count == 0:
+        diag["degraded"] = {"unreachable_file": "no_entry_points_detected"}
+    return diag
+
 
 def _sweep_module_level_callers(
     index,
@@ -523,6 +579,13 @@ def get_dead_code_v2(
 
     dead_symbols: list[dict] = []
     seen_ids: set[str] = set()
+    # Signal instrumentation (#408). Counted over every ANALYSED symbol, not
+    # just the returned ones, so the rates do not move when a caller changes
+    # ``min_confidence`` — an instrument whose reading depends on the threshold
+    # it is meant to inform is not an instrument.
+    analysed_count = 0
+    fire_counts: dict[str, int] = {s: 0 for s in _SIGNAL_NAMES}
+    cofire_counts: dict[str, int] = {}
 
     for sym in index.symbols:
         sid = sym.get("id", "")
@@ -565,6 +628,14 @@ def get_dead_code_v2(
         if sym_name not in barrel_names:
             signals.append("not_barrel_exported")
 
+        # Instrument only — does not participate in the verdict (#408).
+        analysed_count += 1
+        for s in signals:
+            fire_counts[s] += 1
+        for i, a in enumerate(signals):
+            for b in signals[i + 1:]:
+                cofire_counts[f"{a}+{b}"] = cofire_counts.get(f"{a}+{b}", 0) + 1
+
         confidence = len(signals) / 3.0
         if confidence >= min_confidence:
             seen_ids.add(sid)
@@ -601,6 +672,9 @@ def get_dead_code_v2(
             "confidence_level": "medium",
             "total_matches": total_matches,
             "truncated": truncated,
+            "signal_diagnostics": _signal_diagnostics(
+                analysed_count, fire_counts, cofire_counts, entry_point_count
+            ),
         },
     }
     if file_pattern:
