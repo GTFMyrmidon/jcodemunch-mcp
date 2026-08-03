@@ -122,10 +122,21 @@ field once a query has been served in-process, which costs 5 more tokens
 uncached call — the pessimistic direction. Re-running the loop inside one
 process will read about 0.4% worse and that is not a regression.
 
-**`timing_ms` rides inside the counted payload.** Its rendered width has been
-identical across every run measured so far, but it is wall-clock. A
-`--verify-determinism` failure whose entire diff is timing digits is that, not
-a retrieval bug.
+**`timing_ms` rides inside the counted payload, and it is why you should expect
+±1 token per query rather than an exact match.** This paragraph used to say its
+width "has been identical across every run measured so far". That stopped being
+true and CI had been saying so since v1.108.222: under `cl100k_base` a
+wall-clock figure is **3 tokens below 1000ms and 4 at or above**, so a query
+straddling one second moves the payload by exactly one token. A loaded runner
+straddles; a fast dev box does not. Observed: `search_tokens: 499 != 500`.
+
+`--verify-determinism` therefore compares `stable_tokens` — the same payload
+counted with `timing_ms` and the monotonic `total_tokens_saved` counter pinned —
+not the published figure. **Those `stable_tokens` values reproduce bit for bit;
+the published ones reproduce to ±1 token per query.** A gate failure now names
+the field that moved, and if that field is `stable_tokens` it is a retrieval
+change, not a clock. See [`METHODOLOGY.md`](METHODOLOGY.md) *Token Counting
+Method*.
 
 **The baseline is a lower bound**, and an unrealistic one — see
 [`METHODOLOGY.md`](METHODOLOGY.md) *Limitations*. "Concatenate every indexed

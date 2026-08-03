@@ -75,7 +75,36 @@ compatible with Claude token estimates within ~5%).
 Token counts are computed from the **serialized JSON response** strings,
 not raw source bytes. This means:
 - JSON field names and structure overhead are included (slightly understates savings).
-- The count is deterministic and reproducible across runs.
+- Retrieval is deterministic: the path exercised here is lexical and has no RNG.
+
+### ⚠ The published counts carry a ±1-token jitter, and it is not removable
+
+**Corrected 2026-08-03.** This section previously said "the count is
+deterministic and reproducible across runs". That was wrong, and CI had been
+saying so on every push since v1.108.222 while the claim stayed on the page.
+
+The counted payload is the response **as an agent actually receives it**, and
+that response contains `_meta.timing_ms`. Under `cl100k_base` a wall-clock
+figure tokenizes to **3 tokens below 1000ms and 4 at or above it**, so a query
+that straddles one second changes the measured payload by exactly one token.
+A loaded CI runner straddles; a fast developer machine does not, which is why
+this was invisible locally and red remotely. Observed on CI:
+`search_tokens: 499 != 500`, a 0.2% move on one query of fifteen.
+
+A second field has the same shape and has not fired yet: `_meta.total_tokens_saved`
+is a **monotonic lifetime counter** for the installation. cl100k chunks digits
+in threes, so it is 4 tokens from 10 to 12 digits and 5 from 13. It is at 11.
+
+**We keep counting both**, because an agent really does pay for them and
+excluding them would move every published ratio in our own favour. The
+`--verify-determinism` gate instead compares a parallel `stable_tokens` figure —
+the same payload counted with those two fields pinned — so it answers *is
+retrieval reproducible* rather than *did the clock read the same*. A genuine
+retrieval change still fails the gate; a timing straddle no longer does.
+
+**So: reproduce a published figure to within ±1 token per query, not exactly.**
+The `stable_tokens` values in the JSON output are the ones that reproduce bit
+for bit.
 
 ### Distinction from runtime `_meta.tokens_saved`
 

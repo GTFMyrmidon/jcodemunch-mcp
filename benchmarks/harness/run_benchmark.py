@@ -177,18 +177,79 @@ def corpus_state(index, repo_str: str, pins: Optional[dict] = None) -> dict:
     }
 
 
-def token_signature(results: list[dict]) -> str:
-    """Everything a reproduction has to match, with the wall-clock left out.
+# Fields inside a SERVED payload whose value is a property of the machine and
+# the moment rather than of retrieval. They are counted in the published figure
+# — an agent really does pay for them — but they are pinned to a constant before
+# the reproducibility signature is taken. See `stable_tokens`.
+#
+# ⚠ Measured 2026-08-03, and this is the whole reason `--verify-determinism`
+# was red on CI while reproducing identical locally:
+#
+#   `timing_ms` tokenizes to 3 tokens below 1000ms and 4 at or above it, so a
+#   query that straddles one second changes the payload by EXACTLY ONE TOKEN.
+#   CI reported `search_tokens: 499 != 500`. A loaded runner straddles; a fast
+#   dev box does not, which is why nobody could reproduce it.
+#
+#   `total_tokens_saved` is a MONOTONIC LIFETIME counter — it grows on every
+#   call this installation has ever served. cl100k chunks digits in threes, so
+#   it is 4 tokens from 10 to 12 digits and 5 from 13. It has not crossed yet,
+#   which is the only reason it has not already done the same thing. A published
+#   benchmark figure must not depend on how much the measuring machine has used
+#   the product in its entire history.
+_VOLATILE_PAYLOAD_KEYS = {"timing_ms", "total_tokens_saved"}
 
-    `search_ms` varies run to run and means nothing to a reader trying to
-    reproduce a token count. Every other field is expected to be bit-identical:
-    the retrieval path the benchmark exercises is lexical and has no RNG, so
-    there is no seed to pin — but that is a claim worth checking rather than
-    asserting, which is what `--verify-determinism` does with this.
+
+def _pin_volatile(obj):
+    """Replace machine/moment-dependent payload values with fixed placeholders.
+
+    Applied ONLY to the copy that feeds the reproducibility signature, never to
+    the copy that is counted for publication.
+    """
+    if isinstance(obj, dict):
+        return {
+            k: (0 if k in _VOLATILE_PAYLOAD_KEYS else _pin_volatile(v))
+            for k, v in obj.items()
+        }
+    if isinstance(obj, list):
+        return [_pin_volatile(x) for x in obj]
+    return obj
+
+
+# Per-task fields that inherit the wall clock through the counted payload, and
+# so cannot be part of a reproducibility check. Each has a `stable_` counterpart
+# that can.
+_WALLCLOCK_DERIVED_FIELDS = {
+    "search_ms", "tokens", "search_tokens", "fetch_tokens",
+    "jmunch_tokens", "reduction_pct", "ratio",
+}
+
+
+def token_signature(results: list[dict]) -> str:
+    """Everything a REPRODUCTION has to match.
+
+    ⚠⚠ **This deliberately does not compare the published token counts, and
+    that is a concession, not an oversight.** The counted payload contains a
+    wall-clock field (`_meta.timing_ms`), so those counts carry a ±1-token
+    jitter that no seed can remove — see `_VOLATILE_PAYLOAD_KEYS` for the
+    measurement. Asserting bit-equality on them made the gate red on every CI
+    push from v1.108.222 onward for a reason that has nothing to do with
+    retrieval.
+
+    What is compared instead is `stable_tokens` and friends: the same payload,
+    counted with those fields pinned. That is the question the gate was built to
+    answer — *is retrieval reproducible* — and it is answerable. The published
+    figures still count the payload as served, which is the pessimistic
+    direction, and METHODOLOGY.md states the jitter.
+
+    `search_ms` never entered the payload at all; it is dropped for the older
+    reason that it means nothing to someone reproducing a token count.
     """
     def strip(obj):
         if isinstance(obj, dict):
-            return {k: strip(v) for k, v in obj.items() if k != "search_ms"}
+            return {
+                k: strip(v) for k, v in obj.items()
+                if k not in _WALLCLOCK_DERIVED_FIELDS
+            }
         if isinstance(obj, list):
             return [strip(x) for x in obj]
         return obj
@@ -334,6 +395,10 @@ def measure_jmunch(repo_str: str, query: str) -> dict:
 
     search_text = _serialize(search_result)
     search_tokens = count_tokens(search_text)
+    # The same payload, counted with the machine/moment fields pinned. Published
+    # figures use the count above (the payload as an agent actually receives it);
+    # only the reproducibility gate reads this one.
+    stable_search_tokens = count_tokens(_serialize(_pin_volatile(search_result)))
 
     # Extract symbol IDs from results
     symbols = search_result.get("results") or search_result.get("symbols") or []
@@ -342,15 +407,22 @@ def measure_jmunch(repo_str: str, query: str) -> dict:
 
     # 2. Get symbol sources
     fetch_tokens = 0
+    stable_fetch_tokens = 0
     for sid in symbol_ids:
         sym_result = get_symbol(repo=repo_str, symbol_id=sid)
         fetch_tokens += count_tokens(_serialize(sym_result))
+        stable_fetch_tokens += count_tokens(_serialize(_pin_volatile(sym_result)))
 
     total = search_tokens + fetch_tokens
     return {
         "tokens": total,
         "search_tokens": search_tokens,
         "fetch_tokens": fetch_tokens,
+        # Reproducibility basis only — never published, never compared against a
+        # baseline. See `_VOLATILE_PAYLOAD_KEYS`.
+        "stable_tokens": stable_search_tokens + stable_fetch_tokens,
+        "stable_search_tokens": stable_search_tokens,
+        "stable_fetch_tokens": stable_fetch_tokens,
         "hits_fetched": len(symbol_ids),
         "search_ms": round(search_ms, 1),
     }
@@ -413,6 +485,11 @@ def benchmark_repo(repo_str: str) -> dict:
             "fetch_tokens": jm["fetch_tokens"],
             "hits_fetched": jm["hits_fetched"],
             "search_ms": jm["search_ms"],
+            # Reproducibility basis (`--verify-determinism`), not a published
+            # figure and never compared against a baseline.
+            "stable_tokens": jm["stable_tokens"],
+            "stable_search_tokens": jm["stable_search_tokens"],
+            "stable_fetch_tokens": jm["stable_fetch_tokens"],
         })
 
     return {

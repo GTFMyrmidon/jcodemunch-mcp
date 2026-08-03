@@ -387,3 +387,73 @@ def test_signature_diff_is_bounded(rb):
     print one line per leaf."""
     wide = {str(i): i for i in range(500)}
     assert len(rb._signature_diff(wide, {str(i): -i for i in range(500)})) <= 40
+
+
+# ── The determinism gate compares retrieval, not the clock (2026-08-03) ────
+#
+# `--verify-determinism` was red on every CI push from v1.108.222 while
+# reproducing identical locally. Cause, measured: `_meta.timing_ms` tokenizes to
+# 3 tokens below 1000ms and 4 at or above, so a query straddling one second
+# moves the counted payload by exactly one token. A loaded runner straddles; a
+# fast dev box does not. `_meta.total_tokens_saved` is a monotonic lifetime
+# counter with the same shape, at 11 digits of a 12-digit budget.
+#
+# The published figures still count the payload as served (the pessimistic
+# direction); only the gate reads the pinned `stable_tokens`.
+
+
+def test_volatile_payload_keys_are_pinned(rb):
+    payload = {"results": [{"id": "a"}],
+               "_meta": {"timing_ms": 1491.9, "total_tokens_saved": 34653523033,
+                         "total_symbols": 42}}
+    pinned = rb._pin_volatile(payload)
+    assert pinned["_meta"]["timing_ms"] == 0
+    assert pinned["_meta"]["total_tokens_saved"] == 0
+    assert pinned["_meta"]["total_symbols"] == 42, "non-volatile fields must survive"
+    assert pinned["results"] == [{"id": "a"}]
+
+
+def test_a_wallclock_only_difference_is_not_a_determinism_failure(rb):
+    """The exact CI shape: one query straddles 1000ms, one token moves."""
+    a = [{"repo": "r", "tasks": [{"query": "q", "tokens": 500, "search_tokens": 499,
+                                  "ratio": 127.7, "stable_tokens": 480,
+                                  "hits_fetched": 3, "baseline_tokens": 1000}]}]
+    b = json.loads(json.dumps(a))
+    b[0]["tasks"][0].update(tokens=501, search_tokens=500, ratio=127.6)
+    assert rb.token_signature(a) == rb.token_signature(b)
+
+
+def test_a_genuine_retrieval_change_still_fails_the_gate(rb):
+    """The load-bearing half: loosening the gate must not disarm it."""
+    a = [{"repo": "r", "tasks": [{"query": "q", "stable_tokens": 480,
+                                  "hits_fetched": 3, "baseline_tokens": 1000}]}]
+    for field, value in [("stable_tokens", 481), ("hits_fetched", 2),
+                         ("baseline_tokens", 1001), ("query", "other")]:
+        b = json.loads(json.dumps(a))
+        b[0]["tasks"][0][field] = value
+        assert rb.token_signature(a) != rb.token_signature(b), field
+
+
+def test_stable_tokens_is_never_a_published_figure():
+    """It is a reproducibility basis, not a token count.
+
+    If it reaches the rendered tables or the reference artifact, a reader will
+    take it for one — and it is deliberately LOWER than the real figure, so it
+    would flatter us.
+    """
+    import ast as _ast
+
+    src = (HARNESS / "run_benchmark.py").read_text(encoding="utf-8")
+    tree = _ast.parse(src)
+    for fn in ("render_markdown", "build_reference"):
+        node = next(
+            (n for n in tree.body
+             if isinstance(n, _ast.FunctionDef) and n.name == fn), None
+        )
+        assert node is not None, f"{fn} not found in run_benchmark.py"
+        literals = [
+            s2.value for s2 in _ast.walk(node)
+            if isinstance(s2, _ast.Constant) and isinstance(s2.value, str)
+        ]
+        offenders = [v for v in literals if "stable_" in v]
+        assert not offenders, f"{fn} references {offenders}"
