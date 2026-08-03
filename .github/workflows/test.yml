@@ -24,10 +24,24 @@ jobs:
           # raw.githubusercontent.com that intermittently fails and takes
           # down the whole matrix (see run 25292200582).
           #
-          # The pin must be able to READ uv.lock. 0.6.5 could not: the lock is
-          # `revision = 3`, and rather than erroring 0.6.5 silently re-resolved,
-          # so `uv sync` resolved fresh on every job and the committed lock
-          # pinned nothing here. Bump this and re-lock together, never one alone.
+          # The pin must be able to READ uv.lock, which is `revision = 3`.
+          # uv 0.6.5 could not, and did NOT error: it silently re-resolved, so
+          # `uv sync` resolved fresh on every job and the committed lock pinned
+          # nothing here. Bump this and re-lock together, never one alone.
+          #
+          # ⚠⚠ The same hazard runs the other way and that direction is
+          # INVISIBLE. A *local* uv older than this pin does not fail on a
+          # revision-3 lock either — it rewrites the file back to `revision = 1`
+          # on any `uv lock`, stripping ~2,000 `upload-time` entries with it.
+          # Nothing goes red, because the pinned CI uv reads both formats. So
+          # the lock silently stops being the thing CI validated.
+          #
+          # This has now happened twice. 836fb28 restored the format once; it
+          # regressed again and sat at `revision = 1` for 20+ commits until
+          # PR #410 restored it on 2026-08-03. Neither regression turned CI red.
+          #
+          # => Contributors need a LOCAL uv >= this pin. Check `uv --version`
+          #    before running `uv lock`, and check `head -2 uv.lock` after.
           version: "0.9.5"
 
       - name: Set up Python ${{ matrix.python-version }}

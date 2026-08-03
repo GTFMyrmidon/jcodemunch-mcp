@@ -40,6 +40,9 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7
         with:
           python-version: "3.12"
+          # Keep identical to test.yml's pin and read the note there before
+          # changing it: the version interacts with uv.lock's `revision`, and
+          # getting it wrong fails silently rather than loudly.
           version: "0.9.5"
       - name: Install
         run: uv sync --locked --group dev
