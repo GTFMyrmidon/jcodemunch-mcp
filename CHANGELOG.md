@@ -2,6 +2,92 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.220] - 2026-08-02 - a held-out corpus, and what it said about the last two numbers
+
+14 curated intent rules closing the defect classes the v1.108.217 counterfactual
+named. But the rules are the smaller half of this release.
+
+### The held-out corpus, frozen before any fix
+
+The moratorium shipped in .219 gated on `route@1 >= 60%` measured against
+`benchmarks/route_recall/queries.json` — **the same corpus whose misses were
+about to be fixed.** Fitting rules to a corpus and then scoring on it measures
+memorisation. The deep-research report said *"held-out, low-leakage corpus"* and
+that word was dropped when the gate was written.
+
+`benchmarks/route_recall/holdout.json` (44 queries) was written and frozen
+BEFORE the first rule. Measured on the unchanged router:
+
+| corpus | route@1 | route@3 | name leakage |
+|---|---|---|---|
+| visible `queries.json` | 45.8% | 64.4% | 0.133 |
+| held-out, all 44 | **20.5%** | 36.4% | 0.057 |
+| held-out, control subset | **40.0%** | 55.0% | 0.108 |
+
+⚠ **Read the control row for like-for-like.** The full held-out set is enriched
+for hard cases by construction, so 20.5% is not an average-user figure. The
+honest statement: **the visible corpus flatters comparable queries by ~6 points,
+and its higher leakage is the reason.** That is our own leakage metric
+convicting our own benchmark.
+
+### The rules, and what they did NOT move
+
+`counter.py` gains a specificity block (rules that must outrank broader ones)
+and a vocabulary block (intents no shared token could reach). Held-out, by
+class:
+
+| class | n | before | after |
+|---|---|---|---|
+| `rule_preempted` (targeted) | 12 | 8.3% | **91.7%** |
+| `no_lexical_overlap` (targeted) | 12 | 0.0% | **83.3%** |
+| **control (untargeted)** | 20 | 40.0% | **40.0%** |
+| aggregate | 44 | 20.5% | 65.9% |
+
+Visible corpus: route@1 45.8 -> 67.8, route@3 64.4 -> 86.4.
+
+⚠⚠ **Mean name leakage did not move at all — 0.057, identical.** That is the
+payoff for fixing with curated rules rather than editing tool descriptions.
+Stuffing the benchmark's vocabulary into descriptions would fit the measurement
+instead of the product, and would raise the very metric that exists to catch it.
+
+### The moratorium prompt fired, and the answer was NOT to lift it
+
+`test_moratorium_still_in_force` went red exactly as designed: the aggregate
+cleared its 50% bar. **Reading that as an exit would have certified
+overfitting.**
+
+The control subset — the only queries no shipped fix was written against —
+sits at **40.0%, unchanged.** The fixes moved precisely and only what they aimed
+at, so the 65.9% aggregate is an upper bound produced by a corpus 24/44 fitted
+to the fix, by the same author who wrote the rules.
+
+**So the gate moved to the control subset.** Third version, and each one
+implements "held-out" more correctly than the last:
+
+- .219 gated on `queries.json` (the corpus about to be fixed);
+- .220's first pass gated on the held-out aggregate (partly fitted);
+- now: control-subset `route@1 >= 55%`, baseline **40.0%**, aggregate reported
+  but never gated.
+
+⚠ This is not a moved goalpost. The previous two versions both called something
+held-out that was not.
+
+### Also
+
+Three counterfactual tests broke for the best possible reason — their fixtures
+were live defects that this release fixed. Rewritten to construct their own gate
+conditions, so they demonstrate behaviour rather than depending on a bug
+surviving. The harness gains `--corpus` / `--out`.
+
+⚠ **Contamination stated, not engineered away.** The same author wrote
+`holdout.json` and the rules. The choice of which intents to test is
+contaminated; the choice of how a user phrases them much less so, which is why
+every mirror entry is an alternate PHRASING rather than a re-pick of intents.
+A corpus from someone who has never read `explanations.json` would be strictly
+better and is worth soliciting.
+
+Tests: 6539 passed, 7 skipped, 0 failed.
+
 ## [1.108.219] - 2026-08-02 - the catalog moratorium, with a test rather than a promise
 
 No new top-level catalog actions until stated conditions are met. **A

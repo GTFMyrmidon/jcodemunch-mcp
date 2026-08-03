@@ -327,6 +327,110 @@ def search_catalog(
 # (compiled_pattern, action, why). Kept deterministic and legible -- this is a
 # curated map, not a learned model, consistent with the read-only charter.
 _INTENT_RULES: list[tuple[re.Pattern, str, str]] = [
+    # --- specificity block: these MUST outrank the broad rules below --------- #
+    #
+    # v1.108.220. Every rule here exists because the v1.108.217 counterfactual
+    # measured a `rule_preempted` miss: a broader rule further down claimed the
+    # query, and because `route` runs its lexical fallback ONLY when no rule
+    # matches, the correct action was never scored at all. Ranking work cannot
+    # touch that class -- the scorer never ran -- so precedence is the only fix.
+    #
+    # ⚠ Added ABOVE the broad rules rather than by narrowing them. Narrowing
+    # `search_symbols`' `\b(find|locate|where is|...)\b` would silently drop
+    # phrasings no corpus covers; an earlier, more specific rule changes only
+    # the cases it names. Same reasoning as the .212 transform block, one
+    # direction reversed.
+
+    # An HTTP endpoint is not a symbol, and `get_blast_radius` cannot accept
+    # one -- so its `\b(break|impact|affect)\b` rule claiming this query handed
+    # the user a tool that could not answer it.
+    (re.compile(r"\b(get|post|put|patch|delete|head|options)\s+/?\S*\b.*\b"
+                r"(endpoint|route|api)\b|"
+                r"\b(endpoint|route)\b[^.]{0,40}\b(break|breaks|impact|affect|"
+                r"depend|change|changing)\b|"
+                r"\b(break|breaks|impact|affect|change|changing)\b[^.]{0,40}\b"
+                r"(endpoint|api route)\b", re.I),
+     "get_endpoint_impact", "Endpoint-centric impact: what breaks if this HTTP route changes."),
+
+    # "break callers if I edit this signature" is a SAFETY question. The callers
+    # rule below answers a narrower one (who calls it) and stops there.
+    (re.compile(r"\b(safe|safely|going to break|will (it|this) break|hurt anyone|"
+                r"ok to)\b[^.]{0,60}\b(edit|editing|change|changing|signature|"
+                r"parameters?|arguments?|returns?)\b|"
+                r"\b(edit|change|changing)\b[^.]{0,30}\b(signature|parameters?|"
+                r"arguments?)\b[^.]{0,40}\b(break|safe|hurt|callers?)\b", re.I),
+     "check_edit_safe", "Preflight whether editing this symbol breaks its callers."),
+
+    # Structural/anti-pattern searches. `search_symbols` claimed these on the
+    # bare verb "find", but a name search cannot express "caught and ignored".
+    (re.compile(r"\b(swallow\w*|silently (ignor|catch)\w*|empty (catch|except)|"
+                r"catch\w*\s+(block\s+)?that\s+(does nothing|is empty)|"
+                r"caught\b[^.]{0,30}\b(ignor\w+|nothing)|"
+                r"bare (except|catch)|anti[- ]?pattern)\b", re.I),
+     "search_ast", "AST pattern match for structural anti-patterns a name search cannot express."),
+
+    # A census of annotations, not a lookup of one.
+    (re.compile(r"\b(every|all|inventory|census|which|what)\b[^.]{0,40}\b"
+                r"(decorators?|annotations?|attributes?)\b|"
+                r"\b(decorators?|annotations?)\b[^.]{0,30}\b(across|used|show up|"
+                r"in the (project|codebase|repo))\b", re.I),
+     "get_decorator_census", "Repo-wide census of decorators / annotations / attributes."),
+
+    # ⚠ "semantic search for this project" contains the literal substring
+    # "search for", which is why `search_symbols` claimed a request to BUILD the
+    # embedding index rather than to query it.
+    (re.compile(r"\b(turn on|enable|set up|precompute|build|make)\b[^.]{0,40}\b"
+                r"(semantic|similarity|embedding|vector)\w*\b|"
+                r"\b(semantic|similarity|embedding|vector)\w*\b[^.]{0,25}\b"
+                r"(work|working|available|on for)\b", re.I),
+     "embed_repo", "Precompute embeddings so semantic and similarity search work here."),
+
+    # `get_session_context`'s `\bso far\b` claimed a savings question.
+    (re.compile(r"\b(tokens?|context|spend|savings?|saved)\b[^.]{0,40}\b"
+                r"(saved|save|avoid\w*|not (have|had) to send)\b|"
+                r"\b(how many|running total|what has)\b[^.]{0,30}\btokens?\b", re.I),
+     "get_session_stats", "Token savings for this session."),
+
+    # --- vocabulary block: intents no shared token could reach ---------------- #
+    #
+    # The counterfactual's `no_lexical_overlap` class: the user's phrasing and
+    # the action's name+description share ZERO tokens, so the score is zero at
+    # any weight and no reweighting can rescue it. A curated rule states the
+    # mapping explicitly instead of hoping vocabulary drifts together.
+    #
+    # ⚠ Deliberately NOT fixed by stuffing the benchmark's words into tool
+    # descriptions: that fits the measurement rather than the product, and it
+    # would raise the corpus's own leakage score -- the metric that exists to
+    # catch exactly this.
+    (re.compile(r"\b(show|see|read|print|give)\b[^.]{0,25}\b(body|implementation|"
+                r"source|code)\b[^.]{0,25}\b(of|for)?\s*(this|that|the)\b|"
+                r"\b(body|implementation) of (this|that|the)\b", re.I),
+     "get_symbol_source", "Return one symbol's full source."),
+    (re.compile(r"\b(natural|real|actual|logical)\b[^.]{0,20}\b(modules?|"
+                r"subsystems?|components?|parts)\b|"
+                r"\bgroup\b[^.]{0,40}\b(belong together|actually belong)\b|"
+                r"\bas opposed to the (folder|directory) (layout|structure)\b", re.I),
+     "get_tectonic_map", "Logical module topology, fused from three coupling signals."),
+    (re.compile(r"\b(concentrated|concentration|piled into|spread out|evenly)\b|"
+                r"\bhow (deep|many layers)\b[^.]{0,30}\b(nest\w*|dependenc\w+|go)\b", re.I),
+     "get_architecture_metrics", "Concentration, dependency depth and modularity in one call."),
+    (re.compile(r"\b(riskiest|most risky|most dangerous|careful editing|be careful)\b|"
+                r"\bwhich (files?|parts?)\b[^.]{0,30}\b(risk|risky|careful)\b", re.I),
+     "get_file_risk", "Per-symbol composite risk, highest first."),
+    (re.compile(r"\b(risky|risk|nervous|dangerous|safe)\b[^.]{0,40}\b"
+                r"(pull request|\bpr\b|merge|merging|branch)\b|"
+                r"\b(pull request|\bpr\b|merging)\b[^.]{0,25}\b(risk|risky|safe)\b", re.I),
+     "get_pr_risk_profile", "Unified risk assessment for a branch or PR."),
+    (re.compile(r"\b(how )?(complicated|complex|hairy|convoluted|gnarly)\b"
+                r"[^.]{0,30}\b(function|method|this one|it)\b|"
+                r"\bhow many branches\b|\bcyclomatic\b", re.I),
+     "get_symbol_complexity", "Cyclomatic complexity, nesting and parameter count for one symbol."),
+    (re.compile(r"\b(actually (runs?|runs in|executed)|really (runs?|used))\b"
+                r"[^.]{0,30}\b(production|prod|live|runtime)\b|"
+                r"\b(never|not) (get |gets |be )?exercised\b|"
+                r"\bhow much of (this|the) code\b[^.]{0,30}\b(runs?|used)\b", re.I),
+     "get_runtime_coverage", "Runtime coverage: which indexed symbols have trace evidence."),
+
     # --- stateful: session / recent-change intents --------------------------- #
     # Read the session journal / working-tree delta, not the whole index.
     # Placed FIRST: stateful phrasings ("affected by my recent changes") carry

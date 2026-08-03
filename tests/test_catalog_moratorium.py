@@ -31,25 +31,74 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-RESULTS = REPO / "benchmarks" / "route_recall" / "results.json"
+BENCH = REPO / "benchmarks" / "route_recall"
+RESULTS = BENCH / "results.json"           # visible corpus, MEASURED not GATED
+HOLDOUT_RESULTS = BENCH / "holdout_results.json"   # the gate
+HOLDOUT_CORPUS = BENCH / "holdout.json"
 
 #: Catalog actions visible under `full`, pinned 2026-08-02 at v1.108.218.
 #: Raising this is the deliberate act the moratorium exists to require.
 CATALOG_CEILING = 91
 
-#: Exit conditions. ALL must hold before CATALOG_CEILING may rise.
-#:
-#: The route bar is stated against the CORRECTED corpus (v1.108.218's target
-#: audit). ⚠ The pre-audit baseline was 42.4 and the post-audit baseline is
-#: 45.8; that 3.4-point move was a corpus correction and NOT a routing gain, so
-#: progress toward this bar is measured from 45.8, never from 42.4.
-EXIT_ROUTE_AT_1 = 60.0
-EXIT_BASELINE_ROUTE_AT_1 = 45.8
+# --------------------------------------------------------------------------- #
+# Exit conditions. ALL must hold before CATALOG_CEILING may rise.               #
+# --------------------------------------------------------------------------- #
+#
+# ⚠⚠ **The gate is `holdout.json`, NOT `queries.json`, and moving it there was a
+# correction to this file's first version.** v1.108.219 gated on
+# `queries.json` — the same corpus whose misses were about to be fixed. Fitting
+# rules to a corpus and then scoring on it measures memorisation. The
+# deep-research report said "held-out, low-leakage corpus" and that word was
+# dropped when the gate was first written.
+#
+# The correction was not cosmetic. Measured 2026-08-02 BEFORE any routing fix:
+#
+#     visible queries.json          route@1  45.8%   name leakage 0.133
+#     holdout.json (all 44)         route@1  20.5%   name leakage 0.057
+#     holdout.json control subset   route@1  40.0%   name leakage 0.108
+#
+# ⚠ Read the CONTROL row for the like-for-like comparison: the full held-out set
+# is enriched for hard cases by construction (24 of 44 entries mirror intents the
+# counterfactual named as defective), so its 20.5% is not an "average user query"
+# figure. The honest statement is that the visible corpus flatters comparable
+# queries by ~6 points, and its higher leakage is the reason.
 
-#: Leakage may not drift upward while recall climbs. Measured mean name overlap
-#: at the audit was 0.133; this allows normal corpus growth and refuses the
-#: paraphrase shortcut.
-EXIT_MAX_NAME_LEAKAGE = 0.15
+#: ⚠⚠ THE GATE IS THE CONTROL SUBSET, and this is the THIRD correction to it.
+#:
+#:   v1.108.219 gated on queries.json -- the corpus whose misses were about to
+#:     be fixed. That certifies memorisation.
+#:   v1.108.220 moved the gate to holdout.json, then measured after the fixes:
+#:     aggregate 20.5% -> 65.9%, which CLEARS a 50% bar.
+#:   It cleared it for the wrong reason. Broken out by class:
+#:
+#:       rule_preempted      (targeted)     8.3% -> 91.7%
+#:       no_lexical_overlap  (targeted)     0.0% -> 83.3%
+#:       control             (UNtargeted)  40.0% -> 40.0%
+#:
+#: The fixes moved exactly what they aimed at and nothing else. The aggregate
+#: rose because 24 of 44 held-out entries mirror intents whose defects were
+#: read off `explanations.json` before the rules were written. **The same author
+#: wrote the holdout and the rules**, so those 24 are fitted, not held out, and
+#: 65.9% is an upper bound rather than a measurement.
+#:
+#: The control subset is the only part of the corpus the fixes did not aim at.
+#: Gating there is not a moved goalpost -- it is the definition of "held-out"
+#: that the previous two versions of this gate both failed to implement.
+EXIT_CONTROL_AT_1 = 55.0
+EXIT_BASELINE_CONTROL_AT_1 = 40.0
+
+#: Measured every run and reported, but NOT the gate: an aggregate over a corpus
+#: partly fitted to the fix cannot certify anything.
+AGGREGATE_IS_GATED = False
+
+#: Leakage on the HELD-OUT corpus, measured at 0.057. Binding, with headroom for
+#: honest corpus growth. Without this the recall bar is met by paraphrasing tool
+#: descriptions into queries.
+EXIT_MAX_NAME_LEAKAGE = 0.08
+
+#: The visible corpus is still measured every run — it is the larger sample and
+#: its per-gate breakdown drives the work. It is simply not the gate.
+VISIBLE_CORPUS_IS_GATED = False
 
 #: Actions that exist, are tested, and are deliberately NOT exposed. Each entry
 #: is a decision the moratorium made, not an oversight.
@@ -120,45 +169,111 @@ class TestWithheldActions:
 
 class TestExitConditions:
     @pytest.fixture
-    def measured(self):
+    def holdout(self):
+        if not HOLDOUT_RESULTS.exists():
+            pytest.skip("holdout_results.json not present")
+        return json.loads(HOLDOUT_RESULTS.read_text(encoding="utf-8"))
+
+    @pytest.fixture
+    def visible(self):
         if not RESULTS.exists():
             pytest.skip("route_recall results.json not present")
         return json.loads(RESULTS.read_text(encoding="utf-8"))["summary"]
 
-    def test_the_recall_bar_is_stated_against_the_corrected_corpus(self, measured):
-        """Guards the one number most likely to be misquoted.
+    def _control_at_1(self, holdout) -> float:
+        """route@1 over the control subset only.
 
-        v1.108.218 moved route@1 from 42.4 to 45.8 by fixing the CORPUS. If a
-        future reader measures progress from 42.4 they will credit routing work
-        with a correction it did not make.
+        The control entries mirror intents that were NOT defective, so they are
+        the regression detector: a fix that raises the aggregate while breaking
+        these has made routing worse, not better.
         """
-        assert measured["route_recall"]["@1"] >= EXIT_BASELINE_ROUTE_AT_1 - 0.1, (
-            "route@1 fell below the post-audit baseline; the moratorium's "
-            "progress measurement is anchored to it"
+        corpus = json.loads(HOLDOUT_CORPUS.read_text(encoding="utf-8"))
+        mirrors = {q["q"]: q.get("mirrors", "control") for q in corpus["queries"]}
+        rows = [r for r in holdout["per_query"] if mirrors.get(r["query"]) == "control"]
+        assert rows, "the held-out corpus has no control entries to regress against"
+        hits = sum(1 for r in rows if r["route_rank"] == 1)
+        return round(100.0 * hits / len(rows), 1)
+
+    def test_the_gate_is_the_held_out_corpus(self, holdout, visible):
+        """The correction this file's first version needed.
+
+        Scoring the gate on the corpus whose misses are being fixed certifies
+        overfitting. Measured before any fix, the two disagreed by 25.3 points
+        overall and ~6 on comparable queries, with leakage explaining the gap.
+        """
+        assert VISIBLE_CORPUS_IS_GATED is False
+        assert holdout["summary"]["queries"] >= 40, (
+            "a held-out corpus too small to be a gate"
+        )
+        # Both are measured every run. Only one binds.
+        assert "route_recall" in visible
+
+    def test_control_subset_has_not_regressed(self, holdout):
+        """A fix that breaks a working route is not progress."""
+        ctrl = self._control_at_1(holdout)
+        assert ctrl >= EXIT_BASELINE_CONTROL_AT_1 - 0.1, (
+            f"control-subset route@1 fell to {ctrl}% (baseline "
+            f"{EXIT_BASELINE_CONTROL_AT_1}%). Intents that already routed "
+            "correctly are now broken."
         )
 
-    def test_moratorium_still_in_force(self, measured):
+    def test_the_aggregate_is_reported_but_not_gated(self, holdout):
+        """The finding that forced the third version of this gate.
+
+        v1.108.220's rules took the held-out aggregate from 20.5% to 65.9% while
+        the untargeted control subset stayed at exactly 40.0%. A number that
+        moves only where the fix aimed is a measurement of the fix's aim.
+        """
+        assert AGGREGATE_IS_GATED is False
+        agg = holdout["summary"]["route_recall"]["@1"]
+        ctrl = self._control_at_1(holdout)
+        assert agg >= ctrl - 0.1, (
+            "the aggregate has fallen below the control subset; the fitted "
+            "classes have regressed and the corpus split needs re-reading"
+        )
+
+    def test_moratorium_still_in_force(self, holdout):
         """Fails on the day the moratorium may lift. That is the point.
 
-        A policy that expires silently is a policy nobody notices has expired.
-        When this fails, the exit conditions have been met — re-read them, decide
-        deliberately, and either raise the ceiling or restate the bar.
+        ⚠ It has fired once already, at v1.108.220, and the answer was NOT to
+        lift. The aggregate cleared a 50% bar on a corpus 24/44 fitted to the
+        fix. Reading that as an exit would have certified overfitting, which is
+        the failure this whole gate exists to prevent.
         """
-        at1 = measured["route_recall"]["@1"]
-        leak = measured["leakage"]["mean_name_overlap"]
-        met = at1 >= EXIT_ROUTE_AT_1 and leak <= EXIT_MAX_NAME_LEAKAGE
+        s = holdout["summary"]
+        leak = s["leakage"]["mean_name_overlap"]
+        ctrl = self._control_at_1(holdout)
+        met = ctrl >= EXIT_CONTROL_AT_1 and leak <= EXIT_MAX_NAME_LEAKAGE
         assert not met, (
-            f"route@1 is {at1}% (bar {EXIT_ROUTE_AT_1}%) at name leakage {leak} "
-            f"(ceiling {EXIT_MAX_NAME_LEAKAGE}). The moratorium's exit conditions "
-            "are MET. This failure is a prompt, not a defect: decide explicitly "
-            "whether to lift it, then update this test."
+            f"control-subset route@1 {ctrl}% (bar {EXIT_CONTROL_AT_1}%) at name "
+            f"leakage {leak} (ceiling {EXIT_MAX_NAME_LEAKAGE}). The exit "
+            "conditions are MET on the untargeted subset. This failure is a "
+            "prompt, not a defect: decide explicitly whether to lift the "
+            "moratorium, then update this test."
         )
 
-    def test_a_recall_bar_without_a_leakage_bar_would_be_gameable(self, measured):
+    def test_a_recall_bar_without_a_leakage_bar_would_be_gameable(self, holdout):
         """Non-vacuous: the leakage ceiling has to be able to bind."""
         assert EXIT_MAX_NAME_LEAKAGE < 1.0
-        assert measured["leakage"]["mean_name_overlap"] <= EXIT_MAX_NAME_LEAKAGE, (
-            "corpus leakage already exceeds the ceiling the exit gate relies on"
+        leak = holdout["summary"]["leakage"]["mean_name_overlap"]
+        assert leak <= EXIT_MAX_NAME_LEAKAGE, (
+            f"held-out leakage {leak} already exceeds the ceiling "
+            f"{EXIT_MAX_NAME_LEAKAGE} the exit gate relies on"
+        )
+
+    def test_the_held_out_corpus_is_genuinely_harder(self, holdout, visible):
+        """Records the gap rather than asserting a direction.
+
+        If the held-out corpus ever scores ABOVE the visible one, something is
+        wrong with one of them and the gate should not be trusted until it is
+        understood.
+        """
+        h = holdout["summary"]["route_recall"]["@1"]
+        v = visible["route_recall"]["@1"]
+        assert h <= v + 5.0, (
+            f"held-out route@1 ({h}%) exceeds visible ({v}%) — the held-out set "
+            "is supposed to be at least as hard; investigate before trusting "
+            "either number"
         )
 
 

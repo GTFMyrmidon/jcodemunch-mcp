@@ -85,14 +85,27 @@ def _leakage(counter, query, targets, desc_by_name):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--write", action="store_true", help="write results.json")
+    ap.add_argument(
+        "--corpus", default=str(CORPUS),
+        help="query corpus to score (default queries.json; holdout.json is the "
+             "HELD-OUT set frozen before the routing fixes)",
+    )
+    ap.add_argument(
+        "--out", default=None,
+        help="results path for --write (default results.json, or "
+             "<corpus stem>_results.json for a non-default corpus)",
+    )
     args = ap.parse_args()
 
     counter, rows, names = _load_catalog()
     name_set = set(names)
     desc_by_name = {r["action"]: r.get("_description", r.get("summary", "")) for r in rows}
 
-    corpus = json.loads(CORPUS.read_text(encoding="utf-8"))
+    corpus_path = Path(args.corpus)
+    corpus = json.loads(corpus_path.read_text(encoding="utf-8"))
     queries = corpus["queries"]
+    if corpus_path != CORPUS:
+        print(f"corpus: {corpus_path.name}  ({len(queries)} queries)")
 
     # ---- Validate the corpus BEFORE measuring anything ---------------------
     # A misspelled target silently scores 0 and reads as a router failure. That
@@ -182,11 +195,17 @@ def main() -> int:
         print(f"  {g:10s} n={len(rs):2d}  route {100*rr/len(rs):5.1f}%   menu {100*mr/len(rs):5.1f}%")
 
     if args.write:
-        RESULTS.write_text(
+        if args.out:
+            out = Path(args.out)
+        elif corpus_path == CORPUS:
+            out = RESULTS
+        else:
+            out = HERE / f"{corpus_path.stem}_results.json"
+        out.write_text(
             json.dumps({"summary": summary, "per_query": per_query}, indent=2) + "\n",
             encoding="utf-8",
         )
-        print(f"\nwrote {RESULTS}")
+        print(f"\nwrote {out}")
 
     return 0
 

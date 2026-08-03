@@ -125,23 +125,34 @@ class TestGates:
         `route` runs the lexical fallback ONLY when no rule matched, so an
         action a rule did not name was never scored — and calling that
         'ranked below cutoff' points a reader at weights nothing consulted.
+
+        ⚠ Constructed rather than borrowed from a live miss. The first version
+        of this test used "what breaks if I change the POST orders endpoint",
+        which v1.108.220 FIXED — so the test broke for the best possible reason
+        and had to be rewritten anyway. A gate test must demonstrate the gate,
+        not depend on a defect surviving.
         """
         rows, names = catalog
+        task = "who calls this"          # fires the callers rule
+        assert _counter.classify_intent(task, names), "fixture needs a live rule"
         exp = explain_route(
-            "what breaks if I change the POST orders endpoint",
-            "get_endpoint_impact", catalog_rows=rows, catalog_names=names,
+            task, "get_file_tree", catalog_rows=rows, catalog_names=names
         )
         assert exp["outcome"] == RULE_PREEMPTED
         assert exp["scored"] is False
-        assert exp["preempted_by"] == "get_blast_radius"
+        assert exp["preempted_by"] in names
         assert "never scored" in exp["experiment"]
         assert "rank" not in exp, "a never-scored action has no rank to report"
 
     def test_zero_overlap_is_reported_as_unrankable_not_as_a_low_rank(self, catalog):
         rows, names = catalog
+        # Constructed: tokens that appear in no action name or description, and
+        # trip no curated rule. Borrowing a live miss makes the test rot the
+        # moment the miss is fixed.
+        task = "zzqqx wwvvk yylmn"
+        assert not _counter.classify_intent(task, names)
         exp = explain_route(
-            "show me the body of this function", "get_symbol_source",
-            catalog_rows=rows, catalog_names=names,
+            task, "get_symbol_source", catalog_rows=rows, catalog_names=names,
         )
         assert exp["outcome"] == NO_LEXICAL_OVERLAP
         assert exp["score"] == 0.0
@@ -166,9 +177,12 @@ class TestContributions:
     def test_zero_contribution_tokens_are_listed(self, catalog):
         """Dropping the zero rows is what makes a ranking look inexplicable."""
         rows, names = catalog
+        # A query mixing a token the target scores on with tokens it does not,
+        # and tripping no rule, so the lexical branch is the one under test.
+        task = "decorator zzqqx wwvvk"
+        assert not _counter.classify_intent(task, names)
         exp = explain_route(
-            "how concentrated is this codebase and how deep does it nest",
-            "get_architecture_metrics", catalog_rows=rows, catalog_names=names,
+            task, "get_decorator_census", catalog_rows=rows, catalog_names=names,
         )
         assert exp["contributions"]
         assert any(c["points"] == 0.0 for c in exp["contributions"])
