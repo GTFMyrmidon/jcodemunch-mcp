@@ -167,6 +167,18 @@ _SKIP_DIRECTORY_NAMES: list[str] = [
     "dist", "build", ".git", ".tox", ".mypy_cache", "target",
     ".gradle", "test_data", "testdata", "fixtures", "snapshots",
     "migrations", "generated", "proto", "DerivedData", ".build",
+    # v1.108.234: duplicate source trees. A `backup/`, `old/` or `archive/`
+    # directory holding real source files indexes the SAME symbols twice, and
+    # the copies then compete with the originals in ranking. Reported by a user
+    # who indexed a project root (1,824 files, ~40% sources) and got diluted
+    # results plus some empty queries; scoping to the crate fixed it.
+    #
+    # ⚠ These are ordinary English words and CAN name a real package. That is
+    # why `exclude_skip_directories` exists — a project that ships an
+    # `archive/` module removes it there per-project. Every skip is also
+    # counted in `discovery_skip_counts`, so a surprised user can see which
+    # rule dropped what rather than guessing.
+    "backup", "old", "archive",
 ]
 
 # Glob-style patterns — matched by regex in index_folder, by suffix in index_repo.

@@ -2,6 +2,72 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.234] - 2026-08-03 - duplicate source trees stop competing with the originals
+
+`backup`, `old` and `archive` join the built-in directory skip list.
+
+⚠ **This is a behaviour change, not a pure fix.** A directory with one of those
+three names is no longer indexed. Read the opt-out below before upgrading if
+your project ships one.
+
+### Why
+
+A user indexed a project root — 1,824 files, roughly 40% actual sources, the
+rest docs, configs and backups — and got diluted ranking plus some queries
+returning empty. Re-indexing the crate alone fixed it. Their diagnosis was that
+jCodeMunch needed a default ignore list for non-source *extensions*.
+
+⚠⚠ **That remedy would not have fixed it, and finding out why is the actual
+content of this release.** There is no extension ignore list because the
+extension gate is an **allow-list** (157 extensions / 77 languages,
+`index_folder.py:538`); anything unrecognised is already dropped as
+`wrong_extension`. Verified against the tree: `.md`, `.rst`, `.txt`, `.html`,
+`.ini`, `.cfg`, `.csv`, `.env` and every backup suffix (`.bak`, `.old`,
+`.orig`, `.backup`) were **already never indexed**.
+
+What actually dilutes is a **duplicate source tree** — a `backup/`, `old/` or
+`archive/` directory holding real `.py` / `.go` / `.ts` files, whose symbols are
+indexed twice and then compete with the originals. A ranking problem wearing an
+extension problem's clothes. Also ruled out: 1,824 files is under the 2,000
+`JCODEMUNCH_MAX_FOLDER_FILES` default, so it was not truncation.
+
+### The opt-out, because these are ordinary English words
+
+A project can legitimately ship an `archive/` module. `exclude_skip_directories`
+removes any entry from the built-in list per-project:
+
+```jsonc
+{ "exclude_skip_directories": ["archive"] }
+```
+
+⚠ Note the direction: `JCODEMUNCH_EXTRA_IGNORE_PATTERNS` only **adds** skips;
+this key is the only one that **removes** a built-in. Every skip is also counted
+in `discovery_skip_counts`, so a surprised user can see which rule dropped what
+instead of guessing.
+
+### What is deliberately NOT covered
+
+**Plurals and variants.** `backups/`, `archives/`, `archived/`, `old_data/` and
+`copy/` are still indexed. Widening to them is a separate decision with its own
+false-positive surface; a test asserts their absence so that choice is made
+deliberately rather than discovered later.
+
+### Segment matching, verified rather than assumed
+
+`old` is a substring of many legitimate directory names. Both index paths match
+whole segments — `index_repo.should_skip_file` on `"/" + pattern`,
+`index_folder._build_skip_dirs_regex` on an anchored `^(...)$` — so
+`threshold/`, `household/`, `scaffold/`, `manifold/` and `goldilocks/` are
+unaffected. This was checked end-to-end on both paths, not read off the regex.
+
+⚠ The negative tests are the load-bearing ones: if either matcher is ever
+loosened to a bare substring test, they fail instead of a user silently losing
+every directory whose name ends in "old".
+
+Tests: `tests/test_v1_108_234.py` (34). `TROUBLESHOOTING.md`'s "Ranking feels
+diluted" entry is updated in the same commit — it previously stated these names
+were *not* in the skip list, which this release makes false.
+
 ## [1.108.233] - 2026-08-03 - a baseline an agent would actually recognise
 
 The published baseline has always been "concatenate every indexed source file".

@@ -77,12 +77,16 @@ Two things do dilute, and neither is an extension problem:
    `.yaml`, `.yml`, `.toml`, `.xml`, `.sql`, `.sh` are deliberately indexed —
    they carry manifests, CI definitions and framework wiring that
    `get_project_intel` and route detection rely on.
-2. **Duplicate source trees.** A `backup/`, `old/`, `archive/`, `copy/` or
-   vendored directory holding real `.py` / `.go` / `.ts` files gets indexed
-   alongside the originals, so the same symbols appear twice and compete with
-   each other. This is a **ranking** problem wearing an extension problem's
-   clothes, it is the more common cause, and those directory names are not in
-   the built-in skip list.
+2. **Duplicate source trees.** A `copy/`, `backups/`, `archived/` or vendored
+   directory holding real `.py` / `.go` / `.ts` files gets indexed alongside the
+   originals, so the same symbols appear twice and compete with each other. This
+   is a **ranking** problem wearing an extension problem's clothes, and it is the
+   more common cause.
+
+   As of **v1.108.234** the singular forms `backup`, `old` and `archive` are
+   skipped by default. ⚠ **Plurals and variants are not** — `backups/`,
+   `archives/`, `archived/`, `old_data/` and `copy/` are still indexed, so this
+   remains the case to check first.
 
 **Fix, most effective first:**
 
@@ -92,11 +96,20 @@ Two things do dilute, and neither is an extension problem:
 2. **Exclude duplicate trees by path**, not by extension:
 
    ```bash
-   export JCODEMUNCH_EXTRA_IGNORE_PATTERNS="backup/,old/,archive/,**/vendor-copy/**"
+   export JCODEMUNCH_EXTRA_IGNORE_PATTERNS="backups/,archives/,archived/,**/vendor-copy/**"
    ```
 
    Gitignore-style, comma-separated or a JSON array. Per call, pass
    `extra_ignore_patterns=[...]` to `index_folder`.
+
+   ⚠ **The reverse case.** If a directory named `backup`, `old` or `archive` is
+   a real part of your project, v1.108.234 now skips it. Un-skip it with the
+   `exclude_skip_directories` config key — that removes an entry from the
+   built-in list, where `JCODEMUNCH_EXTRA_IGNORE_PATTERNS` only adds:
+
+   ```jsonc
+   { "exclude_skip_directories": ["archive"] }
+   ```
 3. **Read `discovery_skip_counts` in the index response.** It reports which rule
    dropped what — `extra_ignore`, `gitignore`, `wrong_extension`, `too_large`,
    `secret`, `binary`. If the count you expect is zero, the rule you assumed was
