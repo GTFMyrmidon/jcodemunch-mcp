@@ -398,7 +398,15 @@ def _snapshot(index, verdict: dict, coverage: Optional[dict], *, trust_channel: 
         # would price a subprocess into answers that do not need it), so a
         # positive receipt reports `unknown` — which is what it is, not `clean`.
         "working_tree": tree.get("state") or "unknown",
-        "coverage_fingerprint": receipts.coverage_fingerprint(coverage),
+        # v1.108.221: bound to the CAPABILITY certificate, not the coverage
+        # block alone. ⚠ This changes minted evidence ids, deliberately: two
+        # installs with different grammar packs or file-size limits index the
+        # same commit differently and both report `complete: true`, so their
+        # receipts previously shared a fingerprint while describing different
+        # corpora. Ids are session-scoped and in memory, so nothing stored
+        # breaks; what changes is that a receipt now attests the corpus it was
+        # actually measured against.
+        "coverage_fingerprint": receipts.coverage_fingerprint(coverage, index),
         "scorer_version": SCORER_VERSION,
         "conditions": _conditions(verdict, freshness, coverage),
     }

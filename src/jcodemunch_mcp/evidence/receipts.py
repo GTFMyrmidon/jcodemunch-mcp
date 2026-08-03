@@ -129,18 +129,37 @@ def evidence_id(subject: dict, effective_search: dict, snapshot: dict) -> str:
     return f"{_ID_ALGO}:{digest}"
 
 
-def coverage_fingerprint(coverage: Optional[dict]) -> Optional[str]:
-    """Opaque digest of the coverage block backing this receipt.
+def coverage_fingerprint(coverage: Optional[dict], index=None) -> Optional[str]:
+    """Opaque digest of the corpus backing this receipt.
 
-    Deliberately opaque and deliberately NOT a corpus manifest: source-universe
-    identity, per-file parse outcomes and parser capability fingerprints are
-    Phase 5 (#385). This is the extension point, and filling it in is that
-    issue's job. What it does buy today is that two otherwise-identical scans
-    over corpora with different coverage cannot share an evidence id.
+    Deliberately opaque and deliberately NOT a corpus manifest. What it buys is
+    that two otherwise-identical scans over different corpora cannot share an
+    evidence id.
+
+    ⚠ **v1.108.221 widened what "different corpora" means.** Until now this
+    hashed the coverage block alone — what the SCAN did not see. Coverage is
+    computed by reconciling a walk against the policy that produced it, so two
+    installs with different grammar packs, file-size limits or ignore patterns
+    index the same commit differently and BOTH report ``complete: true``. Their
+    receipts then shared a fingerprint while describing different corpora.
+
+    When ``index`` is supplied the digest also binds the capability certificate
+    (parser registry + grammar-pack versions, eligibility policy, evidence
+    channel generations). ``index=None`` keeps the pre-.221 digest byte-for-byte
+    so an existing receipt's id does not move.
     """
-    if not coverage:
+    if not coverage and index is None:
         return None
-    return hashlib.sha256(_canonical(coverage).encode("utf-8")).hexdigest()[:32]
+    payload: dict = {"coverage": coverage} if index is not None else coverage
+    if index is not None:
+        try:
+            from .capability import build_certificate
+
+            payload["capability"] = build_certificate(index, coverage)
+        except Exception:
+            logger.debug("Capability certificate unavailable for a receipt",
+                         exc_info=True)
+    return hashlib.sha256(_canonical(payload).encode("utf-8")).hexdigest()[:32]
 
 
 def build_envelope(

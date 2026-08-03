@@ -2,6 +2,80 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.221] - 2026-08-02 - what this install could establish, not just what it saw
+
+`evidence/capability.py` — the `munch.corpus-capability/v1` certificate, bound
+into `receipts.coverage_fingerprint`.
+
+The distinction, and it is the whole release:
+
+    coverage    — what this SCAN did not see
+    capability  — what this INSTALLATION was ABLE to see, at this generation
+
+⚠⚠ **The live number that made this a real artifact rather than a rename.** On
+jcm's own index, coverage reports `complete: true` while **59 files are skipped
+under `wrong_extension`**. That reason conflates two claims a negative answer
+must keep apart: *"that file is not source code"* (a scope decision, correctly
+excluded) and *"this install cannot parse that"* (a capability gap wearing a
+scope decision's clothes). The walk has no way to tell which.
+
+#382 already established the mechanism rather than hypothesising it:
+`tree-sitter-language-pack` 1.x stopped bundling grammars, three of our
+registered languages do not exist there at all, and the nim grammar was swapped
+for an upstream our extractor reads as empty. **Two installs on different packs
+have different capability while reporting identical coverage.** `complete` is an
+honest statement about the walk and a weaker statement about the tree than a
+reader assumes.
+
+⚠ This does NOT make coverage wrong. `WITHHELD_SKIP_REASONS` already refuses
+`complete` for `too_large` / `file_limit` / `unreadable` (v1.108.193) — the
+config-dependent limits. The certificate names the axis the walk never had a
+reason to question: parser and channel capability.
+
+### Contents, bounded by construction
+
+Parser registry fingerprint (language + extension counts, extensions digest,
+`tree-sitter` and `tree-sitter-language-pack` versions), eligibility policy
+(values AND a digest, because a reader comparing two certificates needs to see
+WHICH limit differs), evidence-channel generations, and the coverage summary
+with `unsupported_extension_skips` surfaced separately from scope decisions.
+
+No file list, no manifest: counts, versions and digests only. A test asserts the
+serialised document stays under 4 KB and contains no source path.
+
+### Bound into receipts, or it would be decorative
+
+The report that proposed this named its own gate: *"a resource that appears only
+in diagnostics becomes decorative metadata."* `coverage_fingerprint` has carried
+a comment naming this as its extension point since v1.108.183; it now binds the
+certificate.
+
+⚠ **This changes minted evidence ids, deliberately.** Two installs with
+different grammar packs or file-size limits index the same commit differently,
+both report `complete: true`, and their receipts previously shared a fingerprint
+while describing different corpora. Ids are session-scoped and in memory, so
+nothing stored breaks — and `coverage_fingerprint(cov)` with no index returns
+the pre-.221 digest byte-for-byte, pinned by a test.
+
+### Two bugs written and caught here, both flattering us
+
+⚠⚠ `parser_fingerprint` reported **157 languages**. `LANGUAGE_EXTENSIONS` maps
+extension -> language, so `len()` of it is the EXTENSION count. The real figure
+is **74**. A document whose entire purpose is honest capability reporting
+overstated capability by 2x. A test now asserts `languages < extensions`.
+
+⚠ `channel_generations` bound a local `store = EmbeddingStore(path)` over the
+`store` parameter the compiler-evidence probe needs, so that answer depended on
+an already-overwritten variable. Renamed, with a test that an unprobeable
+channel stays `unknown` rather than defaulting to `absent` — collapsing those is
+the v1.108.215 false-absence shape one layer up.
+
+⚠ Not registered as an MCP tool; the moratorium applies to us first, and a test
+asserts it.
+
+Tests: `tests/test_capability_certificate.py` (15). Full suite 6554 passed,
+7 skipped, 0 failed.
+
 ## [1.108.220] - 2026-08-02 - a held-out corpus, and what it said about the last two numbers
 
 14 curated intent rules closing the defect classes the v1.108.217 counterfactual
