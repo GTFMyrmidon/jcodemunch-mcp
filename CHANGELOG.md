@@ -2,6 +2,63 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.232] - 2026-08-03 - git output is decoded as UTF-8, not as cp1252
+
+In-house. Found while re-indexing the benchmark corpora, reproduced before it
+was fixed, and verified at the CLI rather than at the function that was edited.
+
+`subprocess.run(..., text=True)` with no `encoding=` decodes the child's output
+with `locale.getpreferredencoding()`. On a stock Windows box that is **cp1252**.
+Git emits UTF-8 unconditionally. One non-ASCII byte in an author name, a commit
+subject or a path and the decode raises.
+
+**36 call sites** carried `text=`/`universal_newlines=` with no `encoding=`:
+32 in `src/`, 4 in `speedreview/`. All now pass
+`encoding="utf-8", errors="replace"` — an author's name is decoration, and
+mangling one beats losing the index.
+
+### Why this was worse than an ordinary exception
+
+`UnicodeDecodeError` is raised inside `subprocess`'s **reader thread**, so:
+
+* it prints an unhandled thread traceback that no `try/except` around the call
+  can catch;
+* `result.stdout` then comes back `None`, and the caller dies somewhere else
+  entirely with `'NoneType' object has no attribute 'splitlines'` — a message
+  naming neither git nor encoding;
+* every `except Exception:` around the call still runs, so the symptom is a
+  provider or tool reporting itself *skipped*, not broken.
+
+⚠ **Measured on the reproduction**: a repository with one commit authored by
+`Ývonne` (UTF-8 `c3 9d`; `9d` is undefined in cp1252) indexed **successfully**,
+reported `providers_skipped: [{provider: "git_blame", reason: "error"}]`, and
+silently dropped `last_author` / `last_modified` for **every file in the tree**.
+The index looked fine. After the fix the same index reports
+`context_enrichment.git_blame.files_with_blame: 1` and the author round-trips as
+`U+00DD`, not as mojibake.
+
+### The convention now has a test, not a habit
+
+`tests/test_subprocess_encoding_guard.py` walks the AST of every guarded tree
+and fails on any `run`/`Popen`/`check_output`/`check_call`/`call` that passes
+`text=`/`universal_newlines=` without `encoding=`. Proven non-vacuous both ways:
+the detector is parametrized over known-good and known-bad snippets through the
+**same function** the repo-wide check uses, and stashing this release's `src/`
+and `speedreview/` changes fails it with all 36 sites named.
+
+`tests/` is **exempt by name, with the reason on the record** — it drives git
+against fixture repositories the suite creates itself, with ASCII authors and
+ASCII paths, so the kwarg would assert nothing about code a user runs. It is
+listed in `EXEMPT_TREES` rather than merely left out of scope so that adding a
+tree is a decision and not an oversight. `KNOWN_UNENCODED` is empty and stays as
+a ratchet: a separate test fails if a listed entry turns out to be compliant, so
+a stale entry cannot decay into a permanent excuse.
+
+⚠ **This is invisible to CI and to any UTF-8 development box.** CI is Linux. The
+only population that hits it is Windows users with a non-ASCII contributor —
+which is why the convention could not be maintained by noticing, and why the
+sweep found 36 rather than 1.
+
 ## [1.108.231] - 2026-08-03 - only signals that discriminate get a vote
 
 Closes [#408](https://github.com/jgravelle/jcodemunch-mcp/issues/408). The

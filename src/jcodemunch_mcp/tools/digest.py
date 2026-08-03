@@ -75,7 +75,7 @@ def _git_head(source_root: str) -> Optional[str]:
             ["git", "rev-parse", "HEAD"],
             cwd=source_root,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=5,
             stdin=subprocess.DEVNULL,
         )

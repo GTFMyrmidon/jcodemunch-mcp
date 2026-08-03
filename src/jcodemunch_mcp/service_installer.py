@@ -120,7 +120,7 @@ def _status_systemd() -> dict:
         return {"platform": "systemd", "active": False, "reason": "systemctl not found"}
     result = subprocess.run(
         ["systemctl", "--user", "is-active", f"{SERVICE_NAME}.service"],
-        capture_output=True, text=True, check=False,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
     )
     state = result.stdout.strip() or result.stderr.strip()
     return {"platform": "systemd", "active": state == "active", "state": state}
@@ -189,7 +189,7 @@ def _uninstall_launchd() -> dict:
 def _status_launchd() -> dict:
     result = subprocess.run(
         ["launchctl", "list", LAUNCHD_LABEL],
-        capture_output=True, text=True, check=False,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
     )
     return {"platform": "launchd", "active": result.returncode == 0, "detail": result.stdout.strip()}
 
@@ -209,7 +209,7 @@ def _install_windows() -> dict:
         "/RL", "LIMITED",
         "/TR", cmd_str,
     ]
-    result = subprocess.run(args, capture_output=True, text=True, check=False)
+    result = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
     if result.returncode != 0:
         raise InstallerError(f"schtasks /Create failed: {result.stderr.strip() or result.stdout.strip()}")
     subprocess.run(["schtasks", "/Run", "/TN", SERVICE_NAME], check=False, capture_output=True)
@@ -219,7 +219,7 @@ def _install_windows() -> dict:
 def _uninstall_windows() -> dict:
     result = subprocess.run(
         ["schtasks", "/Delete", "/F", "/TN", SERVICE_NAME],
-        capture_output=True, text=True, check=False,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
     )
     return {"platform": "schtasks", "task": SERVICE_NAME, "removed": result.returncode == 0}
 
@@ -227,7 +227,7 @@ def _uninstall_windows() -> dict:
 def _status_windows() -> dict:
     result = subprocess.run(
         ["schtasks", "/Query", "/TN", SERVICE_NAME, "/FO", "LIST"],
-        capture_output=True, text=True, check=False,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
     )
     active = "Running" in result.stdout or "Ready" in result.stdout
     return {"platform": "schtasks", "active": active, "detail": result.stdout.strip()[:400]}

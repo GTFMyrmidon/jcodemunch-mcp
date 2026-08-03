@@ -163,7 +163,7 @@ def _git_head_uncached(source_root: Path) -> Optional[str]:
             ["git", "rev-parse", "HEAD"],
             cwd=str(source_root),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=2,
             stdin=subprocess.DEVNULL,
         )

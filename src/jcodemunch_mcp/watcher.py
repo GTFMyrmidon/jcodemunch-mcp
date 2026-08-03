@@ -1216,7 +1216,7 @@ def parse_git_worktrees(repo_path: str) -> set[str]:
         result = subprocess.run(
             ["git", "-C", repo_path, "worktree", "list", "--porcelain"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=10,
             stdin=subprocess.DEVNULL,
         )

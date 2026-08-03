@@ -365,7 +365,7 @@ def _configure_claude_code(*, dry_run: bool = False) -> str:
     try:
         result = subprocess.run(
             [claude, "mcp", "add", "jcodemunch", "uvx", "jcodemunch-mcp"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         if result.returncode == 0:
             return "  ran: claude mcp add jcodemunch uvx jcodemunch-mcp"
@@ -1554,7 +1554,7 @@ def _unconfigure_claude_code(*, dry_run: bool) -> str:
     try:
         result = subprocess.run(
             [claude, "mcp", "remove", "jcodemunch"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         if result.returncode == 0:
             return "  ran: claude mcp remove jcodemunch"
@@ -1886,7 +1886,7 @@ def install_status() -> dict[str, Any]:
                 try:
                     result = subprocess.run(
                         [claude, "mcp", "list"],
-                        capture_output=True, text=True, timeout=10,
+                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
                     )
                     # Launcher-agnostic: matches the server name in `mcp list`
                     # output regardless of how it's launched (uvx jcodemunch-mcp,

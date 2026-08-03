@@ -293,7 +293,7 @@ def _read_origin_url(git_root: Path) -> Optional[str]:
             cwd=str(git_root),
             check=False,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=5,
             stdin=subprocess.DEVNULL,
             env=env,

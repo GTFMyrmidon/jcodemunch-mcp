@@ -112,7 +112,7 @@ def _churn_for_file(file_path: str, source_root: str, days: int = 30) -> int:
             ["git", "log", f"--since={days} days ago", "--oneline", "--", file_path],
             cwd=source_root,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=5,
             stdin=subprocess.DEVNULL,
         )

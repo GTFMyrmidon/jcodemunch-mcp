@@ -85,7 +85,7 @@ class GitBlameProvider(ContextProvider):
                 ["git", "rev-parse", "--show-toplevel"],
                 cwd=str(folder_path),
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 timeout=5,
                 stdin=subprocess.DEVNULL,
             )
@@ -119,7 +119,7 @@ class GitBlameProvider(ContextProvider):
                 ],
                 cwd=str(folder_path),
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 timeout=GIT_BLAME_TIMEOUT_S,
                 stdin=subprocess.DEVNULL,
             )

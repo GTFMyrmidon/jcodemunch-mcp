@@ -360,7 +360,7 @@ def _composite_video(slides_dir: str, audio_dir: str, segments: list[NarrationSe
     result = subprocess.run(
         cmd,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         timeout=120,
     )
 

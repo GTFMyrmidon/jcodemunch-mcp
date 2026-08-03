@@ -122,7 +122,7 @@ def _get_git_head(repo_path: Path) -> Optional[str]:
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=str(repo_path),
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
             stdin=subprocess.DEVNULL,
         )
         if result.returncode == 0:
@@ -143,7 +143,7 @@ def _get_git_branch(repo_path: Path) -> Optional[str]:
         result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
             cwd=str(repo_path),
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
             stdin=subprocess.DEVNULL,
         )
         if result.returncode == 0:

@@ -120,7 +120,7 @@ def _git_toplevel(path: Path) -> Optional[Path]:
         result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             cwd=str(path),
             timeout=5,
             stdin=subprocess.DEVNULL,

@@ -55,7 +55,7 @@ def _resolve_main_repo(cwd: str) -> str:
         result = subprocess.run(
             ["git", "-C", cwd, "rev-parse", "--path-format=absolute",
              "--git-common-dir"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
             stdin=subprocess.DEVNULL,  # don't inherit the hook's stdin pipe (Windows git wrapper deadlock)
         )
         if result.returncode == 0:
@@ -144,7 +144,7 @@ def handle_hook_event(event_type: str, manifest_path: Path | None = None) -> Non
         result = subprocess.run(
             ["git", "-C", cwd, "worktree", "add", resolved, "-b", branch_name],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             stdin=subprocess.DEVNULL,  # don't inherit the hook's stdin pipe (Windows git wrapper deadlock)
         )
         if result.returncode != 0:
@@ -158,7 +158,7 @@ def handle_hook_event(event_type: str, manifest_path: Path | None = None) -> Non
         result = subprocess.run(
             ["git", "-C", repo_root, "worktree", "remove", resolved, "--force"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             stdin=subprocess.DEVNULL,  # don't inherit the hook's stdin pipe (Windows git wrapper deadlock)
         )
         # Non-fatal: worktree may already be gone.
@@ -170,7 +170,7 @@ def handle_hook_event(event_type: str, manifest_path: Path | None = None) -> Non
         subprocess.run(
             ["git", "-C", repo_root, "branch", "-D", branch_name],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             stdin=subprocess.DEVNULL,  # don't inherit the hook's stdin pipe (Windows git wrapper deadlock)
         )
         # Branch deletion is best-effort — no error if it doesn't exist.

@@ -47,7 +47,7 @@ SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2}
 def run_git(*args: str) -> str:
     result = subprocess.run(
         ["git", *args],
-        capture_output=True, text=True, cwd=WORKSPACE,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=WORKSPACE,
         stdin=subprocess.DEVNULL,
     )
     if result.returncode != 0:
@@ -333,7 +333,7 @@ def post_comment(body: str):
     existing = subprocess.run(
         ["gh", "api", f"repos/{REPO}/issues/{PR_NUMBER}/comments",
          "--jq", '.[] | select(.body | startswith("## speedreview")) | .id'],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
         stdin=subprocess.DEVNULL,
         env={**os.environ, "GH_TOKEN": GITHUB_TOKEN},
     )
@@ -347,7 +347,7 @@ def post_comment(body: str):
             ["gh", "api", "--method", "PATCH",
              f"repos/{REPO}/issues/comments/{comment_id}",
              "-f", f"body={body}"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
             stdin=subprocess.DEVNULL,
             env={**os.environ, "GH_TOKEN": GITHUB_TOKEN},
         )
@@ -356,7 +356,7 @@ def post_comment(body: str):
         # Create new comment
         subprocess.run(
             ["gh", "pr", "comment", PR_NUMBER, "--body", body],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
             stdin=subprocess.DEVNULL,
             env={**os.environ, "GH_TOKEN": GITHUB_TOKEN},
         )

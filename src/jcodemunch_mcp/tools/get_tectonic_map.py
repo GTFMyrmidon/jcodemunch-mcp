@@ -111,7 +111,7 @@ def _temporal_edges(source_root: str, source_files: frozenset, days: int = 90) -
     try:
         r = subprocess.run(
             ["git", "log", f"--since={days} days ago", "--name-only", "--format=COMMIT_SEP"],
-            cwd=source_root, capture_output=True, text=True,
+            cwd=source_root, capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=60, stdin=subprocess.DEVNULL,
         )
         if r.returncode != 0 or not r.stdout.strip():
@@ -444,7 +444,7 @@ def get_tectonic_map(
         try:
             r = subprocess.run(
                 ["git", "rev-parse", "--git-dir"],
-                cwd=index.source_root, capture_output=True, text=True,
+                cwd=index.source_root, capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=5, stdin=subprocess.DEVNULL,
             )
             if r.returncode == 0:
