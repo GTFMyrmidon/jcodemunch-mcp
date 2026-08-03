@@ -271,11 +271,83 @@ def _package_json_entries(index, store, owner, repo_name) -> set[str]:
 # Main tool
 # ---------------------------------------------------------------------------
 
+# A signal firing on >= this share of analysed symbols (or <= 1 - this) is a
+# constant on that repository, not a discriminator, and gets no vote (#408).
+#
+# ⚠ Chosen from measurement, not taste. Sweeping the cutoff across 31 indexed
+# repositories (Python, Go, TypeScript, JavaScript, Rust): 0.90 is the LARGEST
+# value at which no repository reports more than 90% of its functions as dead.
+# 0.95 still leaves httpx at 93.1%, which is the exact failure mode this closes.
+# 0.80 over-suppresses — the median flag rate hits 0.0% and 17 of 31 repos go
+# empty. At 0.90 the corpus mean falls 57.3% -> 27.4%, the median 54.0% -> 26.3%,
+# and six repositories correctly return nothing.
+#
+# ⚠ It does NOT fire where all three signals discriminate: pylint, flask,
+# matplotlib, astropy, scikit-learn, xarray, sphinx and next keep their previous
+# answers exactly. This is not a blanket suppression.
+_DEGENERACY_CUTOFF = 0.90
+
+
+def _resolve_cutoff(value: Optional[float]) -> float:
+    """Validate a caller-supplied degeneracy cutoff.
+
+    Only ``0.5 < cutoff <= 1.0`` is coherent. The rule is
+    ``1 - cutoff < rate < cutoff``, so at 0.5 the bounds meet and at anything
+    below it they cross: every signal would be uninformative and the tool would
+    return nothing for every repository on earth. That is a silent, total
+    failure, so it is refused rather than clamped.
+
+    ``1.0`` is the documented escape hatch: it excludes only a signal that fires
+    on exactly every or exactly no symbol, which is close to the pre-v1.108.231
+    behaviour for callers who want the old volume back.
+    """
+    if value is None:
+        return _DEGENERACY_CUTOFF
+    try:
+        cutoff = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"degeneracy_cutoff must be a number between 0.5 (exclusive) and 1.0, got {value!r}"
+        )
+    if not (0.5 < cutoff <= 1.0):
+        raise ValueError(
+            f"degeneracy_cutoff must be >0.5 and <=1.0, got {cutoff}. Below 0.5 the "
+            "informative band inverts and every signal is excluded, which returns "
+            "nothing for every repository."
+        )
+    return cutoff
+
+
+def _informative_signals(
+    analysed: int,
+    fire_counts: dict[str, int],
+    cutoff: float = _DEGENERACY_CUTOFF,
+) -> set[str]:
+    """The signals that actually discriminate on this repository.
+
+    A signal that fires on nearly every symbol accuses everything; one that
+    fires on nearly none accuses nothing. Either way it moved no verdict
+    relative to its peers while still setting the scale they were divided by.
+
+    With no symbols analysed there is nothing to measure, so every signal is
+    treated as informative — refusing to score on an empty repository would be
+    inventing a verdict, not withholding one.
+    """
+    if not analysed:
+        return set(_SIGNAL_NAMES)
+    lo = 1.0 - cutoff
+    return {
+        s for s in _SIGNAL_NAMES
+        if lo < (fire_counts.get(s, 0) / analysed) < cutoff
+    }
+
+
 def _signal_diagnostics(
     analysed: int,
     fire_counts: dict[str, int],
     cofire_counts: dict[str, int],
     entry_point_count: int,
+    cutoff: float = _DEGENERACY_CUTOFF,
 ) -> dict:
     """Report what each signal actually measured on THIS repository (#408).
 
@@ -305,7 +377,7 @@ def _signal_diagnostics(
     diag: dict = {
         "analysed": analysed,
         "entry_points_detected": entry_point_count,
-        "confidence_basis": "unweighted_vote_of_3",
+        "confidence_basis": "informative_signals_over_3",
     }
     if not analysed:
         return diag
@@ -315,9 +387,19 @@ def _signal_diagnostics(
     diag["cofire_rate"] = {
         k: round(v / analysed, 4) for k, v in sorted(cofire_counts.items())
     }
-    diag["uninformative"] = sorted(
-        s for s, r in diag["fire_rate"].items() if r in (0.0, 1.0)
-    )
+    informative = _informative_signals(analysed, fire_counts, cutoff)
+    diag["informative"] = sorted(informative)
+    # ⚠ Semantics tightened in v1.108.231. In .230 this meant "rate is exactly
+    # 0.0 or 1.0", a placeholder written before there was a measurement. It now
+    # means "does not get a vote", which is the thing a caller actually needs to
+    # know. seaborn's not_barrel_exported at 0.995 was excluded under the old
+    # definition and is a constant by any useful reading.
+    diag["uninformative"] = sorted(set(_SIGNAL_NAMES) - informative)
+    diag["degeneracy_cutoff"] = cutoff
+    # The ceiling, not a score: with fewer than three voting signals nothing in
+    # this repository can reach 1.0, and a caller comparing against the default
+    # min_confidence=0.5 deserves to see why the result set is small or empty.
+    diag["max_achievable_confidence"] = round(len(informative) / 3.0, 2)
     if entry_point_count == 0:
         diag["degraded"] = {"unreachable_file": "no_entry_points_detected"}
     return diag
@@ -427,6 +509,7 @@ def get_dead_code_v2(
     max_results: int = 100,
     file_pattern: Optional[str] = None,
     storage_path: Optional[str] = None,
+    degeneracy_cutoff: Optional[float] = None,
 ) -> dict:
     """Find likely-dead functions and methods using three independent signals.
 
@@ -453,6 +536,10 @@ def get_dead_code_v2(
     """
     import fnmatch
     t0 = time.monotonic()
+    try:
+        cutoff = _resolve_cutoff(degeneracy_cutoff)
+    except ValueError as e:
+        return {"error": str(e)}
     try:
         owner, name = _resolve_repo(repo, storage_path)
     except ValueError as e:
@@ -586,10 +673,15 @@ def get_dead_code_v2(
     analysed_count = 0
     fire_counts: dict[str, int] = {s: 0 for s in _SIGNAL_NAMES}
     cofire_counts: dict[str, int] = {}
+    # Pass 1 collects; pass 2 scores (v1.108.231). Which signals are worth a
+    # vote is a property of the whole repository, so it cannot be known until
+    # every symbol has been seen. Scoring inline was what made a signal that
+    # fires on everything still worth a full third.
+    scored: list[tuple[dict, list[str]]] = []
 
     for sym in index.symbols:
         sid = sym.get("id", "")
-        if not sid or sid in seen_ids:
+        if not sid:
             continue
         if sym.get("kind") not in ("function", "method"):
             continue
@@ -606,9 +698,14 @@ def get_dead_code_v2(
         if not include_tests and _is_test_file(sym_file):
             continue
 
-        # Optional file-pattern scope filter.
-        if file_pattern and not fnmatch.fnmatch(sym_file, file_pattern):
-            continue
+        # ⚠ `file_pattern` is deliberately NOT applied here (v1.108.231). It is
+        # the caller's view of the results, not a definition of the population
+        # the signals are measured against. Filtering first made the fire rates
+        # a property of the filter: scoping to a single file drove every rate to
+        # 1.0, no signal discriminated, and the tool returned nothing for a
+        # question it could answer perfectly well. Whether a signal separates
+        # live from dead code is a fact about the codebase. The filter is
+        # applied in pass 2, on what gets returned.
 
         # Skip symbols with entry-point decorators
         if any(ENTRY_POINT_DECORATOR_RE.search(str(d)) for d in (sym.get("decorators") or [])):
@@ -628,7 +725,6 @@ def get_dead_code_v2(
         if sym_name not in barrel_names:
             signals.append("not_barrel_exported")
 
-        # Instrument only — does not participate in the verdict (#408).
         analysed_count += 1
         for s in signals:
             fire_counts[s] += 1
@@ -636,18 +732,42 @@ def get_dead_code_v2(
             for b in signals[i + 1:]:
                 cofire_counts[f"{a}+{b}"] = cofire_counts.get(f"{a}+{b}", 0) + 1
 
-        confidence = len(signals) / 3.0
+        scored.append((sym, signals))
+
+    # Pass 2: only signals that discriminate on THIS repository get a vote.
+    informative = _informative_signals(analysed_count, fire_counts, cutoff)
+    for sym, signals in scored:
+        sid = sym["id"]
+        if sid in seen_ids:
+            continue
+        # Caller's scope filter, applied to the OUTPUT only. See pass 1.
+        if file_pattern and not fnmatch.fnmatch(sym.get("file", ""), file_pattern):
+            continue
+        counted = [s for s in signals if s in informative]
+        # ⚠ Denominator stays 3, deliberately. Dividing by the number of
+        # informative signals would scale a lone survivor back up to 1.0 and
+        # report maximum confidence off one signal — the opposite of the fix.
+        # Holding the denominator is what makes the ceiling fall instead, so a
+        # repository where nothing discriminates returns nothing through the
+        # caller's existing ``min_confidence`` rather than through a second,
+        # invisible suppression rule.
+        confidence = len(counted) / 3.0
         if confidence >= min_confidence:
             seen_ids.add(sid)
-            dead_symbols.append({
+            entry = {
                 "id": sid,
-                "name": sym_name,
+                "name": sym.get("name", ""),
                 "kind": sym.get("kind", ""),
-                "file": sym_file,
+                "file": sym.get("file", ""),
                 "line": sym.get("line", 0),
                 "confidence": round(confidence, 2),
                 "signals": signals,
-            })
+            }
+            if len(counted) != len(signals):
+                # Which of the fired signals actually carried the verdict. Only
+                # emitted when it differs, so the common case costs no tokens.
+                entry["counted_signals"] = counted
+            dead_symbols.append(entry)
 
     dead_symbols.sort(key=lambda x: (-x["confidence"], x["file"], x["line"]))
 
@@ -673,7 +793,7 @@ def get_dead_code_v2(
             "total_matches": total_matches,
             "truncated": truncated,
             "signal_diagnostics": _signal_diagnostics(
-                analysed_count, fire_counts, cofire_counts, entry_point_count
+                analysed_count, fire_counts, cofire_counts, entry_point_count, cutoff
             ),
         },
     }
@@ -681,6 +801,28 @@ def get_dead_code_v2(
         result["_meta"]["file_pattern"] = file_pattern
     if pkg_entries:
         result["_meta"]["package_json_entries"] = sorted(pkg_entries)
+    diag = result["_meta"]["signal_diagnostics"]
+    excluded = diag.get("uninformative") or []
+    if excluded:
+        # An empty or unexpectedly small result set is a finding, not a
+        # malfunction, and it has to say so or it reads as one.
+        ceiling = diag.get("max_achievable_confidence", 0.0)
+        result["signal_warning"] = (
+            f"{len(excluded)} of 3 signals do not discriminate on this repository and "
+            f"were not counted: {', '.join(excluded)}. Each fired on more than "
+            f"{int(cutoff * 100)}% or fewer than "
+            f"{int((1 - cutoff) * 100)}% of analysed symbols, so it "
+            f"accuses everything or nothing. Maximum reachable confidence here is "
+            f"{ceiling}"
+            + (
+                f", which is below your min_confidence of {min_confidence} — nothing "
+                "can be returned. This is a limit of the evidence, not a claim that "
+                "the repository has no dead code."
+                if ceiling < min_confidence else "."
+            )
+            + " Pass entry_point_patterns to make unreachable_file discriminate, or "
+            "lower min_confidence to see the weaker verdicts."
+        )
     if entry_point_count == 0:
         result["framework_warning"] = (
             "No standard entry points detected (e.g. main.py, app.py, __main__.py). "

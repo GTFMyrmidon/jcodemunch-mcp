@@ -719,6 +719,14 @@ _COMPACT_STRIP_PARAMS: dict[str, set[str]] = {
         # the minimal surface is the fix the budget was designed to take.
         "verify_against",
     },
+    # v1.108.231: `degeneracy_cutoff` is an escape hatch for callers who want the
+    # pre-.231 volume back, not a core retrieval control. get_dead_code_v2 is a
+    # core-tier tool and core_compact sits at 3996 of 4000, so a new property on
+    # its schema does not fit there at any description length — the same
+    # measurement that moved `verify_against` here for #402. The handler honours
+    # it regardless, and `_DECLARED_ARG_KEYS` is snapshotted before this strip
+    # runs, so a hidden-but-honoured param is never reported as an ignored arg.
+    "get_dead_code_v2": {"degeneracy_cutoff"},
     "get_context_bundle": {"budget_strategy"},
     "get_ranked_context": {"detail_level", "compress", "receipt"},
     "search_text": {"receipt"},
@@ -3056,7 +3064,14 @@ def _build_tools_list() -> list[Tool]:
                     },
                     "file_pattern": {
                         "type": "string",
-                        "description": "Optional glob (e.g. `src/**`, `*.py`) — only analyse symbols whose file matches.",
+                        "description": "Optional glob (e.g. `src/**`, `*.py`) — only scopes the RESULTS, not the population the signals are measured over.",
+                    },
+                    "degeneracy_cutoff": {
+                        "type": "number",
+                        "description": "Advanced. Fire rate at or above which a signal is treated as a constant and gets no vote (default 0.90; must be >0.5 and <=1.0). Pass 1.0 for pre-1.108.231 volume.",
+                        "default": 0.90,
+                        "exclusiveMinimum": 0.5,
+                        "maximum": 1.0,
                     },
                 },
                 "required": ["repo"],
@@ -5959,6 +5974,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent] | CallToolR
                     max_results=arguments.get("max_results", 100),
                     file_pattern=arguments.get("file_pattern"),
                     storage_path=storage_path,
+                    degeneracy_cutoff=arguments.get("degeneracy_cutoff"),
                 )
             )
         elif name == "get_extraction_candidates":

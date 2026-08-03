@@ -2,6 +2,119 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.231] - 2026-08-03 - only signals that discriminate get a vote
+
+Closes [#408](https://github.com/jgravelle/jcodemunch-mcp/issues/408). The
+arithmetic half, shipped against the measurement v1.108.230 took.
+
+`confidence` was `len(signals) / 3.0`, an unweighted vote in which a signal
+firing on **every** symbol in the repository still contributed a full third.
+A signal whose measured fire rate is degenerate now gets no vote.
+
+⚠ **The denominator stays 3, deliberately.** Dividing by the number of
+informative signals would scale a lone survivor back up to 1.0 and report
+maximum confidence off one signal, which is more confident than the three-signal
+case it replaced. Holding the denominator makes the **ceiling** fall instead, so
+a repository where nothing discriminates returns nothing **through the caller's
+existing `min_confidence`** rather than through a second, invisible suppression
+rule. `_meta.signal_diagnostics.max_achievable_confidence` reports that ceiling,
+and a new `signal_warning` explains an empty result rather than letting it read
+as a malfunction.
+
+### The cutoff was chosen by measurement, not taste
+
+`_DEGENERACY_CUTOFF = 0.90`: a signal firing on >=90% or <=10% of analysed
+symbols is a constant on that repository. Swept across the same 31 repositories:
+
+| cutoff | mean flag% | repos at 0% | repos >90% | median |
+| ---: | ---: | ---: | ---: | ---: |
+| none (1.108.230) | 57.3% | 0 | **5** | 54.0% |
+| 0.95 | 38.1% | 3 | 1 | 41.0% |
+| **0.90** | **27.4%** | 6 | **0** | 26.3% |
+| 0.85 | 20.2% | 10 | 0 | 15.0% |
+| 0.80 | 12.9% | 17 | 0 | 0.0% |
+
+**0.90 is the largest cutoff at which no repository reports more than 90% of its
+functions as dead.** 0.95 still leaves httpx at 93.1%, the exact failure mode
+this closes. 0.80 over-suppresses: the median goes to zero and 17 of 31 repos
+return nothing.
+
+⚠ **This is not a blanket suppression.** Where all three signals discriminate the
+answers are unchanged: pylint 74.6%, flask 62.8%, matplotlib 56.8%, astropy
+55.4%, scikit-learn 43.7%, xarray 49.8%, sphinx 32.5%, next 16.1%. gin
+100.0% -> 0%, seaborn 100.0% -> 0%, httpx 93.1% -> 0%, fastapi 55.8% -> 2.2%,
+jcm 27.2% -> 5.5%.
+
+### ⚠⚠ What this does NOT do, measured
+
+Sampling 60 flagged symbols per repo and asking `check_references` (an
+independent code path) whether they are referenced, before and after:
+
+| repo | flagged before -> after | precision before -> after |
+| --- | --- | --- |
+| gin | 1,010 -> 0 | 43.3% -> n/a |
+| seaborn | 877 -> 0 | 10.0% -> n/a |
+| jcodemunch-mcp | 766 -> 154 | 3.3% -> **1.7%** |
+| pydantic | 827 -> 780 | 11.7% -> 15.0% |
+| django | 9,915 -> 9,831 | 63.3% -> 65.0% |
+
+**Per-item precision did not improve, and on jcm it got worse.** The change
+removes roughly 590 false positives from jcm's output, but it also removes most
+of the true positives with them: recall falls at least as fast as volume. What it
+reliably fixes is the "accuses everything" failure, which is a different and
+worse problem than a low hit rate, because a list containing every function
+carries no information at all.
+
+⚠ `check_references` matches by name, so it over-reports references and these
+precision figures are a **lower** bound rather than an estimate. It is also a
+different methodology from the recorded 69.6%/64.1% dead-code F1, and does not
+falsify it.
+
+### The cutoff is a default, not a law: `degeneracy_cutoff`
+
+New optional parameter. The 0.90 default was chosen from 31 repositories that
+may not resemble yours, so the choice is reversible per-caller instead of
+per-release. Pass `1.0` for something close to pre-1.108.231 volume.
+
+⚠ **Only `0.5 < cutoff <= 1.0` is accepted, and an out-of-range value is refused
+rather than clamped.** The rule is `1 - cutoff < rate < cutoff`; at 0.5 the
+bounds meet and below it they cross, so every signal would be uninformative and
+the tool would return nothing for every repository on earth. A clamp would answer
+a question the caller did not ask and look like it worked.
+
+⚠ **Hidden from the compact schema, still honoured.** `get_dead_code_v2` is
+core-tier and `core_compact` sits at **3996 of 4000 tokens**, so a new schema
+property does not fit there at any description length. It joins
+`_COMPACT_STRIP_PARAMS` exactly as `receipt` and `verify_against` did, for the
+same measured reason. Hidden is not removed: the handler acts on it, and
+`_DECLARED_ARG_KEYS` is snapshotted before the strip so it never reads as a
+caller mistake.
+
+### Two fixes that fell out of the tests
+
+⚠ **`file_pattern` was defining the population the signals were measured
+against.** It filtered symbols before the fire rates were computed, so scoping to
+a single file drove every rate to 1.0, left nothing informative and returned
+nothing for a question the tool could answer. Whether a signal separates live
+from dead code is a fact about the codebase, not about the caller's filter. It is
+now applied to the output only.
+
+⚠ **A repository in which every function looks identical now returns nothing.**
+All three signals fire on 100% of symbols, none discriminates, and the honest
+answer is "cannot tell". This is intended, and it is a sharp edge: a small
+library that genuinely is all dead code gets an empty result plus the
+`signal_warning` explaining why, not a list. Three pre-existing pagination tests
+used exactly that shape as a fixture and had to be given live symbols.
+
+**`_call_graph_only_dead_code` is unchanged.** It is a different, single-signal
+methodology (`confidence` fixed at 0.5, self-labelled `_meta.mode =
+"call_graph_only"`) used when the index has no import graph. There is no
+three-way vote there to reweight.
+
+Tests: `test_v1_108_231.py` (16). `test_v1_108_230.py`'s verdict-invariance test
+is superseded and now states the invariant against the signals that were counted;
+the supersession is recorded in the test rather than deleted.
+
 ## [1.108.230] - 2026-08-03 - the dead-code signals report what they measured
 
 Instrument only. **No verdict and no confidence value changes in this release**,

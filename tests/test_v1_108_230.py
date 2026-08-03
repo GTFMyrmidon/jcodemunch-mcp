@@ -49,7 +49,9 @@ class TestSignalDiagnostics:
         repo, store = _build(tmp_path, _WITH_ENTRY_POINT)
         d = get_dead_code_v2(repo=repo, storage_path=store)["_meta"]["signal_diagnostics"]
         assert d["analysed"] > 0
-        assert d["confidence_basis"] == "unweighted_vote_of_3"
+        # Was "unweighted_vote_of_3" in .230; .231 stopped giving a vote to
+        # signals that do not discriminate.
+        assert d["confidence_basis"] == "informative_signals_over_3"
         assert set(d["fire_rate"]) == set(_SIGNAL_NAMES)
         for rate in d["fire_rate"].values():
             assert 0.0 <= rate <= 1.0
@@ -90,15 +92,29 @@ class TestSignalDiagnostics:
         """
         repo, store = _build(tmp_path, _WITH_ENTRY_POINT)
         d = get_dead_code_v2(repo=repo, storage_path=store)["_meta"]["signal_diagnostics"]
+        # .230 defined uninformative as "rate is exactly 0.0 or 1.0", a
+        # placeholder written before there was a measurement. .231 replaced it
+        # with the degeneracy cutoff, which is the definition that decides votes.
+        cut = d["degeneracy_cutoff"]
         for s, rate in d["fire_rate"].items():
-            assert (s in d["uninformative"]) == (rate in (0.0, 1.0))
+            degenerate = rate >= cut or rate <= 1.0 - cut
+            assert (s in d["uninformative"]) == degenerate
 
     @pytest.mark.parametrize("files", [_NO_ENTRY_POINT, _WITH_ENTRY_POINT])
-    def test_verdicts_unchanged_by_the_instrument(self, tmp_path, files):
-        """The arithmetic is still an unweighted vote of three. Nothing moved."""
+    def test_confidence_counts_only_the_signals_that_voted(self, tmp_path, files):
+        """⚠ SUPERSEDED BY v1.108.231.
+
+        In .230 this asserted `confidence == len(signals) / 3.0` — that an
+        instrument release changes no verdict. That was the correct contract for
+        .230 and it held. .231 then deliberately stopped giving a vote to signals
+        that do not discriminate, so the invariant is now stated against the
+        signals that were actually counted. The denominator is still 3; that part
+        never moved, and it is what makes the ceiling fall rather than a lone
+        surviving signal being rescaled to 1.0.
+        """
         repo, store = _build(tmp_path, files)
         r = get_dead_code_v2(repo=repo, storage_path=store, min_confidence=0.0)
         for d in r["dead_symbols"]:
-            assert d["confidence"] == round(len(d["signals"]) / 3.0, 2), (
-                "an instrument release must not change a confidence value"
-            )
+            counted = d.get("counted_signals", d["signals"])
+            assert d["confidence"] == round(len(counted) / 3.0, 2)
+            assert set(counted) <= set(d["signals"])

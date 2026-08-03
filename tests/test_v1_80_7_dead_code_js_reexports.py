@@ -143,6 +143,34 @@ class TestBarrelExportRegexes:
 
 
 class TestPaginationAndFilter:
+    # ⚠ v1.108.231: every fixture in this class needs at least one LIVE symbol.
+    # A tree where every function is an identical orphan drives all three
+    # signals to a fire rate of 1.0, so none discriminates, none gets a vote,
+    # and the tool correctly returns nothing. These tests exercise pagination
+    # and scoping rather than the signals, so they seed a live module and an
+    # entry point to keep the rates inside the degeneracy cutoff.
+    # Four live symbols, all reachable from an entry point, all called, all
+    # barrel-exported — one clean counterexample per signal. Two live symbols
+    # were not enough against 20 orphans: the rates landed at 0.909, just over
+    # the 0.90 cutoff, and the tool still (correctly) returned nothing.
+    _CORE = (
+        "def alpha(x):\n    return beta(x)\n\n"
+        "def beta(x):\n    return x\n\n"
+        "def gamma(x):\n    return delta(x)\n\n"
+        "def delta(x):\n    return x\n"
+    )
+    _BARREL = "from .core import alpha, beta, gamma, delta\n"
+    _MAIN = (
+        "from pkg.core import alpha, gamma\n\n"
+        "if __name__ == '__main__':\n    print(alpha(1), gamma(2))\n"
+    )
+
+    def _seed_live(self, src):
+        (src / "pkg").mkdir(parents=True, exist_ok=True)
+        (src / "pkg" / "core.py").write_text(self._CORE, encoding="utf-8")
+        (src / "pkg" / "__init__.py").write_text(self._BARREL, encoding="utf-8")
+        (src / "main.py").write_text(self._MAIN, encoding="utf-8")
+
     def test_max_results_caps_response(self, tmp_path):
         """`max_results` should cap the dead_symbols list and set
         `_meta.truncated` + `_meta.total_matches`."""
@@ -158,6 +186,7 @@ class TestPaginationAndFilter:
                 f"import os\n\ndef orphan_{i}():\n    return {i}\n",
                 encoding="utf-8",
             )
+        self._seed_live(src)
         r = index_folder(str(src), use_ai_summaries=False, storage_path=str(store))
         repo = r["repo"]
 
@@ -177,6 +206,7 @@ class TestPaginationAndFilter:
                 f"import os\n\ndef orphan_{i}():\n    return {i}\n",
                 encoding="utf-8",
             )
+        self._seed_live(src)
         r = index_folder(str(src), use_ai_summaries=False, storage_path=str(store))
         result = get_dead_code_v2(repo=r["repo"], min_confidence=0.33,
                                   max_results=0, storage_path=str(store))
@@ -195,6 +225,7 @@ class TestPaginationAndFilter:
         (src / "skip" / "b.py").write_text(
             "import os\n\ndef skip_dead():\n    pass\n", encoding="utf-8"
         )
+        self._seed_live(src)
         r = index_folder(str(src), use_ai_summaries=False, storage_path=str(store))
         result = get_dead_code_v2(
             repo=r["repo"], min_confidence=0.33,
