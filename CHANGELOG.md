@@ -2,6 +2,57 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.236] - 2026-08-04 - a TOML table no longer claims the next table's header line
+
+`end_line` for a TOML table ran one line past the table's own text, onto the
+line holding the NEXT table's header. Against `fastapi/fastapi` at `a64dfbbd`,
+`[build-system]` occupies lines 1-3 with a blank at 4 and reported
+`end_line=5` — the line holding `[project]`, a different symbol entirely.
+`[tool.mypy]` reported 206, the line holding `[[tool.mypy.overrides]]`.
+
+Root cause is not TOML-specific: **a tree-sitter node whose `end_point` sits at
+column 0 stops at a line boundary and holds no text on that row**, so the
+`end_point[0] + 1` idiom overshoots by one. It surfaces here because
+tree-sitter-toml runs a `table` node to the start of the following table, which
+puts the boundary exactly on another symbol's header.
+
+⚠ **`byte_length` was correct throughout.** The two fields disagreed, and only
+the line number was wrong, which is why nothing downstream of the body noticed.
+A regression test now pins their agreement so a future drift in either field
+fails rather than being absorbed by the other.
+
+⚠ **Deliberately scoped to the three TOML sites.** 73 sites in
+`parser/extractor.py` share the `end_point[0] + 1` pattern and none carried a
+guard. Sampled across two corpora, python / go / typescript / javascript / json
+/ css showed zero disagreement, because their symbol nodes end at the last token
+rather than at a boundary. Changing all 73 would move line numbers for languages
+with no demonstrated defect, so the guard is applied where the defect was
+measured and documented for future extractors.
+
+⚠⚠ **A separate YAML discrepancy is NOT addressed here, and it is a different
+field.** The same sweep found 15 of 39 sampled YAML symbols where `end_line` and
+`byte_length` disagree. Spot-checked, the culprit is the opposite of TOML's:
+`end_line` is right and **`byte_length` reaches past the symbol**. For
+`health-radar-comment.yml::name`, the text `name: Health Radar Comment\n` is 27
+bytes and `byte_length` records 28; a sampled step key recorded 74 bytes,
+covering two sibling keys that are not part of it. Different field, different
+subsystem, and the blast radius is worse (an over-long extent puts content in a
+body that does not belong to the symbol), so it gets its own investigation rather
+than a footnote in a line-number fix. Scope and root cause are unestablished.
+
+⚠ **Existing indexes keep the old value until the file is re-parsed**, and there
+is no `INDEX_VERSION` bump: re-indexing every user's world for a TOML line number
+is not a trade worth making. Re-index a file (or let the watcher do it) to pick
+up the correction.
+
+Reachable from bounded-mode `source_end_line` clamping, `get_file_outline` line
+spans, and anything mapping a diff hunk onto a TOML symbol. Verified at the
+caller's entry point, not only at the parser: 119 TOML symbols walked through
+`get_symbol_source` on a freshly built index, zero line-span disagreements.
+Tests: `test_toml_end_line.py` (7), proven non-vacuous against the old
+expression. Same family as the `#378` left-recursive `dotted_key` bug, where the
+shallow cases looked correct and only the deeper ones exposed it.
+
 ## [1.108.235] - 2026-08-04 - a cache truncated inside its last line is no longer attested as matching
 
 Reported by [@rknighton](https://github.com/rknighton) in

@@ -6400,6 +6400,37 @@ def _parse_toml_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
             return [p for p in parts if p]
         return []
 
+    def _end_line(node) -> int:
+        """Last line the node actually occupies, 1-based.
+
+        A tree-sitter node that ends at column 0 stops at a line BOUNDARY: it
+        holds no text on that row, so the row belongs to whatever comes next.
+        The plain ``end_point[0] + 1`` therefore overshoots by one.
+
+        It bites here because tree-sitter-toml runs a table to the start of the
+        following table. Measured against ``fastapi`` at ``a64dfbbd``,
+        ``[build-system]`` (lines 1-3, blank at 4) reported ``end_line=5``,
+        which is the line holding ``[project]``, a different symbol entirely.
+        ``byte_length`` was right throughout, so the two disagreed and only the
+        line number was wrong.
+
+        ⚠ Guarded against collapsing a single-line node: a node that starts and
+        ends on the same row keeps that row whatever its end column.
+
+        ⚠ **Deliberately scoped to TOML, and NOT applied to the other ~70
+        ``end_point[0] + 1`` sites in this module.** Sampled across two corpora,
+        python / go / typescript / javascript / json / css showed zero
+        disagreement, because their symbol nodes end at the last token rather
+        than at a boundary. Sweeping all of them would move line numbers for
+        languages with no demonstrated defect. YAML DOES disagree, in the
+        opposite direction (end_line UNDERSHOOTS by 1-2), which is a separate
+        cause and must not be folded in here on this evidence.
+        """
+        row, col = node.end_point[0], node.end_point[1]
+        if col == 0 and row > node.start_point[0]:
+            return row
+        return row + 1
+
     def _walk_node(node, parent_path: list[str] = None):
         """Walk the AST and extract symbols."""
         if parent_path is None:
@@ -6420,7 +6451,7 @@ def _parse_toml_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
                         language="toml",
                         signature=f"[{full_path}]",
                         line=node.start_point[0] + 1,
-                        end_line=node.end_point[0] + 1,
+                        end_line=_end_line(node),
                         byte_offset=node.start_byte,
                         byte_length=node.end_byte - node.start_byte,
                         content_hash=compute_content_hash(source_bytes[node.start_byte:node.end_byte]),
@@ -6445,7 +6476,7 @@ def _parse_toml_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
                         language="toml",
                         signature=f"[[{full_path}]]",
                         line=node.start_point[0] + 1,
-                        end_line=node.end_point[0] + 1,
+                        end_line=_end_line(node),
                         byte_offset=node.start_byte,
                         byte_length=node.end_byte - node.start_byte,
                         content_hash=compute_content_hash(source_bytes[node.start_byte:node.end_byte]),
@@ -6478,7 +6509,7 @@ def _parse_toml_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
                         language="toml",
                         signature=sig,
                         line=node.start_point[0] + 1,
-                        end_line=node.end_point[0] + 1,
+                        end_line=_end_line(node),
                         byte_offset=node.start_byte,
                         byte_length=node.end_byte - node.start_byte,
                         content_hash=compute_content_hash(source_bytes[node.start_byte:node.end_byte]),

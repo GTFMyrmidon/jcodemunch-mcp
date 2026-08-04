@@ -137,9 +137,9 @@ is a byte the agent doesn't pay to read.
 <!-- WHATSNEW:START -->
 #### What's new
 
-- **[v1.108.170](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.170)** (2026-07-25) — the file and symbol tools can see a rebuild too
-- **[v1.108.169](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.169)** (2026-07-25) — the retrieval verdict survives compaction
-- **[v1.108.168](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.168)** (2026-07-24) — a rebuild underneath a scan cannot prove absence (5th refusal rule)
+- **[v1.108.236](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.236)** (2026-08-04) — a TOML table no longer claims the next table's header line
+- **[v1.108.235](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.235)** (2026-08-04) — a cache truncated inside its last line is no longer attested as matching
+- **[v1.108.234](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.234)** (2026-08-03) — duplicate source trees stop competing with the originals
 <!-- WHATSNEW:END -->
 
 ![License](https://img.shields.io/badge/license-dual--use-blue)
