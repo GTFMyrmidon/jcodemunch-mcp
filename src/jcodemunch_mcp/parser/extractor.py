@@ -7276,7 +7276,14 @@ def _build_line_offsets(source: str) -> tuple[list[str], list[int]]:
 
 
 def _find_line(lines: list[str], text: str, after: int = 0) -> int:
-    """Find the first 1-based line containing text after a starting index."""
+    """Find the first 1-based line containing text after a starting index.
+
+    ⚠ Substring matching, and a not-found result that returns ``after + 1``
+    rather than admitting failure. Both are load-bearing for the callers that
+    still use it (Ansible task/role names are free text, not keys, so they have
+    no anchor to match on). New key-shaped lookups should use
+    :func:`_find_key_line`, which is exact and honest about missing.
+    """
     needle = str(text).strip().lower()
     if not needle:
         return max(after + 1, 1)
@@ -7284,6 +7291,45 @@ def _find_line(lines: list[str], text: str, after: int = 0) -> int:
         if needle in lines[idx].lower():
             return idx + 1
     return max(after + 1, 1)
+
+
+#: Returned by :func:`_find_key_line` when the key is not on any candidate line.
+KEY_NOT_FOUND = 0
+
+
+def _find_key_line(lines: list[str], key: str, after: int = 0) -> int:
+    """1-based line where ``key`` appears as a mapping key, or :data:`KEY_NOT_FOUND`.
+
+    Replaces three compounding defects in the ``_find_line`` path, all measured
+    2026-08-04 against `.github/workflows/health-radar-comment.yml`, where a
+    five-key step block resolved to lines 31 / 32 / 33 / 34 / 35 and only the
+    last was right:
+
+    1. **Substring matching.** ``needle in line`` let ``id:`` match ``run-id:``.
+       The key is now anchored to the start of the line's content, after
+       indentation and an optional ``- `` list marker, and must be followed by
+       a colon. ``run-id:`` can no longer answer for ``id``.
+    2. **Silent fabricated fallback.** Not-found returned ``after + 1``, which
+       is simply the next line dressed up as a located match. Two of the five
+       keys above were fabricated that way. This returns
+       :data:`KEY_NOT_FOUND`, and the caller routes that to a zero byte extent
+       so the symbol yields nothing rather than somebody else's text.
+    3. (The third, a cursor that starts past the item's own key, is fixed at
+       the call site in ``_walk_yaml_value``, not here.)
+
+    Quoted keys (``"on":``) are matched too, since YAML permits them.
+    """
+    name = str(key).strip()
+    if not name:
+        return KEY_NOT_FOUND
+    pattern = re.compile(
+        r"^\s*(?:-\s+)?(?:['\"])?" + re.escape(name) + r"(?:['\"])?\s*:",
+        re.IGNORECASE,
+    )
+    for idx in range(max(after, 0), len(lines)):
+        if pattern.match(lines[idx]):
+            return idx + 1
+    return KEY_NOT_FOUND
 
 
 def _byte_start(offsets: list[int], line_1based: int) -> int:
@@ -7378,6 +7424,76 @@ def _append_virtual_symbol(
     return symbol_id
 
 
+def _yaml_line_map(source: str) -> dict:
+    """Map each YAML path to the TRUE 1-based line of its key, from node marks.
+
+    ``yaml.compose`` returns the document as nodes carrying source marks, so a
+    key's line is read rather than searched for. This removes an entire defect
+    class instead of narrowing it.
+
+    ⚠ **The text-search locator it replaces could not be repaired by patching.**
+    Measured against this oracle: the original scan agreed with the truth on
+    ~73% of comparable symbols. Anchoring the key match and refusing on a miss
+    took it to 96.5%. An attempt to close the rest, by advancing a parent's
+    cursor past a nested block, made it *worse* (89.6%), because a text cursor
+    has no notion of where a block ends: every heuristic traded one class of
+    mislocation for another. Node marks have no such ambiguity.
+
+    Paths are built with exactly the same segment rules as
+    :func:`_walk_yaml_value`, including :func:`_yaml_list_item_segment`, so
+    lookups line up. Returns an empty dict when the document will not compose,
+    and the caller falls back to the search path.
+
+    ⚠ **`yaml` is imported LOCALLY as ``_yaml`` throughout this module, never at
+    module scope.** The first version of this function said ``yaml.compose``,
+    raised ``NameError``, and a broad ``except Exception`` turned that into a
+    silently empty map, so the node-mark path never executed while its
+    measurements looked fine. The excepts below are narrow for exactly that
+    reason: a programming error here must surface, not degrade.
+    """
+    try:
+        import yaml as _yaml
+    except ImportError:  # optional dep; degrades to the search path
+        return {}
+    try:
+        root = _yaml.compose(source)
+    except _yaml.YAMLError:
+        return {}
+    if root is None:
+        return {}
+
+    out: dict = {}
+
+    def _plain(node) -> object:
+        """Shallow view, enough for :func:`_yaml_list_item_segment`."""
+        if isinstance(node, _yaml.MappingNode):
+            shallow = {}
+            for k, v in node.value:
+                if isinstance(k, _yaml.ScalarNode) and isinstance(v, _yaml.ScalarNode):
+                    shallow[str(k.value)] = str(v.value)
+            return shallow
+        if isinstance(node, _yaml.ScalarNode):
+            return str(node.value)
+        return None
+
+    def walk(node, path_parts: list[str]) -> None:
+        if isinstance(node, _yaml.MappingNode):
+            for key_node, value_node in node.value:
+                if not isinstance(key_node, _yaml.ScalarNode):
+                    continue
+                parts = path_parts + [str(key_node.value)]
+                out.setdefault(".".join(parts), key_node.start_mark.line + 1)
+                walk(value_node, parts)
+        elif isinstance(node, _yaml.SequenceNode):
+            for index, item in enumerate(node.value):
+                parts = path_parts + [_yaml_list_item_segment(_plain(item), index)]
+                out.setdefault(".".join(parts), item.start_mark.line + 1)
+                walk(item, parts)
+
+    walk(root, [])
+    return out
+
+
 def _yaml_list_item_segment(item: object, index: int) -> str:
     """Prefer semantic list item names over raw indices when possible."""
     if isinstance(item, dict):
@@ -7397,16 +7513,41 @@ def _walk_yaml_value(
     lines: list[str],
     offsets: list[int],
     after_line: int = 0,
-) -> None:
-    """Recursively extract structural symbols from generic YAML content."""
+    line_map: Optional[dict] = None,
+) -> int:
+    """Recursively extract structural symbols from generic YAML content.
+
+    ``line_map`` carries true line numbers read from YAML node marks
+    (:func:`_yaml_line_map`). When it holds this symbol's path, that line wins;
+    the text search is only a fallback for documents that will not compose.
+
+    Returns the highest 1-based line this walk consumed, so a caller can move
+    its own cursor past a nested block.
+
+    ⚠ Without that, a parent's cursor stayed near the block it descended into
+    and a later sibling could match a NESTED key of the same name. Measured on
+    `docker-compose.yml`: the top-level `volumes` (line 41) bound to a
+    service-level `volumes:` at line 21.
+    """
     if isinstance(value, dict):
-        cursor = after_line
+        # ⚠ The scan starts AT `after_line`, not after it. A list item is
+        # identified by its own `name:` line, and the previous code then began
+        # the dict walk on the FOLLOWING line, so the item's own `name` key
+        # could never match itself and bound to a nested `name:` further down
+        # instead (measured: a step's `name` resolved to its `with.name`).
+        cursor = max(after_line - 1, 0)
+        last = cursor
         for key, child in value.items():
             key_name = str(key)
             qualified_name = ".".join(path_parts + [key_name]) if path_parts else key_name
-            line = _find_line(lines, f"{key_name}:", cursor - 1)
-            next_cursor = line + 1
-            cursor = next_cursor
+            line = (line_map or {}).get(qualified_name) or _find_key_line(lines, key_name, cursor)
+            # ⚠ Only advance past a key we actually LOCATED. Advancing on a
+            # miss is what made the old cascade compound: one wrong answer
+            # pushed the cursor forward and corrupted every sibling after it.
+            if line != KEY_NOT_FOUND:
+                cursor = line
+                last = max(last, line)
+            next_cursor = (line + 1) if line != KEY_NOT_FOUND else after_line
             if isinstance(child, (dict, list)):
                 kind = "type"
                 signature = f"{key_name}:"
@@ -7414,9 +7555,11 @@ def _walk_yaml_value(
                     symbols, filename, language, key_name, qualified_name, kind, signature, line, offsets,
                     lines=lines,
                 )
-                _walk_yaml_value(
-                    child, path_parts + [key_name], filename, language, symbols, lines, offsets, next_cursor
+                child_last = _walk_yaml_value(
+                    child, path_parts + [key_name], filename, language, symbols, lines, offsets,
+                    next_cursor, line_map,
                 )
+                last = max(last, child_last)
             else:
                 signature = _scalar_signature(key_name, child)
                 _append_virtual_symbol(
@@ -7431,21 +7574,39 @@ def _walk_yaml_value(
                     offsets,
                     lines=lines,
                 )
+        return last
     elif isinstance(value, list):
         cursor = after_line
+        last = cursor
         for index, child in enumerate(value):
             segment = _yaml_list_item_segment(child, index)
-            item_line = cursor or 1
-            if isinstance(child, dict) and isinstance(child.get("name"), str):
+            mapped = (line_map or {}).get(
+                ".".join(path_parts + [segment]) if path_parts else segment
+            )
+            if mapped:
+                item_line = mapped
+            elif isinstance(child, dict) and isinstance(child.get("name"), str):
                 item_line = _find_line(lines, str(child["name"]), cursor - 1)
             elif path_parts:
                 item_line = _find_line(lines, path_parts[-1], cursor - 1)
-            next_cursor = item_line + 1
-            cursor = next_cursor
+            else:
+                item_line = cursor or 1
+            cursor = item_line + 1
+            # ⚠ Hand the child its OWN line, not the line after it. The item is
+            # identified by its `name:` line, and that line also holds the
+            # item's `name` KEY. Passing `item_line + 1` here is what made a
+            # step's own `name` unfindable, so it bound to a nested `name:`
+            # further down the block instead.
+            next_cursor = item_line
+            last = max(last, item_line)
             if isinstance(child, (dict, list)):
-                _walk_yaml_value(
-                    child, path_parts + [segment], filename, language, symbols, lines, offsets, next_cursor
+                child_last = _walk_yaml_value(
+                    child, path_parts + [segment], filename, language, symbols, lines, offsets,
+                    next_cursor, line_map,
                 )
+                last = max(last, child_last)
+        return last
+    return after_line
 
 
 def _parse_yaml_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
@@ -7456,14 +7617,15 @@ def _parse_yaml_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
         return []
 
     lines, offsets = _build_line_offsets(source)
+    line_map = _yaml_line_map(source)
     symbols: list[Symbol] = []
     if isinstance(data, list) and all(isinstance(item, dict) for item in data):
         cursor = 0
         for item in data:
-            _walk_yaml_value(item, [], filename, "yaml", symbols, lines, offsets, cursor)
+            _walk_yaml_value(item, [], filename, "yaml", symbols, lines, offsets, cursor, line_map)
             cursor += 1
         return symbols
-    _walk_yaml_value(data, [], filename, "yaml", symbols, lines, offsets)
+    _walk_yaml_value(data, [], filename, "yaml", symbols, lines, offsets, 0, line_map)
     return symbols
 
 

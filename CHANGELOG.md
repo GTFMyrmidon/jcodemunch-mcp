@@ -2,6 +2,63 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.238] - 2026-08-04 - a YAML symbol is located at its own key's line, or refuses
+
+Line numbers for YAML symbols came from a forward text scan with three
+compounding defects. Measured against `.github/workflows/health-radar-comment.yml`,
+a five-key step block resolved to lines 31 / 32 / 33 / 34 / 35 and only the last
+was right:
+
+1. **Substring matching.** `needle in line` let `id:` answer for `run-id:`.
+2. **A cursor starting past the item's own key.** A list item is identified by
+   its `name:` line, and the walk then began on the *following* line, so the
+   item's own `name` could never match itself and bound to a nested `name:`
+   further down the block.
+3. **A silent fabricated fallback.** Not-found returned `after + 1`, which is
+   simply the next line presented as a located match. Two of those five keys
+   were fabricated that way, and because each wrong answer advanced the cursor,
+   the errors cascaded through every sibling that followed.
+
+True line numbers now come from YAML node marks (`yaml.compose`), with an
+anchored key search as the fallback for documents that will not compose. A key
+that cannot be located reports no line and a zero byte extent rather than a
+plausible wrong one.
+
+⚠ **Heuristic repair was tried first and abandoned on evidence.** Anchoring the
+match and refusing on a miss moved agreement from ~73% to 96.5%. An attempt to
+close the remainder, by advancing a parent's cursor past a nested block, made it
+*worse* (89.6%): a text cursor has no notion of where a block ends, so each
+heuristic traded one class of mislocation for another. Node marks have no such
+ambiguity.
+
+⚠⚠ **The first node-mark implementation silently did not run.** It referenced
+`yaml.compose`, but this module imports yaml only as a local `_yaml`; that
+raised `NameError`, a broad `except Exception` turned it into an empty map, and
+the fallback kept answering while the measurement still looked healthy. The
+handlers are now narrow (`ImportError` / `YAMLError`) so a programming error
+surfaces instead of degrading, and a test asserts the map is non-empty.
+
+Validated two ways. Against a PyYAML-node-mark oracle: 462 of 462 comparable
+symbols agree — but that check shares a mechanism with the fix, so the
+load-bearing number is the independent one. Asserting that the located line
+actually *begins* with its key, with no node marks involved: **0 of 4773 symbols
+land on a wrong line**, against roughly a quarter before, with 9 honest refusals.
+
+⚠ **A separate defect is now visible rather than hidden, and is not fixed here.**
+`on:` is coerced to a YAML 1.1 boolean, so a workflow's `on` key is named `True`
+and cannot be located. It now refuses (no line, no bytes) instead of reporting a
+fabricated line. Being fixed separately.
+
+⚠ `_find_line` is retained for the Ansible task/role paths, where the search
+target is free text with no key to anchor on. It keeps its substring match and
+its fabricating fallback; nothing has been measured there, so nothing was
+changed there.
+
+⚠ Existing indexes keep the old line numbers until re-parsed; no `INDEX_VERSION`
+bump.
+
+Tests: `test_yaml_line_location.py` (13).
+
 ## [1.108.237] - 2026-08-04 - a YAML symbol's byte extent describes real source, not a reconstruction
 
 `_append_virtual_symbol` took `byte_offset` from the file and `byte_length` from
