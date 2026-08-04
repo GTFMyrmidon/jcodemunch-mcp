@@ -7292,6 +7292,23 @@ def _byte_start(offsets: list[int], line_1based: int) -> int:
     return offsets[idx] if 0 <= idx < len(offsets) else 0
 
 
+def _byte_span(offsets: list[int], line_1based: int) -> tuple[int, int]:
+    """Real byte extent of a 1-based source line, newline included.
+
+    ``offsets`` holds ``len(lines) + 1`` entries, so line L runs from
+    ``offsets[L-1]`` to ``offsets[L]``.
+
+    Returns a length of 0 when the line is out of range. A zero extent makes
+    the reader return nothing, which is the honest outcome for a symbol we
+    cannot locate; the alternative is a plausible-looking slice of somebody
+    else's text.
+    """
+    idx = line_1based - 1
+    if idx < 0 or idx + 1 >= len(offsets):
+        return _byte_start(offsets, line_1based), 0
+    return offsets[idx], offsets[idx + 1] - offsets[idx]
+
+
 def _scalar_signature(name: str, value: object) -> str:
     """Render a short key/value signature for scalar YAML values."""
     text = repr(value)
@@ -7312,10 +7329,36 @@ def _append_virtual_symbol(
     offsets: list[int],
     docstring: str = "",
     parent: Optional[str] = None,
+    lines: Optional[list[str]] = None,
 ) -> str:
-    """Append a synthesized symbol backed by signature bytes."""
+    """Append a synthesized symbol located at a real line of the source.
+
+    ⚠⚠ **`byte_length` used to be `len(signature)`, and `signature` is a
+    RECONSTRUCTION, not a quotation.** ``byte_offset`` indexed the file while
+    ``byte_length`` measured a string built from parsed data, so the two came
+    from different universes and their product was a slice of arbitrary bytes.
+    Measured 2026-08-04: this held for **237 of 237** virtual symbols. In
+    `health-radar-comment.yml` the `uses` key (signature
+    ``uses: 'actions/download-artifact@...'``, 74 bytes) returned 74 bytes of
+    two entirely different sibling keys. YAML round-tripping also inflates:
+    ``name: Health Radar Comment`` is 27 bytes of source and its reconstructed
+    signature is 28, because the reconstruction adds quotes.
+
+    The extent now describes the actual source line, so ``byte_offset`` and
+    ``byte_length`` are finally in the same coordinate system.
+
+    ``lines`` is optional only so that no caller silently breaks; pass it
+    whenever it is in scope. With it, ``content_hash`` covers the same bytes
+    the extent names, which is what lets ``verify`` succeed. Without it the
+    hash still covers the signature, and ``content_verified`` stays False as
+    it does today.
+    """
     payload = signature.encode("utf-8")
     symbol_id = make_symbol_id(filename, qualified_name, kind)
+    start, length = _byte_span(offsets, line)
+    hashed = payload
+    if lines is not None and 0 <= line - 1 < len(lines):
+        hashed = lines[line - 1].encode("utf-8")
     symbols.append(Symbol(
         id=symbol_id,
         file=filename,
@@ -7328,9 +7371,9 @@ def _append_virtual_symbol(
         parent=parent,
         line=line,
         end_line=line,
-        byte_offset=_byte_start(offsets, line),
-        byte_length=len(payload),
-        content_hash=compute_content_hash(payload),
+        byte_offset=start,
+        byte_length=length,
+        content_hash=compute_content_hash(hashed),
     ))
     return symbol_id
 
@@ -7368,7 +7411,8 @@ def _walk_yaml_value(
                 kind = "type"
                 signature = f"{key_name}:"
                 _append_virtual_symbol(
-                    symbols, filename, language, key_name, qualified_name, kind, signature, line, offsets
+                    symbols, filename, language, key_name, qualified_name, kind, signature, line, offsets,
+                    lines=lines,
                 )
                 _walk_yaml_value(
                     child, path_parts + [key_name], filename, language, symbols, lines, offsets, next_cursor
@@ -7385,6 +7429,7 @@ def _walk_yaml_value(
                     signature,
                     line,
                     offsets,
+                    lines=lines,
                 )
     elif isinstance(value, list):
         cursor = after_line

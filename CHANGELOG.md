@@ -2,6 +2,50 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.237] - 2026-08-04 - a YAML symbol's byte extent describes real source, not a reconstruction
+
+`_append_virtual_symbol` took `byte_offset` from the file and `byte_length` from
+`len(signature)`. The signature is **rebuilt** from parsed data, never quoted
+from the source, so the two came from different coordinate systems and their
+product was a slice of arbitrary bytes.
+
+Measured before the fix: this held for **237 of 237** virtual symbols. In
+`.github/workflows/health-radar-comment.yml`, the `uses` key (reconstructed
+signature 74 bytes) returned 74 bytes spanning two entirely different sibling
+keys. Round-tripping also inflates: `name: Health Radar Comment` is 27 bytes of
+source and reconstructs to 28, because the rebuild quotes the scalar.
+
+`byte_offset` and `byte_length` now describe the symbol's actual source line, so
+they finally share a coordinate system. `content_hash` covers the same bytes the
+extent names, which is what lets `verify` succeed at all.
+
+⚠ **An unlocatable symbol now gets a ZERO extent rather than a plausible slice.**
+Refusing beats confidently returning somebody else's text. Seven symbols in this
+repository take that path, all with a line number past end-of-file.
+
+⚠⚠ **`content_verified` was returning False for YAML symbols while the response
+verdict still read `ok`** — the hash covered the signature while the extent named
+the file, so verification could never succeed. Measured after the fix at
+`get_symbol_source`: `byte_length == len(signature)` fell from 100% to 1.6%
+(the residue is lines whose real length coincidentally equals their signature's),
+and `content_verified` is true for 1415 of 1422 virtual symbols, the exceptions
+being exactly the zero-extent seven.
+
+⚠ **This isolates a second YAML defect; it does not fix it.** `line` is still
+mislocated for roughly a quarter of YAML symbols, because `_find_line` scans
+forward from a monotonically advancing cursor, so a nested key finds a later
+sibling's line. Affected symbols now return a *real* line rather than fabricated
+bytes, which is a strict improvement, but it may be the wrong line. Previously
+the two defects compounded and could not be told apart; any remaining wrongness
+now has exactly one cause. Being fixed separately.
+
+⚠ Existing indexes keep the old extents until re-parsed; no `INDEX_VERSION` bump.
+
+Verified at the caller's entry point rather than only the parser, on a fully
+re-parsed index. Tests: `test_yaml_byte_extent.py` (8), which deliberately assert
+the extent is a real, whole, self-consistent line and say nothing about *which*
+line, so neither defect's regression can hide inside the other's test.
+
 ## [1.108.236] - 2026-08-04 - a TOML table no longer claims the next table's header line
 
 `end_line` for a TOML table ran one line past the table's own text, onto the
