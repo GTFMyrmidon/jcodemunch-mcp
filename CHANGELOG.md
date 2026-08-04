@@ -2,6 +2,51 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.240] - 2026-08-04 - `fresh` stops meaning "we could not find out"
+
+`get_symbol_source`, `get_file_content` and `get_file_outline` reported
+`_meta.verdict.channels.index: "fresh"` on an index whose freshness cannot be
+established at all. **Two freshness signals in one payload, disagreeing** — the
+same response carried `_meta.freshness = {"unknown": 1}`, and the over-claiming
+one sat in the verdict block agents read.
+
+Found against a real index whose `source_root` is empty, so there is nothing on
+disk to compare the indexed revision against. Reproduced at the caller's entry
+point on all three tools, not at the layer that was edited.
+
+⚠ **The cause was three drifted copies of one expression.** `build_verdict`
+adopted the tri-state freshness reading in #377 item 4; `build_file_verdict` and
+`build_symbol_verdict` kept `"stale" if index_stale else "fresh"`, which has
+nowhere to put "we could not find out" and answers `fresh` for both
+`unknown` and `not_tracked`. The search tools were correct throughout; only the
+identity and file-read paths over-claimed.
+
+The expression is now extracted as `index_channel` and all three builders route
+through it, so the next reading added cannot reach two of them and miss the
+third. The probe backing it fails **closed**: an error returns `unknown`, never
+`fresh`, because an exception IS the unestablished case.
+
+A real checkout still reports `fresh`, a lagging one still `stale`, and a
+rebuild in flight still outranks both. Verified on a live checkout alongside
+the fix.
+
+⚠ **Two readings are newly visible on these three tools, and the plain-folder
+one is the common case.** A folder under no revision control now reports
+`not_tracked` where it reported `fresh`, and an index whose revision cannot be
+read reports `unknown`. Both were previously flattened to `fresh`. Nothing is
+newly refused — these are disclosures, and the search tools have reported them
+since 1.108.181 — but a client that treats `channels.index != "fresh"` as a
+problem will see these three tools start answering like the search tools
+already did.
+
+⚠ A test asserting `channels.index == "fresh"` for a plain folder was
+**re-grounded, not deleted**: it pinned that value as a known-wrong baseline
+and its own docstring said so, its real subject being that the receipt's
+snapshot did not repeat the over-claim. That divergence is gone because its
+cause is gone, so the test now asserts both agree while keeping the assertions
+that still bite — the snapshot reading and the limitation are produced
+independently of the channel and must stay correct on their own.
+
 ## [1.108.239] - 2026-08-04 - a YAML key keeps its own name
 
 PyYAML implements YAML 1.1, which resolves `on` / `off` / `yes` / `no` to

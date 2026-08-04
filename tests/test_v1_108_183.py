@@ -474,14 +474,29 @@ class TestFailClosed:
 
 class TestSnapshotBinding:
     def test_a_plain_folder_binds_not_tracked_rather_than_fresh(self, _r183_env):
-        """``build_symbol_verdict`` never got the item-4 four-state treatment, so
-        ITS channels.index says 'fresh' for a subject that has no revision at all.
-        The receipt must not repeat a signal that answers a different question —
-        and the divergence is visible inside one envelope."""
+        """A subject with no revision at all must read ``not_tracked`` everywhere.
+
+        ⚠ RE-GROUNDED in 1.108.240, not weakened. This test used to assert
+        ``channels.index == "fresh"`` as a KNOWN-WRONG baseline: its original
+        docstring recorded that ``build_symbol_verdict`` never got the #377
+        item-4 four-state treatment, so its channel answered ``fresh`` for a
+        subject that has no revision, while the receipt's snapshot correctly
+        said ``not_tracked``. The test's real subject was that divergence — the
+        receipt must not repeat a signal answering a different question.
+
+        1.108.240 fixed the channel, so the divergence is gone by removing its
+        cause. Asserting ``fresh`` here would now re-pin the defect.
+
+        What still bites, and is why this is re-grounded rather than deleted:
+        the snapshot reading and the limitation are produced independently of
+        the channel, so they must remain correct on their own. If a later
+        change makes the receipt merely ECHO ``channels.index``, these two
+        assertions are what keep that honest.
+        """
         server, repo, _proj = _r183_env
         eid, _body = _r183_serve_and_receipt(server, repo)
         envelope = _r183_receipts.lookup(eid)[0]
-        assert envelope["channels"]["index"] == "fresh"
+        assert envelope["channels"]["index"] == "not_tracked"
         assert envelope["snapshot"]["freshness"] == "not_tracked"
         assert any("no revision control" in x for x in envelope["limitations"])
 

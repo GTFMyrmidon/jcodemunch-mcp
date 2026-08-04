@@ -344,11 +344,11 @@ def build_verdict(
             # above `fresh`: a known lag is worse than an unestablished one, and
             # both are worse than proven currency. `fresh` now means only what
             # it says.
-            "index": (
-                "rebuilding" if index_changed
-                else "partial" if coverage_is_incomplete(coverage)
-                else "stale" if index_stale
-                else freshness
+            "index": index_channel(
+                index_changed=index_changed,
+                coverage=coverage,
+                index_stale=index_stale,
+                freshness=freshness,
             ),
         },
         "scorer": SCORER_VERSION,
@@ -624,6 +624,7 @@ def build_file_verdict(
     index_stale: bool = False,
     empty_symbols: bool = False,
     index_changed: bool = False,
+    freshness: Optional[str] = None,
 ) -> dict:
     """`_meta.verdict` for the file-read tools.
 
@@ -662,8 +663,11 @@ def build_file_verdict(
     verdict = {
         "state": state,
         "channels": {
-            "index": "rebuilding" if index_changed
-            else ("stale" if index_stale else "fresh")
+            "index": index_channel(
+                index_changed=index_changed,
+                index_stale=index_stale,
+                freshness=freshness,
+            )
         },
         "note": note,
     }
@@ -687,6 +691,7 @@ def symbol_verdict_for_index(
         index_stale=_index_is_stale(index),
         index_changed=index_changed_since_load(index),
         unavailable_source_count=unavailable_source_count,
+        freshness=_index_freshness(index),
     )
     _attach_coverage(verdict, index_coverage_meta(index))
     return verdict
@@ -724,6 +729,66 @@ def index_changed_since_load(index) -> bool:
         return False
 
 
+def index_channel(
+    *,
+    index_changed: bool = False,
+    coverage: Optional[dict] = None,
+    index_stale: bool = False,
+    freshness: Optional[str] = None,
+) -> str:
+    """The single expression that renders ``verdict.channels.index``.
+
+    Extracted because there were THREE copies of it and they had drifted:
+    :func:`build_verdict` honoured the #377 item 4 tri-state while
+    :func:`build_file_verdict` and :func:`build_symbol_verdict` still carried
+    the two-state ``"stale" if index_stale else "fresh"``. On an index whose
+    freshness cannot be established, ``get_symbol_source`` /
+    ``get_file_content`` / ``get_file_outline`` therefore reported
+    ``channels.index: "fresh"`` in the same payload whose ``_meta.freshness``
+    correctly said ``unknown`` — measured against ``django/django``, whose
+    index carries an empty ``source_root``.
+
+    Ordering is by how badly each condition undermines the answer: a rebuild in
+    flight beats a known coverage gap beats a known lag. ``unknown`` and
+    ``not_tracked`` sit below ``stale`` and above ``fresh``: a known lag is
+    worse than an unestablished one, and both are worse than proven currency.
+
+    ``freshness`` of ``None`` keeps a caller that supplies only the Boolean on
+    exactly its previous two-state behaviour, so adding the parameter changes
+    no existing result.
+    """
+    if index_changed:
+        return "rebuilding"
+    if coverage is not None and coverage_is_incomplete(coverage):
+        return "partial"
+    if index_stale:
+        return "stale"
+    if freshness in ("fresh", "stale", "unknown", "not_tracked"):
+        return freshness
+    return "fresh"
+
+
+def _index_freshness(index) -> str:
+    """Tri-state repo freshness for *index* (never raises).
+
+    ⚠ Failure returns ``unknown``, NOT ``fresh``. The whole point of the
+    tri-state is that "we could not find out" must not render as proof of
+    currency, and an exception here is precisely that case.
+    """
+    try:
+        from .freshness import FreshnessProbe
+
+        probe = FreshnessProbe(
+            source_root=getattr(index, "source_root", "") or None,
+            indexed_at=getattr(index, "indexed_at", ""),
+            index_sha=getattr(index, "git_head", None),
+            file_mtimes=getattr(index, "file_mtimes", None),
+        )
+        return probe.repo_freshness
+    except Exception:
+        return "unknown"
+
+
 def _index_is_stale(index) -> bool:
     """Whether the index SHA lags the live git HEAD (never raises)."""
     try:
@@ -755,6 +820,7 @@ def file_verdict_for_index(
         index_stale=_index_is_stale(index),
         empty_symbols=empty_symbols,
         index_changed=index_changed_since_load(index),
+        freshness=_index_freshness(index),
     )
     _attach_coverage(verdict, index_coverage_meta(index))
     return verdict
@@ -768,6 +834,7 @@ def build_symbol_verdict(
     index_stale: bool = False,
     index_changed: bool = False,
     unavailable_source_count: int = 0,
+    freshness: Optional[str] = None,
 ) -> dict:
     """`_meta.verdict` for ``get_symbol_source``.
 
@@ -812,8 +879,11 @@ def build_symbol_verdict(
     verdict = {
         "state": state,
         "channels": {
-            "index": "rebuilding" if index_changed
-            else ("stale" if index_stale else "fresh")
+            "index": index_channel(
+                index_changed=index_changed,
+                index_stale=index_stale,
+                freshness=freshness,
+            )
         },
         "note": note,
     }
