@@ -44,7 +44,26 @@
   "",
   "A recall figure measured after this audit is NOT comparable with one measured",
   "before it. The pre-audit number was route@1 42.4 / @3 59.3, menu@1 40.7 /",
-  "@3 61.0; quote the delta as a corpus correction, never as a routing gain."
+  "@3 61.0; quote the delta as a corpus correction, never as a routing gain.",
+  "",
+  "KNOWN LIMIT OF THIS CORPUS (recorded 2026-08-04; raised by rknighton on jcm#398).",
+  "The rule above says to phrase each query in the USER's vocabulary. That rule",
+  "measures the wrong input distribution, and the flaw is in the rule rather than",
+  "in any individual query. Nothing sends a user's words to route(). The MODEL",
+  "calls it, and `task` is whatever that model chose to write (server.py, task:",
+  "\"What you're trying to do, in plain language\"). There is no CLI surface for",
+  "route/menu/order, so a human-typed string reaches `task` on no path at all.",
+  "",
+  "So every number produced from this file describes how route() handles human",
+  "wording, which is not the wording it receives in production. The direction of",
+  "the error is UNKNOWN and must not be guessed: model phrasing is plausibly more",
+  "tool-shaped, but under tool_surface=counter the model sees only the 3-tool",
+  "front door and has no action names to echo.",
+  "",
+  "Adding more human-phrased queries here does NOT close this gap, whoever writes",
+  "them. The experiment that closes it: hand unseen requests to fresh agents,",
+  "record the `task` strings they actually emit, and score those. The leakage",
+  "discipline above is unaffected and still applies."
  ],
  "queries": [
   {
