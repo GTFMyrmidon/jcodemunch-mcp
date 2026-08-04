@@ -306,6 +306,33 @@ internally contradictory and it was believed anyway**, which is how a stale
 "#375 ONLY" got written into this file on 2026-07-28 for an issue closed the day
 before. A count is the one fact here with a guaranteed expiry date.
 
+**Closed 2026-08-04: #411 (@rknighton) test config isolation** — `_run_config`
+in `tests/test_v1_108_194.py` scrubbed `JCODEMUNCH_MAX_FILE_SIZE` but left the
+subprocess reading the developer's real `~/.code-index/config.jsonc`, so both
+`max_file_size` assertions failed on any box with the key set. Reported WITH a
+`git apply --check`-verified patch; applied as written in `5a3ee39`.
+⚠ **`TemporaryDirectory`, not the `mkdtemp` used elsewhere in that file** — the
+config reporter WRITES a `config.jsonc` into the directory it is pointed at, so
+an uncleaned temp dir per call accumulates. That is the whole reason the patch
+costs a reindent, and it is the part a later "simplification" would undo.
+⚠ **His severity framing was checked upward and HELD, which is the notable
+part** — the standing note on this reporter is that he understates, so both
+larger readings were tested and came back NEGATIVE. (1) Not a production
+precedence bug: config beats env for `max_file_size` and the resolver agrees,
+but `max_folder_files` / `max_index_files` behave identically, so .193's key
+follows its siblings. (2) Not wider than one file: `test_surface_cli.py` is the
+only other CLI-shelling test without `CODE_INDEX_PATH` isolation and it PASSES
+under a hostile config because its assertions are shape-based, not value-based
+(latently exposed if anyone adds a value-based one); `test_watch_all.py` is
+isolated by argument (`watch_all.py:48` honours `storage_path`).
+⚠ **The observation worth keeping: the file's docstring says it guards the #375
+failure mode, so the test protecting the large-file escape hatch was broken by
+USING the large-file escape hatch.** Reaching it at all required being exactly
+the user it was written for, which is why it went unseen on every dev box that
+had not capped out on a large repo. Same family as jdata's `test_v1_15_0` /
+`test_v1_16_0` false-greens reading the real `~/.data-index`. Test-only, no
+version bump; rides the next release.
+
 Closed this session: **#390** (@lazy-geeek, its own repro already fixed by
 `.194`), **#391** (@amarakramali, rewritten as 1.108.197), **#387** (@nyxst4ck,
 rewritten wider), **#377** (P3 remainder + P4 to `ROADMAP.md` with close
