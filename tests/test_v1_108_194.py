@@ -40,13 +40,21 @@ def _run_config(env_extra: dict[str, str] | None = None) -> str:
     env.pop("JCODEMUNCH_MAX_FILE_SIZE", None)
     if env_extra:
         env.update(env_extra)
-    proc = subprocess.run(
-        [sys.executable, "-m", "jcodemunch_mcp", "config"],
-        capture_output=True,
-        text=True,
-        env=env,
-        timeout=120,
-    )
+    # Isolate the config FILE too, not just the env var: without this the
+    # subprocess reads the developer's real ~/.code-index/config.jsonc, and
+    # both max_file_size assertions below fail on any box that sets the key.
+    # TemporaryDirectory rather than mkdtemp (used elsewhere in this file)
+    # because the config reporter WRITES a config.jsonc into the directory it
+    # is pointed at, so an uncleaned dir per call accumulates.
+    with tempfile.TemporaryDirectory(prefix="jcm-config-isolation-") as cfg_dir:
+        env["CODE_INDEX_PATH"] = cfg_dir
+        proc = subprocess.run(
+            [sys.executable, "-m", "jcodemunch_mcp", "config"],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=120,
+        )
     return proc.stdout
 
 
