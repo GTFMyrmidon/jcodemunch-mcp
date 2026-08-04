@@ -196,7 +196,7 @@ def get_repo_health(
     else:
         summary = "Issues found: " + "; ".join(health_issues) + "."
 
-    # Six-axis radar (todo.md item #5). Test-gap and churn-surface inputs
+    # Six-axis radar (see health_radar.py). Test-gap and churn-surface inputs
     # are best-effort — failures degrade gracefully and the relevant axis
     # is omitted from the radar's composite.
     untested_pct: Optional[float] = None

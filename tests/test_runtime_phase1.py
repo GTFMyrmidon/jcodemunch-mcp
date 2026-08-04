@@ -350,7 +350,7 @@ def test_ingest_missing_file_raises(tmp_path):
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Mapping-rate threshold (verification criterion in todo.md Phase 1)
+# Mapping-rate threshold (trace-ingestion Phase 1 verification criterion)
 # ──────────────────────────────────────────────────────────────────────
 
 
@@ -422,7 +422,7 @@ def test_import_runtime_signal_missing_index_returns_error(tmp_path):
 def test_ingest_mapping_rate_above_90_percent(tmp_path):
     """Mapping rate ≥90% on a synthetic FastAPI-style fixture.
 
-    Per todo.md Phase 1 verification: a realistic trace with the same
+    Per the trace-ingestion Phase 1 criterion: a realistic trace with the same
     spans you would see from an instrumented FastAPI app maps cleanly.
     Synthetic here — we control both the index and the spans — so the
     threshold is tighter than in the wild (≥95% with this fixture).

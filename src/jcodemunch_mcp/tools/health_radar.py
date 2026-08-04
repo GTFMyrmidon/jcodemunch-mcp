@@ -1,4 +1,4 @@
-"""Six-axis health radar + diff helper (todo.md item #5).
+"""Six-axis health radar + diff helper (shipped v1.87.0/v1.88.0).
 
 Compresses the existing risk-profile signals into a normalized 0–100 score
 per axis plus a composite + letter grade. Same shape works as a *state*
