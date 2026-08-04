@@ -2,6 +2,50 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.239] - 2026-08-04 - a YAML key keeps its own name
+
+PyYAML implements YAML 1.1, which resolves `on` / `off` / `yes` / `no` to
+booleans **as mapping keys**. A GitHub workflow's `on:` therefore arrived as the
+key `True`, and every workflow this tool indexed carried a symbol literally
+named `True`, pointing at no line.
+
+⚠⚠ **The naming was the visible half. The silent half is key LOSS.** `on` and
+`yes` both resolve to `True`, and `off` and `no` both to `False`, so four
+distinct keys collapse into two and the later one overwrites the earlier without
+a word. Measured on a document holding all four: `safe_load` returned **6 keys
+where the source had 8**. Two keys, and everything nested beneath them, were
+simply absent from the index.
+
+Mapping keys now keep their source text. Only keys are affected: values keep
+ordinary YAML semantics, so `strict: true` is still the boolean `True` and
+`count: 42` is still `42`, and merge keys (`<<:`) still resolve because
+`flatten_mapping` runs exactly as in the stock constructor.
+
+Measured across this repository's 77 YAML files: symbols named `True` went
+**9 to 0**, symbols named `on` went **0 to 9**, and unlocatable symbols went
+**9 to 0**. The `on` key became locatable for free, because the node-mark line
+map added in 1.108.238 already read raw key text, so the two halves now agree.
+
+⚠⚠ **THIS CHANGES SYMBOL IDS, and it is the only change in this series that
+touches identity rather than metadata.** `<file>::True#type` becomes
+`<file>::on#type`, and child paths move from `True.push` to `on.push`. A stored
+reference to a `True`-named symbol — in a handoff, an evidence receipt, or a
+saved query — will not resolve after a re-parse. Nothing legitimate is lost: the
+old id named a key that appears in no source file. There is no `INDEX_VERSION`
+bump, so an existing index keeps the old ids until re-parsed and both forms can
+coexist across a fleet until every seat re-indexes.
+
+⚠ `parser/extractor.py` had **no logging at all**; a module logger was added so
+the new `except` around YAML loading can emit `logger.debug(..., exc_info=True)`
+per the repository's standing practice. The other pre-existing silent handlers
+in that module were left alone.
+
+Tests: `test_yaml_key_coercion.py` (11). ⚠ One test from 1.108.238 was
+re-grounded rather than deleted: it asserted the coerced `on:` key *is*
+unlocatable, which this change makes false. The refusal path it guarded is now
+exercised directly, so removing the bug did not remove the guard against the
+next unlocatable key.
+
 ## [1.108.238] - 2026-08-04 - a YAML symbol is located at its own key's line, or refuses
 
 Line numbers for YAML symbols came from a forward text scan with three

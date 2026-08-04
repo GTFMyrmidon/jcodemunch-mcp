@@ -137,9 +137,9 @@ is a byte the agent doesn't pay to read.
 <!-- WHATSNEW:START -->
 #### What's new
 
+- **[v1.108.239](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.239)** (2026-08-04) — a YAML key keeps its own name
 - **[v1.108.238](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.238)** (2026-08-04) — a YAML symbol is located at its own key's line, or refuses
 - **[v1.108.237](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.237)** (2026-08-04) — a YAML symbol's byte extent describes real source, not a reconstruction
-- **[v1.108.236](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.236)** (2026-08-04) — a TOML table no longer claims the next table's header line
 <!-- WHATSNEW:END -->
 
 ![License](https://img.shields.io/badge/license-dual--use-blue)

@@ -173,14 +173,31 @@ def test_every_located_symbol_sits_on_a_line_holding_its_key():
         ), f"{sym.qualified_name} at line {sym.line} is {text!r}"
 
 
-def test_unlocatable_key_refuses_with_a_zero_extent():
-    """`on:` is coerced to a YAML 1.1 boolean, so its key name becomes `True`.
+def test_unlocatable_key_refuses_instead_of_fabricating():
+    """A key that is not in the source yields no line, rather than a guess.
 
-    That separate defect now surfaces as an honest refusal rather than a
-    fabricated line: no line, no bytes, nothing to mistake for evidence.
+    ⚠ This used to be reachable through real YAML: `on:` was coerced to a
+    boolean, so its key became `True`, which appears nowhere in the source. That
+    coercion is fixed, so the path no longer has a natural trigger and is
+    exercised directly here. Deleting the test with the bug would have removed
+    the guard against the *next* unlocatable key.
     """
+    assert _find_key_line(["a: 1\n", "b: 2\n"], "absent", 0) == KEY_NOT_FOUND
+
+
+def test_an_unlocated_symbol_never_carries_bytes():
+    """The invariant that makes a refusal safe: no line means no evidence."""
+    from jcodemunch_mcp.parser.extractor import _byte_span
+
+    offsets = [0, 5, 11]
+    _, length = _byte_span(offsets, KEY_NOT_FOUND)
+    assert length == 0
+
+
+def test_workflow_trigger_is_locatable_now():
+    """The former refusal case, as a regression guard in the other direction."""
     syms = _syms(STEP_BLOCK)
-    unlocated = [s for s in syms.values() if s.line == 0]
-    assert unlocated, "expected the coerced `on:` key to be unlocatable"
-    for sym in unlocated:
-        assert sym.byte_length == 0, "an unlocated symbol must not carry bytes"
+    assert "on" in syms, f"`on` missing; got {sorted(syms)[:8]}"
+    assert syms["on"].line == 3
+    assert syms["on"].byte_length > 0
+    assert not [s for s in syms.values() if s.line == 0], "unexpected refusal"

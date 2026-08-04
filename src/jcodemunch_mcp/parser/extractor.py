@@ -1,6 +1,7 @@
 """Generic AST symbol extractor using tree-sitter."""
 
 import bisect
+import logging
 import re
 from typing import Any, Optional
 from tree_sitter_language_pack import get_parser
@@ -14,6 +15,8 @@ from .template_shared import (
     mask_template_keep_offsets,
 )
 from .complexity import compute_complexity
+
+logger = logging.getLogger(__name__)
 
 
 # Node types that represent function/call expressions per language.
@@ -7252,18 +7255,80 @@ def _parse_xml_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
     return symbols
 
 
+_KEY_TEXT_LOADER = None
+
+
+def _key_text_loader():
+    """A SafeLoader whose mapping KEYS keep their source text.
+
+    ⚠⚠ PyYAML implements YAML 1.1, which resolves ``on`` / ``off`` / ``yes`` /
+    ``no`` to booleans **as keys**. A GitHub workflow's ``on:`` therefore
+    arrived as the key ``True``, and every workflow we index carried a symbol
+    literally named ``True``.
+
+    ⚠ **The naming was the visible half. The silent half is key LOSS.** ``on``
+    and ``yes`` both resolve to ``True``, and ``off`` and ``no`` both to
+    ``False``, so four distinct keys collapse into two and the later one
+    overwrites the earlier without a word. Measured on a document with all
+    four: ``safe_load`` returned 6 keys where the source had 8.
+
+    Only keys are affected. Values keep ordinary YAML semantics, so
+    ``strict: true`` is still the boolean ``True`` and ``count: 42`` is still
+    ``42``. Merge keys (``<<:``) still resolve, because ``flatten_mapping`` runs
+    first exactly as it does in the stock constructor.
+    """
+    global _KEY_TEXT_LOADER
+    if _KEY_TEXT_LOADER is not None:
+        return _KEY_TEXT_LOADER
+
+    import yaml as _yaml
+
+    class _KeyTextLoader(_yaml.SafeLoader):
+        pass
+
+    def _construct_mapping(loader, node, deep=False):
+        loader.flatten_mapping(node)
+        mapping = {}
+        for key_node, value_node in node.value:
+            if isinstance(key_node, _yaml.ScalarNode):
+                key = key_node.value  # raw source text, no 1.1 coercion
+            else:
+                key = loader.construct_object(key_node, deep=deep)
+                if isinstance(key, list):
+                    key = tuple(key)
+            mapping[key] = loader.construct_object(value_node, deep=deep)
+        return mapping
+
+    _KeyTextLoader.add_constructor(
+        _yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_mapping
+    )
+    _KEY_TEXT_LOADER = _KeyTextLoader
+    return _KEY_TEXT_LOADER
+
+
 def _load_yaml_data(source: str):
-    """Load YAML content, returning None on parser/import failure."""
+    """Load YAML content, returning None on parser/import failure.
+
+    Mapping keys keep their source text; see :func:`_key_text_loader`.
+    """
     try:
         import yaml as _yaml
-        docs = [doc for doc in _yaml.safe_load_all(source) if doc is not None]
-        if not docs:
-            return None
-        if len(docs) == 1:
-            return docs[0]
-        return docs
-    except Exception:
+    except ImportError:
         return None
+    try:
+        docs = [
+            doc
+            for doc in _yaml.load_all(source, Loader=_key_text_loader())
+            if doc is not None
+        ]
+    except Exception:
+        logger.debug("YAML load failed", exc_info=True)
+        return None
+    if not docs:
+        return None
+    if len(docs) == 1:
+        return docs[0]
+    return docs
 
 
 def _build_line_offsets(source: str) -> tuple[list[str], list[int]]:
