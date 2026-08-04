@@ -264,6 +264,19 @@ class TestDivergenceStillDetected:
             source_root=str(repo), file_path="module.py", line=2, end_line=3,
         ) == "git_sha_mismatch"
 
+    def test_a_cache_truncated_inside_its_last_line_is_still_divergence(self, repo):
+        """#412: the hole the line-count guard does NOT close.
+
+        Truncating INSIDE the final line preserves the newline count, so the
+        length-bounded slice stays a prefix match and the cache is attested as
+        matching the commit on the part it does hold.
+        """
+        _commit(repo, "module.py", NESTED)
+        assert _verify_against_git_sha(
+            cached_source="def method(self):\n        return 4",
+            source_root=str(repo), file_path="module.py", line=2, end_line=3,
+        ) == "git_sha_mismatch"
+
     def test_a_cache_missing_its_last_line_is_still_divergence(self, repo):
         """The same hole one line up: truncation at a line boundary."""
         _commit(

@@ -308,14 +308,44 @@ def _slice_matches(file_content: str, cached_slice: str, line: int, end_line: in
     # Slicing to `len(cached_slice)` turns this into a PREFIX match, so a cache
     # holding only the first part of a symbol — a bad `byte_length`, a partial
     # write, exactly the corruption this mode exists to catch — would be
-    # attested as matching on the part it does hold. Requiring the same line
-    # COUNT rules that out while still permitting the one shortfall that is
-    # legitimate: the cached byte range stops at the symbol's last byte, so
-    # trailing text on the LAST line is allowed to go uncompared, but no line
-    # may go missing.
+    # attested as matching on the part it does hold.
+    #
+    # ⚠ The line-count check below closes ONLY the whole-line case. It is not
+    # sufficient on its own and this comment used to claim that it was (#412):
+    # a cache cut mid-way through its FINAL line keeps the newline count intact
+    # and sailed through. The boundary check after the equality test is the
+    # other half. Neither guard is redundant: line-count rejects a missing line
+    # whose text would never have matched anyway, the boundary check rejects a
+    # same-line-count prefix that does.
+    #
+    # The one legitimate shortfall stays permitted: the cached byte range stops
+    # at the symbol's last byte, so trailing text on the LAST line goes
+    # uncompared. No line may go missing.
     if cached_slice.count("\n") != file_slice.count("\n"):
         return False
-    return candidate == cached_slice
+    if candidate != cached_slice:
+        return False
+    # ⚠⚠ #412: the line-count guard above does NOT close truncation, and the
+    # comment that said it did was wrong. Dropping bytes from INSIDE the final
+    # line preserves the newline count, so `return 4` against a committed
+    # `return 42` stayed a same-line-count prefix and was attested as matching.
+    #
+    # The remaining signal is what FOLLOWS the cached extent on that last line.
+    # The one legitimate shortfall is trailing text after the symbol ends, and
+    # text that trails a symbol is SEPARATED from it — a comment, a closing
+    # delimiter of an enclosing construct. A truncation instead cuts mid-token,
+    # so the next character continues the token the cache ends on. Requiring the
+    # remainder to start on whitespace separates the two without needing to know
+    # the language.
+    #
+    # ⚠ This is deliberately biased toward REFUSING. A symbol whose last line is
+    # followed immediately by text with no separating space (`return 42# note`)
+    # now reports divergence rather than a match. That is the safe direction for
+    # a verification path: a false `git_sha_mismatch` costs a re-read, a false
+    # `git_sha_match` attests bytes nobody checked — and this verdict rides an
+    # evidence receipt, where it becomes a provenance claim.
+    remainder = file_slice[indent + len(cached_slice):]
+    return remainder == "" or remainder[0].isspace()
 
 
 def get_symbol_source(

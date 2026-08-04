@@ -2,6 +2,63 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.235] - 2026-08-04 - a cache truncated inside its last line is no longer attested as matching
+
+Reported by [@rknighton](https://github.com/rknighton) in
+[#412](https://github.com/jgravelle/jcodemunch-mcp/issues/412), a follow-up to
+his own #401 whose patch introduced the prefix match this closes.
+
+`_slice_matches` compared `file_slice[indent:indent + len(cached_slice)]`, which
+is a PREFIX match, and rejected only when the newline COUNT differed. Dropping
+bytes from INSIDE the final line preserves that count, so a cache holding
+`return 4` against a committed `return 42` was reported `git_sha_match`. Both
+verdict paths share the helper (`get_symbol.py:263` and `:276`), so one defect
+produced a false `git_sha_match` on the recorded commit and a false
+`git_sha_uncommitted` against the working tree.
+
+⚠⚠ **The comment above the guard claimed the line-count check ruled truncation
+out. It did not, and that false reassurance is why this survived a review that
+was otherwise looking straight at it.** The comment is corrected in the same
+commit rather than left to reassure the next reader.
+
+⚠ **Measured at the caller's entry point, not only at the helper, and the result
+CUTS AGAINST the report's framing:** `content_verified` is computed three lines
+above the git_sha branch against the per-symbol `content_hash` recorded at index
+time, and it returns `False` on exactly these caches. So the served response was
+internally CONTRADICTORY rather than uniformly confidently wrong. That is a real
+mitigation the report could not see, because it exercised `_slice_matches`
+directly. It does not excuse the defect: `git_sha_verification` is the
+externally-attested signal, it is the one whose `verify`/`verify_against` ride an
+evidence receipt's canonical projection as `mode_args`, and a direct caller of
+the helper has no sibling signal to contradict it. Two paths settling one
+question and disagreeing is its own defect.
+
+**The fix keeps the one legitimate shortfall.** The cached byte range stops at
+the symbol's last byte, so trailing text on the final line must stay uncompared
+(`test_token_after_the_symbol_on_its_last_line_is_ignored`). Text that TRAILS a
+symbol is separated from it; a truncation cuts mid-token, so the next character
+continues the token the cache ends on. Requiring the remainder to begin on
+whitespace separates the two without knowing the language.
+
+⚠ **Deliberately biased toward REFUSING, and the source comment says so.** A
+symbol followed immediately by text with no separating space (`return 42# note`)
+now reports divergence. A false `git_sha_mismatch` costs a re-read; a false
+`git_sha_match` attests bytes nobody checked, inside a provenance claim.
+
+⚠ **Both guards are load-bearing and neither is redundant — verified in both
+directions.** The line-count check alone admitted #412; the new boundary check
+alone would admit a cache missing its whole final line, because the remainder
+then begins with `
+`, which is whitespace. Removing either reopens a different
+hole.
+
+After the fix all three states agree across both signals: intact ->
+`git_sha_match` / `content_verified: True`; truncated 1 byte and 5 bytes ->
+`git_sha_mismatch` / `content_verified: False`. Verified end-to-end through
+`get_symbol_source` against a real git repo with `byte_length` corrupted in
+SQLite, not only through the helper. His regression test is included verbatim in
+`tests/test_v1_108_224.py`. No INDEX_VERSION, tool-count or wire-format change.
+
 ## [1.108.234] - 2026-08-03 - duplicate source trees stop competing with the originals
 
 `backup`, `old` and `archive` join the built-in directory skip list.
