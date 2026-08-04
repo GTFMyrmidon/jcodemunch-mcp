@@ -2,6 +2,68 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.241] - 2026-08-04 - offloadable-work annotation, off by default
+
+`get_symbol_source` can now tell you whether the work its payload enables is
+grunt-work a cheaper model can do. Set `JMUNCH_OFFLOADABLE=1` (or
+`JCODEMUNCH_OFFLOADABLE=1` for this server alone) and every reply carries an
+advisory `_meta.offloadable` block. Off by default: no gate, no field, no cost.
+
+**We label. We never route, execute, or hold model credentials.** No new
+process, no network call, no new catalog action, and no model of ours runs. What
+to do with the label is the client's decision.
+
+Every modelmaxxing router available today classifies the *prompt*, because that
+is all a router standing in front of the model can see. This sits downstream of
+retrieval and classifies *the evidence we just assembled*: whether the answer is
+literally present in the payload, how many files it spans, whether anything was
+truncated, and whether any freshness or coverage signal came back unknown.
+
+The verdict is tri-state and reason-coded, never a bare score. `not_evaluated`
+is not `not_offloadable` — "we did not assess it" and "this is not grunt-work"
+are different facts. The criterion fails closed: every unknown bearing on the
+answer disqualifies, because a false `offloadable` sends real work to a model
+that will confabulate over the gap, while a false `not_offloadable` costs
+nothing but a missed saving. All three response paths carry a verdict, including
+the error path, which reports `not_evaluated` with a reason rather than nothing —
+with the gate on, silence would be ambiguous with the gate being off.
+
+`verify_with` names the call that would adjudicate a cheaper model's answer over
+this payload. An annotation you cannot check is a vendor assertion; this one
+ships next to the tool that checks it.
+
+### Measured before it shipped, with its limits stated
+
+Three pinned corpora — this repository, `fastapi/fastapi` at `a64dfbbd`, and
+`django/django` — using the harness in `benchmarks/offload/`.
+
+⚠ **The falsifier checks a NECESSARY condition** (was the ground truth present
+in the payload), never a sufficient one (would a cheap model answer correctly).
+A pass is an upper bound on achievable accuracy and must never be published as
+an accuracy figure.
+
+⚠ **On an index whose freshness cannot be established, every payload is
+refused.** Django's index carries no source root, and all 300 sampled identity
+lookups gated on `TRI_STATE_UNKNOWN`. That is the fail-closed rule working.
+
+⚠ **The batch arm's rate is a floor**, not a representative rate: it
+deliberately scatters its sample across many files, close to the worst case for
+the container rule.
+
+### Suite contract
+
+Identical field contract in jdocmunch-mcp and jdatamunch-mcp. `EvidenceShape`
+speaks *units* and *containers*, never symbols and files, and a pinned
+`CONTRACT_DIGEST` plus a generated contract test fails the build in any of the
+three that drifts — the three products share no package, so copies are the only
+option and drift is the hazard they carry.
+
+Additive: one new `_meta` key, emitted only when gated on. No tool, schema or
+`INDEX_VERSION` change, and the catalog moratorium is untouched because this is
+a field on an existing reply rather than a new action.
+
+Tests `tests/test_offload.py` (84) and `tests/test_offload_contract.py` (23).
+
 ## [1.108.240] - 2026-08-04 - `fresh` stops meaning "we could not find out"
 
 `get_symbol_source`, `get_file_content` and `get_file_outline` reported

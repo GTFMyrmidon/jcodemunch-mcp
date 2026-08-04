@@ -15,6 +15,22 @@ from ._utils import index_status_to_tool_error, resolve_repo, resolve_fqn
 logger = logging.getLogger(__name__)
 
 
+def _offload():
+    """The optional offloadable-work annotator, or None.
+
+    ⚠ Imported lazily and allowed to be ABSENT. The module is optional and is
+    not present in every build, so a missing import must degrade to "no
+    annotation" rather than breaking symbol retrieval outright. Off by default
+    regardless: the module's own env gate decides whether anything is emitted.
+    """
+    try:
+        from ..retrieval import offload
+
+        return offload
+    except ImportError:
+        return None
+
+
 def _make_meta(timing_ms: float, **kwargs) -> dict:
     """Build a _meta envelope dict."""
     meta = {"timing_ms": round(timing_ms, 1)}
@@ -654,14 +670,48 @@ def get_symbol_source(
             meta["unavailable_source_ids"] = unavailable_source_ids
         if _runtime_summary:
             meta["runtime_freshness"] = _runtime_summary
-        return {"symbols": symbols_out, "errors": errors_out, "_meta": meta}
+        out = {"symbols": symbols_out, "errors": errors_out, "_meta": meta}
+        _mod = _offload()
+        if _mod is not None:
+            # Attached LAST, so the shape it reads is the payload actually
+            # served — verdict, freshness and all. Reading a half-built meta
+            # would classify something the caller never receives.
+            # One adjudicating call PER symbol, named explicitly. A single
+            # `args` would have to pick one of N names and imply the rest were
+            # covered; `args_each` says what it means.
+            _names = [
+                s.get("name") for s in symbols_out
+                if isinstance(s, dict) and s.get("name")
+            ]
+            _mod.annotate(
+                out,
+                retrieval_mode=_mod.MODE_IDENTITY,
+                unit_field="symbols",
+                verify_with=(
+                    {
+                        "tool": "check_references",
+                        "args_each": [{"identifier": n} for n in _names],
+                    }
+                    if _names
+                    else None
+                ),
+            )
+        return out
 
     # Single mode: flat object or error
     if errors_out:
         verdict = symbol_verdict_for_index(
             index, found_count=0, requested_id=errors_out[0]["id"]
         )
-        return {"error": errors_out[0]["error"], "_meta": {"verdict": verdict}}
+        err_out = {"error": errors_out[0]["error"], "_meta": {"verdict": verdict}}
+        _mod = _offload()
+        if _mod is not None:
+            # ⚠ Explicitly `not_evaluated`, not silence. With the gate ON, a
+            # missing block would be indistinguishable from the gate being OFF,
+            # and "we did not assess it" is a third state that has to be
+            # sayable — the same reason the verdict itself is tri-state.
+            _mod.not_evaluated(err_out, reason="error payload carries no evidence")
+        return err_out
     result = symbols_out[0]
     meta["hint"] = "Use get_context_bundle(symbol_id) to retrieve source + imports in one call"
     meta["verdict"] = symbol_verdict_for_index(
@@ -674,4 +724,16 @@ def get_symbol_source(
     if _runtime_summary:
         meta["runtime_freshness"] = _runtime_summary
     result["_meta"] = meta
+    _mod = _offload()
+    if _mod is not None:
+        _name = result.get("name") if isinstance(result, dict) else None
+        _mod.annotate(
+            result,
+            retrieval_mode=_mod.MODE_IDENTITY,
+            verify_with=(
+                {"tool": "check_references", "args": {"identifier": _name}}
+                if _name
+                else None
+            ),
+        )
     return result

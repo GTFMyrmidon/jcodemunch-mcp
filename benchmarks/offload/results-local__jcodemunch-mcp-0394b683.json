@@ -1,0 +1,305 @@
+{
+  "criterion_version": 2,
+  "thresholds": {
+    "MIN_RANK_MARGIN": 0.25,
+    "MAX_CONTAINERS": 2
+  },
+  "corpus": {
+    "repo": "local/jcodemunch-mcp-0394b683",
+    "pin": {
+      "git_head": "1f9d6dd2cadafdb14c63c82d3a599f379abfc1e7",
+      "dirty": true,
+      "instrument": {
+        "all_committed": false,
+        "untracked": [
+          "src/jcodemunch_mcp/retrieval/offload.py",
+          "benchmarks/offload/run_offload_criterion.py"
+        ],
+        "note": "Instrument is not in git, so this run is NOT reproducible from the pin alone. Expected while the work is unannounced."
+      }
+    },
+    "symbols_indexed": 14848,
+    "files_indexed": 763
+  },
+  "arms": {
+    "identity": {
+      "n": 300,
+      "states": {
+        "offloadable": 300,
+        "not_offloadable": 0,
+        "not_evaluated": 0
+      },
+      "label_rate": {
+        "offloadable": 1.0,
+        "not_offloadable": 0.0,
+        "not_evaluated": 0.0
+      },
+      "first_gate": {},
+      "all_gates": {},
+      "errors": 0,
+      "verdict_source": {
+        "served": 300
+      },
+      "served_vs_local_disagreements": [],
+      "falsified": {
+        "count": 0,
+        "of_positives": 300,
+        "rate": 0.0,
+        "examples": []
+      }
+    },
+    "batch": {
+      "n": 50,
+      "states": {
+        "offloadable": 0,
+        "not_offloadable": 50,
+        "not_evaluated": 0
+      },
+      "label_rate": {
+        "offloadable": 0.0,
+        "not_offloadable": 1.0,
+        "not_evaluated": 0.0
+      },
+      "first_gate": {
+        "CROSS_CONTAINER_SYNTHESIS": 50
+      },
+      "all_gates": {
+        "CROSS_CONTAINER_SYNTHESIS": 50
+      },
+      "errors": 0,
+      "batch_width": 6,
+      "falsified": {
+        "count": 0,
+        "of_positive_batches": 0,
+        "examples": []
+      }
+    },
+    "ranked": {
+      "n": 10,
+      "states": {
+        "offloadable": 0,
+        "not_offloadable": 10,
+        "not_evaluated": 0
+      },
+      "label_rate": {
+        "offloadable": 0.0,
+        "not_offloadable": 1.0,
+        "not_evaluated": 0.0
+      },
+      "first_gate": {
+        "TRI_STATE_UNKNOWN": 10
+      },
+      "all_gates": {
+        "TRI_STATE_UNKNOWN": 10,
+        "CROSS_CONTAINER_SYNTHESIS": 10,
+        "NARROW_RANK_MARGIN": 2,
+        "NO_BODIES": 2
+      },
+      "errors": 0,
+      "per_class": {
+        "absent": {
+          "n": 2,
+          "states": {
+            "offloadable": 0,
+            "not_offloadable": 2,
+            "not_evaluated": 0
+          },
+          "label_rate": {
+            "offloadable": 0.0,
+            "not_offloadable": 1.0,
+            "not_evaluated": 0.0
+          },
+          "first_gate": {
+            "TRI_STATE_UNKNOWN": 2
+          },
+          "all_gates": {
+            "TRI_STATE_UNKNOWN": 2,
+            "NO_BODIES": 2,
+            "CROSS_CONTAINER_SYNTHESIS": 2
+          }
+        },
+        "ambiguous": {
+          "n": 4,
+          "states": {
+            "offloadable": 0,
+            "not_offloadable": 4,
+            "not_evaluated": 0
+          },
+          "label_rate": {
+            "offloadable": 0.0,
+            "not_offloadable": 1.0,
+            "not_evaluated": 0.0
+          },
+          "first_gate": {
+            "TRI_STATE_UNKNOWN": 4
+          },
+          "all_gates": {
+            "TRI_STATE_UNKNOWN": 4,
+            "CROSS_CONTAINER_SYNTHESIS": 4,
+            "NARROW_RANK_MARGIN": 2
+          }
+        },
+        "unique": {
+          "n": 4,
+          "states": {
+            "offloadable": 0,
+            "not_offloadable": 4,
+            "not_evaluated": 0
+          },
+          "label_rate": {
+            "offloadable": 0.0,
+            "not_offloadable": 1.0,
+            "not_evaluated": 0.0
+          },
+          "first_gate": {
+            "TRI_STATE_UNKNOWN": 4
+          },
+          "all_gates": {
+            "TRI_STATE_UNKNOWN": 4,
+            "CROSS_CONTAINER_SYNTHESIS": 4
+          }
+        }
+      },
+      "per_query": [
+        {
+          "query": "ABSENCE_REF_PREFIX",
+          "class": "unique",
+          "verdict": "not_offloadable",
+          "disqualifiers": [
+            "TRI_STATE_UNKNOWN",
+            "CROSS_CONTAINER_SYNTHESIS"
+          ],
+          "units": 29,
+          "containers": 19,
+          "rank_margin": 0.6428
+        },
+        {
+          "query": "_count_hits",
+          "class": "unique",
+          "verdict": "not_offloadable",
+          "disqualifiers": [
+            "TRI_STATE_UNKNOWN",
+            "CROSS_CONTAINER_SYNTHESIS"
+          ],
+          "units": 19,
+          "containers": 14,
+          "rank_margin": 0.6713
+        },
+        {
+          "query": "test_a_revalidated_hit_does_not_corrupt_later_hits",
+          "class": "unique",
+          "verdict": "not_offloadable",
+          "disqualifiers": [
+            "TRI_STATE_UNKNOWN",
+            "CROSS_CONTAINER_SYNTHESIS"
+          ],
+          "units": 9,
+          "containers": 6,
+          "rank_margin": 0.7208
+        },
+        {
+          "query": "test_matching_is_case_insensitive_and_any_term",
+          "class": "unique",
+          "verdict": "not_offloadable",
+          "disqualifiers": [
+            "TRI_STATE_UNKNOWN",
+            "CROSS_CONTAINER_SYNTHESIS"
+          ],
+          "units": 12,
+          "containers": 9,
+          "rank_margin": 0.6296
+        },
+        {
+          "query": "$schema",
+          "class": "ambiguous",
+          "verdict": "not_offloadable",
+          "disqualifiers": [
+            "TRI_STATE_UNKNOWN",
+            "CROSS_CONTAINER_SYNTHESIS",
+            "NARROW_RANK_MARGIN"
+          ],
+          "units": 17,
+          "containers": 14,
+          "rank_margin": 0.0
+        },
+        {
+          "query": "_make_repo",
+          "class": "ambiguous",
+          "verdict": "not_offloadable",
+          "disqualifiers": [
+            "TRI_STATE_UNKNOWN",
+            "CROSS_CONTAINER_SYNTHESIS",
+            "NARROW_RANK_MARGIN"
+          ],
+          "units": 18,
+          "containers": 17,
+          "rank_margin": 0.0002
+        },
+        {
+          "query": "fake_watch_single",
+          "class": "ambiguous",
+          "verdict": "not_offloadable",
+          "disqualifiers": [
+            "TRI_STATE_UNKNOWN",
+            "CROSS_CONTAINER_SYNTHESIS"
+          ],
+          "units": 32,
+          "containers": 16,
+          "rank_margin": 0.5
+        },
+        {
+          "query": "route",
+          "class": "ambiguous",
+          "verdict": "not_offloadable",
+          "disqualifiers": [
+            "TRI_STATE_UNKNOWN",
+            "CROSS_CONTAINER_SYNTHESIS"
+          ],
+          "units": 14,
+          "containers": 8,
+          "rank_margin": 0.4999
+        },
+        {
+          "query": "zzq_no_such_identifier_alpha",
+          "class": "absent",
+          "verdict": "not_offloadable",
+          "disqualifiers": [
+            "TRI_STATE_UNKNOWN",
+            "NO_BODIES",
+            "CROSS_CONTAINER_SYNTHESIS"
+          ],
+          "units": 18,
+          "containers": 12,
+          "rank_margin": 0.643
+        },
+        {
+          "query": "zzq_no_such_identifier_beta",
+          "class": "absent",
+          "verdict": "not_offloadable",
+          "disqualifiers": [
+            "TRI_STATE_UNKNOWN",
+            "NO_BODIES",
+            "CROSS_CONTAINER_SYNTHESIS"
+          ],
+          "units": 17,
+          "containers": 11,
+          "rank_margin": 0.6446
+        }
+      ],
+      "control_violations": []
+    }
+  },
+  "stated_limits": [
+    "The identity arm is close to a tautology on a healthy index: a single fresh untruncated body passes every rule by construction. Its label rate characterises the corpus, NOT the criterion's selectivity. Read the batch and ranked arms for that.",
+    "The batch arm's label rate is a FLOOR, not a representative rate. It batches a stride sample, which maximises container spread by construction, so CROSS_CONTAINER_SYNTHESIS fires on nearly every batch. A real batch call fetches related symbols from one or two files. Do not quote this arm as 'the criterion rejects 98% of batches'; it rejects 98% of deliberately scattered ones.",
+    "The falsifier checks a NECESSARY condition (was the ground truth present in the payload), not a sufficient one (would a cheap model answer correctly). A pass is an upper bound on achievable accuracy, never an accuracy figure.",
+    "One corpus, one run, no repeats. Cross-repo generalisation is unmeasured.",
+    "The ranked arm's queries are DERIVED FROM THE CORPUS under test (symbol names, split into unique and ambiguous classes) plus a fixed absent-control class. n is small and each class is smaller still: it characterises the criterion's behaviour per retrieval shape, it does not estimate a population rate.",
+    "The ranked arm samples NAMES, not queries a user would type. Real queries are frequently prose. Nothing here measures prose retrieval, and the per-class rates must not be read as such.",
+    "Because the ranked queries are corpus-derived, the arm is NOT comparable across corpora at the query level. The per-class rates are the comparable quantity; the query list is not.",
+    "PREREQUISITE FOR WIRING, measured not assumed: no ranked jCodeMunch tool emits _meta.confidence_components today, so nothing downstream can read a rank margin off a live response. The harness supplies it by calling compute_confidence on the returned items. A wired annotation must emit those components or compute them inline; until one does, the criterion's ranking branch is unreachable in production and every ranked payload would gate on TRI_STATE_UNKNOWN.",
+    "The ranked arm's container counts depend on token_budget: a larger budget packs more files in and trips CROSS_CONTAINER_SYNTHESIS on its own. The budget is a harness parameter, so this arm's label rate is a rate AT THAT BUDGET and not a property of the criterion.",
+    "A dirty working tree at measurement time makes the pin advisory; check corpus.pin.dirty before quoting anything. Check corpus.pin.instrument.all_committed as well: while this work is unannounced the criterion is held in .git/info/exclude, so it is invisible to `git status` and a clean tree does NOT imply a reproducible run.",
+    "Self-measurement: this corpus IS jCodeMunch's own repository, so it contains the criterion and harness being measured. Small (3 files of ~755) but not zero. Read a second, unrelated corpus before treating any number here as a property of the criterion."
+  ]
+}

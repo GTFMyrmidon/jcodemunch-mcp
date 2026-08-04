@@ -422,6 +422,41 @@ Beyond the user-invoked calls listed above, the base package makes no other netw
 
 ---
 
+## Offloadable-work annotation (`JMUNCH_OFFLOADABLE`, off by default)
+
+Set `JMUNCH_OFFLOADABLE=1` (or the per-server `JCODEMUNCH_OFFLOADABLE=1`) and every `get_symbol_source` reply carries an advisory `_meta.offloadable` block saying whether the work that payload enables is grunt-work a cheaper model can do. Nothing is emitted unless you switch it on, and nothing about the answer itself changes when you do.
+
+**We label. We never route, execute, or hold model credentials.** No new process, no network call, no catalog action, and no model of ours ever runs. What to do with the label is entirely the client's decision.
+
+Every modelmaxxing router available today classifies the **prompt**, because the prompt is all a router standing in front of the model can see. This sits downstream of retrieval and classifies **the evidence we just assembled** — whether the answer is literally present in the payload, how many containers it spans, whether anything was truncated, and whether any freshness or coverage signal came back unknown.
+
+The verdict is **tri-state and reason-coded**, never a bare score:
+
+```json
+"offloadable": {
+  "offloadable": "offloadable",
+  "qualifiers": ["EXTRACTIVE", "SINGLE_CONTAINER", "IDENTITY_LOOKUP", "NO_ABSENCE_FLAGS", "SELF_CONTAINED"],
+  "disqualifiers": [],
+  "shape": {"units": 1, "containers": 1},
+  "verify_with": {"tool": "check_references", "args": {"identifier": "compute_confidence"}},
+  "criterion_version": 2
+}
+```
+
+`not_evaluated` is not `not_offloadable` — "we did not assess it" and "this is not grunt-work" are different facts, and collapsing them is exactly the failure the tri-state exists to prevent. The criterion **fails closed**: every unknown bearing on the answer disqualifies, because a false `offloadable` sends real work to a model that will confabulate over the gap, while a false `not_offloadable` costs nothing but a missed saving.
+
+`verify_with` names the call that would **adjudicate** a cheaper model's answer over this payload. That is the part that stops the label requiring trust in us: an annotation you cannot check is a vendor assertion, and this one ships next to the tool that checks it.
+
+**What we measured, and what the numbers do not say.** The criterion was run against three pinned corpora — this repository, `fastapi/fastapi` at `a64dfbbd`, and `django/django` — before the label shipped, with the harness in [`benchmarks/offload/`](benchmarks/offload/). Findings worth stating plainly:
+
+- On an index whose freshness cannot be established, **every** payload is refused. Django's index carries no source root, and all 300 sampled identity lookups gated on `TRI_STATE_UNKNOWN`. That is the fail-closed rule doing its job, not a defect.
+- The falsifier checks a **necessary** condition — was the ground truth actually present in the payload — never a sufficient one. It cannot tell you a cheap model will answer correctly, only that the information it needs was there. **A pass is an upper bound on achievable accuracy and must not be read as an accuracy figure.**
+- The batch arm's rate is a **floor**, not a representative rate: it deliberately scatters its sample across many files, which is close to the worst case for the container rule.
+
+Same field contract in jdocmunch-mcp (sections/documents) and jdatamunch-mcp (columns/datasets) — the vocabulary is *units* and *containers* so all three speak it identically, and a pinned contract digest fails the build in any one of them that drifts.
+
+---
+
 ## Runtime identity resource
 
 The server exposes one MCP resource, `munch://runtime/identity` — a read-only `munch.runtime.identity/v1` JSON document identifying this exact server process (`product`, `version`, `transport`, `pid`, OS-derived `process_start`, per-process-lifetime `instance_id`, optional `launch_id` echo of `JCODEMUNCH_LAUNCH_ID` / `MUNCH_LAUNCH_ID`). Multi-agent harnesses use it to tell command-line-identical servers apart and detect restarts. Computed on demand with no disk reads, writes, or network; when the OS process-start probe is unavailable the timestamp is disclosed as `source: "self_recorded"`, never fabricated. Command lines, env, cwd, hostnames, and repo paths are deliberately excluded. Same contract in jdocmunch-mcp and jdatamunch-mcp. Full field reference in [USER_GUIDE.md](USER_GUIDE.md#runtime-identity-resource).
