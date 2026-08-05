@@ -714,6 +714,10 @@ from ._indexing_pipeline import (
     parse_and_prepare_incremental,
     parse_immediate,
 )
+from ._utils import (
+    describe_unloadable_index,
+    stamp_incremental_outcome as _stamp_incremental_outcome,
+)
 from .package_registry import extract_package_names as _extract_package_names
 
 
@@ -1327,6 +1331,12 @@ def index_folder(
     _config.load_project_config(str(folder_path))
 
     warnings = []
+    # What the caller ASKED for, pinned before anything downstream can flip
+    # `incremental` (#413). Every non-error return stamps requested vs
+    # performed, so a caller never has to grep `warnings[]` for a sentence to
+    # learn that the operation it requested was substituted for another one.
+    _requested_incremental = incremental
+    rebuild_reason: Optional[str] = None
     trusted_folders = _config.get("trusted_folders", [], repo=str(folder_path))
     whitelist_mode = _config.get(
         "trusted_folders_whitelist_mode", True, repo=str(folder_path)
@@ -1728,7 +1738,7 @@ def index_folder(
                         store, owner, repo_name, folder_path,
                         existing_index.git_head if existing_index else None,
                     )
-                    return {
+                    _fast_no_change = {
                         "success": True,
                         "message": "No changes detected",
                         "repo": f"{owner}/{repo_name}",
@@ -1736,6 +1746,10 @@ def index_folder(
                         "changed": 0, "new": 0, "deleted": 0,
                         "duration_seconds": round(time.monotonic() - t0, 2),
                     }
+                    _stamp_incremental_outcome(
+                        _fast_no_change, _requested_incremental, True
+                    )
+                    return _fast_no_change
 
                 # Read and hash only the changed/new files.
                 # For "modified" files, compare hash against stored hash —
@@ -1805,7 +1819,7 @@ def index_folder(
                             file_mtimes=mtime_only_updates,
                             git_head=_new_head if _head_advanced else "",
                         )
-                    return {
+                    _fast_mtime_only = {
                         "success": True,
                         "message": "No changes detected",
                         "repo": f"{owner}/{repo_name}",
@@ -1814,6 +1828,10 @@ def index_folder(
                         "changed": 0, "new": 0, "deleted": 0,
                         "duration_seconds": round(time.monotonic() - t0, 2),
                     }
+                    _stamp_incremental_outcome(
+                        _fast_mtime_only, _requested_incremental, True
+                    )
+                    return _fast_mtime_only
 
                 files_to_parse = set(changed_files) | set(new_files)
                 # Split pipeline: parse immediately (no AI), fire summarization thread.
@@ -1916,6 +1934,7 @@ def index_folder(
                     )
                 if fast_warnings:
                     result["warnings"] = fast_warnings
+                _stamp_incremental_outcome(result, _requested_incremental, True)
                 _maybe_apply_adaptive(folder_path, result)
                 return result
 
@@ -2116,16 +2135,14 @@ def index_folder(
                 )
 
         if existing_index is None and store.has_index(owner, repo_name):
+            rebuild_reason, _rebuild_message = describe_unloadable_index(
+                store, owner, repo_name
+            )
             logger.warning(
-                "index_folder version_mismatch — %s/%s: on-disk index is a newer version; full re-index required",
-                owner, repo_name,
+                "index_folder unloadable_index — %s/%s: %s; full re-index required",
+                owner, repo_name, rebuild_reason,
             )
-            warnings.append(
-                "Existing index was created by a newer version of jcodemunch-mcp "
-                "and cannot be read — performing a full re-index. "
-                "If you downgraded the package, delete ~/.code-index/ (or your "
-                "CODE_INDEX_PATH directory) to remove the stale index."
-            )
+            warnings.append(_rebuild_message)
 
         # Discovery pass — resolve rel_paths and collect mtimes without
         # reading file contents (P2-5: avoids 200MB-1GB allocation
@@ -2258,6 +2275,9 @@ def index_folder(
                     "changed": 0, "new": 0, "deleted": 0,
                     "duration_seconds": round(time.monotonic() - t0, 2),
                 }
+                _stamp_incremental_outcome(
+                    _no_change_result, _requested_incremental, True
+                )
                 # This ran a full discovery walk, so a still-truncated index
                 # stays loud even when nothing changed (#366).
                 _attach_cap_report(_no_change_result, _cap_status)
@@ -2401,6 +2421,7 @@ def index_folder(
                 result["branch_delta"] = True
             if warnings:
                 result["warnings"] = warnings
+            _stamp_incremental_outcome(result, _requested_incremental, True)
             _attach_cap_report(result, _cap_status)
             _attach_provider_skips(result, folder_path)
             _maybe_apply_adaptive(folder_path, result)
@@ -2757,6 +2778,11 @@ def index_folder(
         if warnings:
             result["warnings"] = warnings
 
+        # This path rebuilt the whole corpus. When the caller asked for an
+        # incremental, that substitution is now a field, not a sentence (#413).
+        _stamp_incremental_outcome(
+            result, _requested_incremental, False, rebuild_reason
+        )
         _attach_cap_report(result, _cap_status)
         _attach_provider_skips(result, folder_path)
 

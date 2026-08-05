@@ -2,6 +2,43 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.243] - 2026-08-05 - an unrequested rebuild is now a field, not a sentence
+
+Reported by **@LuigiNicaPRO** (#413) against 1.108.231.
+
+`index_folder` had one code path for "the index on disk is unreadable" and it
+was the path for "there is no index at all". When `load_index()` returned
+`None`, a requested incremental was replaced by a full rebuild, `success: true`
+came back, and the rebuild re-stamped `meta.index_version` on its way out — so
+afterwards nothing on disk showed it had happened. A caller who did not capture
+`warnings[]` at the moment of the call could not learn it after the fact.
+
+`load_index()` returns `None` on **seven** distinct paths (absent file, two
+delete-during-load races, empty `meta`, unparseable `index_version`, future
+`index_version`, corrupt database). All seven were reported with one message
+naming one of them: *"created by a newer version … if you downgraded the
+package, delete `~/.code-index/`"*. For a corrupt index that is the wrong cause
+and a considerably larger remedy than the situation calls for. An empty-`meta`
+index took the same rebuild with **no message at all**.
+
+- `index_folder` and `index_repo` now call `inspect_index()` — the
+  discriminator PR #291 already built for the read side — and report the
+  measured status (`sqlite_corrupt`, `sqlite_missing_meta`,
+  `sqlite_future_version`) with that status's own hint.
+- Every non-error return of both tools carries `requested_incremental` and
+  `performed_incremental`; an unreadable index also sets `rebuild_reason`.
+  A caller can branch on a field. Nobody greps `warnings[]` for a sentence.
+- The one cause that really is a downgrade keeps saying so, and its remedy
+  narrows from "delete every index you have" to that one repository's index.
+- When `inspect_index` disagrees with `load_index` (the mid-load delete races),
+  the reason is `unloadable_unknown`. Unknown is a third answer, never one of
+  the named causes.
+
+New: `tests/test_unloadable_index_rebuild_disclosure.py` (7 tests), including
+the non-vacuity cases — a healthy incremental must be able to report that
+nothing was substituted, and a first-time index must not invent a cause for
+having no index to diff against.
+
 ## [1.108.242] - 2026-08-05 - documentation restructure: CAPABILITIES.md + CLIENTS.md, corrected tool counts and counters
 
 - README split into CAPABILITIES.md (capability tour) and CLIENTS.md (per-client setup); README goes 1223 -> 213 lines.

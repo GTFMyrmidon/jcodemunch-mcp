@@ -20,6 +20,10 @@ from ._indexing_pipeline import (
     parse_and_prepare_incremental,
     parse_and_prepare_full,
 )
+from ._utils import (
+    describe_unloadable_index,
+    stamp_incremental_outcome as _stamp_incremental_outcome,
+)
 
 
 _SLUG_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
@@ -340,6 +344,10 @@ async def index_repo(
         github_token = os.environ.get("GITHUB_TOKEN")
 
     warnings = []
+    # What the caller ASKED for, so every non-error return can report requested
+    # vs performed instead of leaving a silent substitution in warnings[] (#413).
+    _requested_incremental = incremental
+    rebuild_reason: Optional[str] = None
     max_files = get_max_index_files()
 
     try:
@@ -367,7 +375,7 @@ async def index_repo(
                     "index_repo tree_sha_match — %s/%s: tree SHA unchanged (%s), skipping download",
                     owner, repo, current_tree_sha[:12],
                 )
-                return {
+                _sha_match_result = {
                     "success": True,
                     "message": "No changes detected (tree SHA unchanged)",
                     "repo": f"{owner}/{repo}",
@@ -375,6 +383,10 @@ async def index_repo(
                     "changed": 0, "new": 0, "deleted": 0,
                     "duration_seconds": round(time.monotonic() - t0, 2),
                 }
+                _stamp_incremental_outcome(
+                    _sha_match_result, _requested_incremental, True
+                )
+                return _sha_match_result
 
         # Fetch .gitignore
         gitignore_content = await fetch_gitignore(owner, repo, github_token)
@@ -404,7 +416,7 @@ async def index_repo(
             _changed = sorted(p for p in (old_set & new_set) if old_blob[p] != blob_shas[p])
             if not _changed and not _new and not _deleted:
                 logger.info("index_repo blob_sha_diff — no changes, skipping")
-                return {
+                _blob_no_change = {
                     "success": True,
                     "message": "No changes detected",
                     "repo": f"{owner}/{repo}",
@@ -412,6 +424,10 @@ async def index_repo(
                     "changed": 0, "new": 0, "deleted": 0,
                     "duration_seconds": round(time.monotonic() - t0, 2),
                 }
+                _stamp_incremental_outcome(
+                    _blob_no_change, _requested_incremental, True
+                )
+                return _blob_no_change
             files_to_fetch = set(_changed) | set(_new)
             _blob_diff = (_changed, _new, _deleted)
             logger.info(
@@ -447,16 +463,14 @@ async def index_repo(
                 current_files[path] = content
 
         if existing_index is None and store.has_index(owner, repo):
+            rebuild_reason, _rebuild_message = describe_unloadable_index(
+                store, owner, repo
+            )
             logger.warning(
-                "index_repo version_mismatch — %s/%s: on-disk index is a newer version; full re-index required",
-                owner, repo,
+                "index_repo unloadable_index — %s/%s: %s; full re-index required",
+                owner, repo, rebuild_reason,
             )
-            warnings.append(
-                "Existing index was created by a newer version of jcodemunch-mcp "
-                "and cannot be read — performing a full re-index. "
-                "If you downgraded the package, delete ~/.code-index/ (or your "
-                "CODE_INDEX_PATH directory) to remove the stale index."
-            )
+            warnings.append(_rebuild_message)
 
         if incremental and existing_index is not None:
             if _blob_diff is not None:
@@ -475,13 +489,17 @@ async def index_repo(
 
             if not changed and not new and not deleted:
                 logger.info("index_repo incremental — no changes detected, skipping save")
-                return {
+                _incr_no_change = {
                     "success": True,
                     "message": "No changes detected",
                     "repo": f"{owner}/{repo}",
                     "changed": 0, "new": 0, "deleted": 0,
                     "duration_seconds": round(time.monotonic() - t0, 2),
                 }
+                _stamp_incremental_outcome(
+                    _incr_no_change, _requested_incremental, True
+                )
+                return _incr_no_change
 
             files_to_parse = set(changed) | set(new)
             raw_files_subset = {p: current_files[p] for p in files_to_parse if p in current_files}
@@ -524,6 +542,7 @@ async def index_repo(
             }
             if warnings:
                 result["warnings"] = warnings
+            _stamp_incremental_outcome(result, _requested_incremental, True)
             return result
 
         # Full index path
@@ -616,6 +635,10 @@ async def index_repo(
                 f"{files_skipped_cap} dropped. Raise JCODEMUNCH_MAX_INDEX_FILES or narrow the path."
             ]
 
+        # This path rebuilt the whole corpus (#413).
+        _stamp_incremental_outcome(
+            result, _requested_incremental, False, rebuild_reason
+        )
         return result
 
     except Exception as e:
