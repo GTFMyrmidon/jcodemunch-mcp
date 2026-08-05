@@ -2,6 +2,14 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.242] - 2026-08-05 - documentation restructure: CAPABILITIES.md + CLIENTS.md, corrected tool counts and counters
+
+- README split into CAPABILITIES.md (capability tour) and CLIENTS.md (per-client setup); README goes 1223 -> 213 lines.
+- Tool counts corrected against the shipped wheel: `list_tools()` returns 91 at the default profile (documented as 62), core is 17 (16), standard is 79 (51).
+- Counter figures refreshed from live telemetry: 645B tokens, 95,000+ reporting installs, $3.2M, 77,000 kg CO2.
+- SECURITY.md now carries the full background-behavior disclosure; README keeps an explicit `background-behavior-fully-disclosed` anchor so existing inbound deep links still resolve.
+- test_docs_config_parity now parses only the Default column rather than the third column of every table, which a savings table was being misread as.
+
 ## [1.108.241] - 2026-08-04 - offloadable-work annotation, off by default
 
 `get_symbol_source` can now tell you whether the work its payload enables is
