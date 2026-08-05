@@ -58,13 +58,35 @@ def _parse_doc_defaults() -> dict:
 
     Returns a map of key → raw default-cell string. Callers normalize to
     compare against code values.
+
+    ⚠ Only rows under a header whose THIRD column is "Default" are collected.
+    The docstring above has always said "the Default column", but the original
+    implementation took `cells[2]` from every table with three or more columns
+    and let later rows overwrite earlier ones. CONFIGURATION.md also carries a
+    `| Config key | What it controls | Typical savings |` table, so a savings
+    estimate silently replaced the real default for any key appearing in both
+    (`tool_profile` -> "~5-6k tokens (core)"). The docs were right; the parser
+    was inferring table semantics from column position.
     """
     rows: dict[str, str] = {}
+    in_defaults_table = False
     for line in CONFIG_MD.read_text(encoding="utf-8").splitlines():
         if not line.startswith("|"):
+            # Any non-table line ends the current table.
+            in_defaults_table = False
             continue
         cells = [c.strip() for c in line.strip("|").split("|")]
         if len(cells) < 3:
+            in_defaults_table = False
+            continue
+        # A header row re-arms (or disarms) collection for the table below it.
+        if cells[2].lower() == "default":
+            in_defaults_table = True
+            continue
+        if cells[0].lower() in {"key", "config key", "option", "variable"}:
+            in_defaults_table = False
+            continue
+        if not in_defaults_table:
             continue
         key_cell = cells[0].strip("`")
         if not re.match(r"^[a-z_][a-z0-9_]*$", key_cell):
