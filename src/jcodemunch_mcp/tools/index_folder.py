@@ -42,7 +42,13 @@ from ..storage.git_root import (
     is_linked_worktree,
     resolve_index_identity,
 )
-from ..storage.index_store import _file_hash, _file_hash_bytes, _get_git_head, _get_git_branch
+from ..storage.index_store import (
+    PARSER_GENERATION,
+    _file_hash,
+    _file_hash_bytes,
+    _get_git_head,
+    _get_git_branch,
+)
 from ..summarizer import summarize_symbols
 from ..reindex_state import WatcherChange
 from ..path_map import parse_path_map, remap
@@ -715,7 +721,9 @@ from ._indexing_pipeline import (
     parse_immediate,
 )
 from ._utils import (
+    PARSER_UPGRADE_WARNING,
     describe_unloadable_index,
+    needs_parser_upgrade as _needs_parser_upgrade,
     stamp_incremental_outcome as _stamp_incremental_outcome,
 )
 from .package_registry import extract_package_names as _extract_package_names
@@ -1665,6 +1673,15 @@ def index_folder(
                         continue
                     _old_hash_map[rel_path] = old_hash
 
+            # An index whose symbols predate the current extraction semantics
+            # cannot be repaired by a delta: the files carrying the bad symbols
+            # are UNCHANGED, so a change-set-driven pass never re-parses them
+            # (#414). Disarm the fast path and let the full walk below take the
+            # upgrade branch, which is the only thing that rewrites every row.
+            if _needs_parser_upgrade(_fast_base_index):
+                existing_index = None
+                use_memory_hash_cache = False
+
             if existing_index is not None or use_memory_hash_cache:
                 # Reuse the providers discovered by the initial full index so a
                 # watched edit re-enriches its changed symbols (ecosystem_context
@@ -2143,6 +2160,19 @@ def index_folder(
                 owner, repo_name, rebuild_reason,
             )
             warnings.append(_rebuild_message)
+        elif _needs_parser_upgrade(existing_index):
+            # One-off full re-parse after an extraction-semantics bump (#414).
+            # Reported through the same fields a caller already reads for an
+            # unreadable index, so a substituted rebuild always has a reason.
+            incremental = False
+            rebuild_reason = "parser_generation_upgrade"
+            logger.warning(
+                "index_folder parser_generation_upgrade — %s/%s: stored=%s current=%s; "
+                "re-parsing every file once",
+                owner, repo_name,
+                getattr(existing_index, "parser_generation", 0), PARSER_GENERATION,
+            )
+            warnings.append(PARSER_UPGRADE_WARNING)
 
         # Discovery pass — resolve rel_paths and collect mtimes without
         # reading file contents (P2-5: avoids 200MB-1GB allocation

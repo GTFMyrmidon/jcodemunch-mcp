@@ -248,14 +248,16 @@ _META_KEYS = [
 # None = not yet loaded; any accidental read before _ensure_index_store_deps()
 # fires raises TypeError("'>' not supported between 'NoneType' and 'int'").
 _INDEX_VERSION: Optional[int] = None
+_PARSER_GENERATION: Optional[int] = None
 _file_hash: Callable[[str], str] = lambda x: ""
 
 
 def _ensure_index_store_deps() -> None:
-    global _INDEX_VERSION, _file_hash
+    global _INDEX_VERSION, _PARSER_GENERATION, _file_hash
     if _INDEX_VERSION is None:
-        from .index_store import INDEX_VERSION, _file_hash as _fh
+        from .index_store import INDEX_VERSION, PARSER_GENERATION, _file_hash as _fh
         _INDEX_VERSION = INDEX_VERSION
+        _PARSER_GENERATION = PARSER_GENERATION
         _file_hash = _fh
 
 
@@ -1236,6 +1238,7 @@ class SQLiteIndexStore:
             languages=lang_counts,
             symbols=composed_symbols,
             index_version=base_index.index_version,
+            parser_generation=getattr(base_index, "parser_generation", 0),
             file_hashes=composed_hashes,
             git_head=delta.get("git_head", base_index.git_head),
             file_summaries=composed_summaries,
@@ -1350,6 +1353,7 @@ class SQLiteIndexStore:
             languages=languages or {},
             symbols=serialized_symbols,
             index_version=cast(int, _INDEX_VERSION),
+            parser_generation=cast(int, _PARSER_GENERATION),
             file_hashes=file_hashes,
             git_head=git_head,
             file_summaries=file_summaries or {},
@@ -2866,6 +2870,7 @@ class SQLiteIndexStore:
             languages=computed_langs,
             symbols=patched_symbols,
             index_version=old.index_version,
+            parser_generation=getattr(old, "parser_generation", 0),
             file_hashes=new_file_hashes,
             git_head=meta.get("git_head", old.git_head),
             file_summaries=new_file_summaries,
@@ -2964,6 +2969,7 @@ class SQLiteIndexStore:
             languages=languages,
             symbols=symbols,
             index_version=int(meta.get("index_version", "0")),
+            parser_generation=int(meta.get("parser_generation", "0") or 0),
             file_hashes=file_hashes,
             git_head=meta.get("git_head", ""),
             file_summaries=file_summaries,
@@ -2991,6 +2997,7 @@ class SQLiteIndexStore:
             "name": index.name,
             "indexed_at": index.indexed_at,
             "index_version": str(index.index_version),
+            "parser_generation": str(getattr(index, "parser_generation", 0)),
             "git_head": index.git_head,
             "source_root": index.source_root,
             "git_root": getattr(index, "git_root", "") or "",
@@ -3188,6 +3195,9 @@ class SQLiteIndexStore:
                 "name": data.get("name", name),
                 "indexed_at": data["indexed_at"],
                 "index_version": str(data.get("index_version", _INDEX_VERSION)),
+                # A JSON index predates the generation stamp; 0 makes the
+                # migrated copy re-parse once rather than inherit a claim.
+                "parser_generation": str(data.get("parser_generation", 0) or 0),
                 "git_head": data.get("git_head", ""),
                 "source_root": data.get("source_root", ""),
                 "git_root": data.get("git_root", ""),

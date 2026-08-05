@@ -16,12 +16,15 @@ logger = logging.getLogger(__name__)
 from ..parser import get_language_for_path
 from ..security import is_secret_file, is_binary_extension, get_max_index_files, get_extra_ignore_patterns, get_skip_patterns
 from ..storage import IndexStore
+from ..storage.index_store import PARSER_GENERATION
 from ._indexing_pipeline import (
     parse_and_prepare_incremental,
     parse_and_prepare_full,
 )
 from ._utils import (
+    PARSER_UPGRADE_WARNING,
     describe_unloadable_index,
+    needs_parser_upgrade as _needs_parser_upgrade,
     stamp_incremental_outcome as _stamp_incremental_outcome,
 )
 
@@ -366,6 +369,22 @@ async def index_repo(
         # and the full incremental change-detection path below.
         store = IndexStore(base_path=storage_path)
         existing_index = store.load_index(owner, repo)
+
+        # One-off full re-parse after an extraction-semantics bump (#414).
+        # Decided BEFORE the tree-SHA and blob-SHA fast paths below, which both
+        # return early on `incremental` and would otherwise skip the repair on
+        # exactly the repos that need it: nothing changed upstream, so nothing
+        # would be re-fetched or re-parsed.
+        if _needs_parser_upgrade(existing_index):
+            incremental = False
+            rebuild_reason = "parser_generation_upgrade"
+            logger.warning(
+                "index_repo parser_generation_upgrade — %s/%s: stored=%s current=%s; "
+                "re-parsing every file once",
+                owner, repo,
+                getattr(existing_index, "parser_generation", 0), PARSER_GENERATION,
+            )
+            warnings.append(PARSER_UPGRADE_WARNING)
 
         # Fast-path incremental check: if the stored tree SHA matches the current
         # one, no files have changed — skip all file downloads entirely.

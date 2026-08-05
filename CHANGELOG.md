@@ -2,6 +2,61 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.244] - 2026-08-05 - symbol names corrupted by any non-ASCII character earlier in the file
+
+Reported by **@MotoMato85** (#414) against 1.108.241, with a standalone repro,
+an exhaustive AST audit, and a 118-function whole-repository measurement.
+
+Sixteen extractors decoded the source to a `str` and then sliced it with
+tree-sitter's `node.start_byte` / `node.end_byte`, which are **byte** offsets.
+That is correct only while a file is pure ASCII. Every earlier non-ASCII
+character pushed the extraction window forward by the number of extra bytes it
+encodes to, so the window landed on an unrelated run of source further down the
+file. It kept its byte width, so an ASCII identifier still came back with the
+right number of characters -- `Kayttaja` became `aja {`, which reads as a
+plausible fragment rather than obvious garbage.
+
+Affected: `objc`, `proto`, `hcl`, `graphql`, `julia`, `groovy`, `xml`,
+`pascal`, `matlab`, `ada`, `commonlisp`, `solidity`, `zig`, `powershell`,
+`apex`, `ocaml`. Extractors that slice `source_bytes` or use `node.text` were
+never affected.
+
+- `name`, `qualified_name`, `signature` and `id` were wrong for every symbol
+  after the first non-ASCII character in a file. `line` / `end_line` come from
+  `start_point` and stayed **correct**, so outlines looked healthy.
+- The corrupted name is baked into the symbol id, so it persisted into the
+  index; `search_symbols`, `get_symbol_source` and `find_references` all missed
+  on the real name.
+- `hcl` and `groovy` dropped their symbols entirely rather than renaming them:
+  both test the sliced text against a fixed keyword set, and a shifted slice
+  never matches.
+- Nothing raised, nothing was logged, and no warning was emitted.
+
+**Fix:** `ByteSlicedSource`, a text view indexed by byte offsets, replaces the
+decoded string in those 16 functions. The 34 slice expressions are unchanged.
+The regex-based extractors (`cobol`, `verilog`, `vhdl`, `asm`, ...) slice with
+character offsets and are deliberately left alone.
+
+**Existing indexes are repaired automatically, once.** This is the half a
+parser fix cannot reach on its own: the stored symbols are wrong, and the files
+that produced them are unchanged, so every incremental path correctly concludes
+there is nothing to re-read. Measured before the fix: after upgrading,
+`index_folder(incremental=True)` returned "No changes detected" and left the
+wrong names in place. A new `PARSER_GENERATION` stamp, written only by the
+full-save path, makes the first `index_folder` / `index_repo` call after
+upgrading re-parse the corpus once, reported through the 1.108.243 fields as
+`performed_incremental: false` with
+`rebuild_reason: "parser_generation_upgrade"`. It is decided before the watcher
+change-set path, the tree-SHA path and the blob-SHA path, because all three
+would otherwise skip the repair on exactly the repositories that need it.
+
+⚠ `INDEX_VERSION` is unchanged at 17. It could not express this -- the stored
+rows are schema-valid -- and lowering or raising it would force nothing, since
+only a stored version *greater* than the current one is refused.
+
+New: `tests/test_byte_offset_symbol_names.py` (38) and
+`tests/test_parser_generation_upgrade.py` (5).
+
 ## [1.108.243] - 2026-08-05 - an unrequested rebuild is now a field, not a sentence
 
 Reported by **@LuigiNicaPRO** (#413) against 1.108.231.

@@ -51,6 +51,27 @@ logger = logging.getLogger(__name__)
 # in favour of a fresh git-root-rooted walk.
 INDEX_VERSION = 17
 
+# Generation of the SYMBOL EXTRACTION semantics, independent of the storage
+# schema above. Bump this when a parser change makes previously extracted
+# symbols untrustworthy rather than merely incomplete — the stored rows are
+# schema-valid, so INDEX_VERSION cannot express it, and a lower INDEX_VERSION
+# would not force anything anyway (only a stored version GREATER than
+# INDEX_VERSION is refused).
+#
+# An index stamped with an older generation gets ONE full re-parse on the next
+# index_folder / index_repo call, reported as
+# rebuild_reason="parser_generation_upgrade". Written only by the full-save
+# path, because only a full corpus parse earns the stamp; an incremental save
+# leaves it untouched, so a partially re-parsed index keeps claiming the older
+# generation.
+#
+# gen 1 (1.108.244, #414): 16 extractors sliced a decoded str with tree-sitter
+#   BYTE offsets, so every symbol after the first non-ASCII character in a file
+#   got a name taken from an unrelated run of source. The wrong name is baked
+#   into the symbol id, and re-indexing does NOT fix it — the file content is
+#   unchanged, so the incremental path never re-parses it.
+PARSER_GENERATION = 1
+
 
 @dataclass(frozen=True)
 class IndexLoadStatus:
@@ -186,6 +207,7 @@ class CodeIndex:
     package_names: list[str] = field(default_factory=list)    # Package names published by this repo (from manifest files)
     branch: str = ""                 # Git branch name at index time (empty = base/default branch or non-git)
     file_cap_status: dict = field(default_factory=dict)  # v1.108.126: {truncated, files_discovered, files_indexed, files_skipped_cap, max_folder_files} when the max_folder_files walk cap dropped files; {"truncated": False} otherwise. Empty = pre-v1.108.126 index (unknown).
+    parser_generation: int = 0  # v1.108.244: extraction-semantics generation this index's symbols were produced by. ⚠ Defaults to 0 (= unknown/legacy) deliberately: a construction site that forgets to carry it costs one re-parse, while defaulting to the current generation would silently certify symbols nobody re-parsed.
     coverage: dict = field(default_factory=dict)  # v1.108.145: coverage contract for absence claims — {files_discovered, files_indexed, skip_counts{reason:count}, no_symbols_count, walk, recorded_at} from the last full discovery walk. Empty = unknown (pre-upgrade index or no full walk recorded).
 
     def __post_init__(self) -> None:
@@ -1086,6 +1108,7 @@ class IndexStore:
             "languages": index.languages,
             "symbols": index.symbols,
             "index_version": index.index_version,
+            "parser_generation": getattr(index, "parser_generation", 0),
             "file_hashes": index.file_hashes,
             "git_head": index.git_head,
             "file_summaries": index.file_summaries,

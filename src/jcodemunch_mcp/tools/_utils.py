@@ -268,6 +268,30 @@ def describe_unloadable_index(store, owner: str, name: str) -> tuple[str, str]:
     return reason, message
 
 
+#: Warning text for the one-off re-parse an extraction-semantics bump forces.
+PARSER_UPGRADE_WARNING = (
+    "This index's symbols were extracted by an older version of the parser "
+    "whose output is no longer trusted - re-parsing every file once. A normal "
+    "incremental run cannot repair it: the affected files are unchanged, so "
+    "they would never be re-read."
+)
+
+
+def needs_parser_upgrade(index) -> bool:
+    """True when this index's symbols predate the current extraction semantics.
+
+    A missing stamp reads as generation 0, so every pre-1.108.244 index takes
+    the upgrade exactly once (#414). Fails toward re-parsing: this decides
+    whether to spend one full walk, and the cost of a needless one is time,
+    while the cost of a skipped one is symbols that stay wrong forever.
+    """
+    if index is None:
+        return False
+    from ..storage.index_store import PARSER_GENERATION
+
+    return getattr(index, "parser_generation", 0) < PARSER_GENERATION
+
+
 def stamp_incremental_outcome(
     result: dict,
     requested: bool,

@@ -19,6 +19,58 @@ from .complexity import compute_complexity
 logger = logging.getLogger(__name__)
 
 
+class ByteSlicedSource:
+    """A text view indexed by BYTE offsets, not character offsets.
+
+    tree-sitter reports ``node.start_byte`` / ``node.end_byte`` as offsets into
+    the UTF-8 encoding of the source. Slicing a decoded ``str`` with them is
+    correct only while the file is pure ASCII: every earlier non-ASCII
+    character shifts the window forward by (bytes - characters), so the
+    extracted text becomes an unrelated run of source further down the file.
+    The window keeps its byte width, so an ASCII identifier still comes back
+    with the right LENGTH -- which is why the corruption reads as a plausible
+    fragment rather than obvious garbage (#414, @MotoMato85).
+
+    Assigning this in place of the decoded string keeps the offsets and the
+    text in one coordinate system, leaving the slice expressions themselves
+    untouched.
+
+    ⚠ Not for the regex-based extractors. ``_parse_cobol_symbols`` and friends
+    slice ``source`` with CHARACTER offsets from ``re`` matches and call
+    ``.count()`` / ``.splitlines()`` on it; they are already correct and this
+    view would break them.
+    """
+
+    __slots__ = ("_data",)
+
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+
+    def __getitem__(self, key) -> str:
+        chunk = self._data[key] if isinstance(key, slice) else self._data[key:key + 1]
+        try:
+            return chunk.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            # A byte-capped slice (the 120-byte signature truncations) can land
+            # mid-character. Drop that trailing partial rather than emit U+FFFD.
+            # ⚠ Only when the bad run reaches the END of the chunk: retrying on
+            # a shorter prefix for a bad byte anywhere else would silently DROP
+            # the rest of the text, which is worse than the mangling it avoids.
+            # Genuinely undecodable bytes keep the old errors="replace" result.
+            if exc.end == len(chunk) and exc.start >= len(chunk) - 3:
+                try:
+                    return chunk[:exc.start].decode("utf-8")
+                except UnicodeDecodeError:
+                    pass
+            return chunk.decode("utf-8", errors="replace")
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def __str__(self) -> str:
+        return self._data.decode("utf-8", errors="replace")
+
+
 # Node types that represent function/call expressions per language.
 # These are used to extract call_references from the AST.
 _CALL_NODE_TYPES: dict[str, set[str]] = {
@@ -5870,7 +5922,7 @@ def _parse_objc_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
         return []
 
     tree = parser.parse(source_bytes)
-    source = source_bytes.decode("utf-8", errors="replace")
+    source = ByteSlicedSource(source_bytes)
     symbols: list[Symbol] = []
 
     CLASS_NODE_TYPES = {
@@ -5999,7 +6051,7 @@ def _parse_proto_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
         return []
 
     tree = parser.parse(source_bytes)
-    source = source_bytes.decode("utf-8", errors="replace")
+    source = ByteSlicedSource(source_bytes)
     symbols: list[Symbol] = []
 
     NODE_MAP = {
@@ -6069,7 +6121,7 @@ def _parse_hcl_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
         return []
 
     tree = parser.parse(source_bytes)
-    source = source_bytes.decode("utf-8", errors="replace")
+    source = ByteSlicedSource(source_bytes)
     symbols: list[Symbol] = []
 
     BLOCK_KINDS = {
@@ -6152,7 +6204,7 @@ def _parse_graphql_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
         return []
 
     tree = parser.parse(source_bytes)
-    source = source_bytes.decode("utf-8", errors="replace")
+    source = ByteSlicedSource(source_bytes)
     symbols: list[Symbol] = []
 
     NODE_KINDS = {
@@ -6635,7 +6687,7 @@ def _parse_julia_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
         return []
 
     tree = parser.parse(source_bytes)
-    source = source_bytes.decode("utf-8", errors="replace")
+    source = ByteSlicedSource(source_bytes)
     symbols: list[Symbol] = []
 
     def _func_name(node) -> Optional[str]:
@@ -6736,7 +6788,7 @@ def _parse_groovy_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
         return []
 
     tree = parser.parse(source_bytes)
-    source = source_bytes.decode("utf-8", errors="replace")
+    source = ByteSlicedSource(source_bytes)
     symbols: list[Symbol] = []
 
     CONTAINER_KEYWORDS = {"class", "interface", "enum", "trait", "record"}
@@ -7058,7 +7110,7 @@ def _parse_xml_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
         return []
 
     tree = parser.parse(source_bytes)
-    source = source_bytes.decode("utf-8", errors="replace")
+    source = ByteSlicedSource(source_bytes)
     symbols: list[Symbol] = []
     root_extracted = False
 
@@ -8782,7 +8834,7 @@ def _parse_pascal_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
         return []
 
     tree = parser.parse(source_bytes)
-    source = source_bytes.decode("utf-8", errors="replace")
+    source = ByteSlicedSource(source_bytes)
     symbols: list[Symbol] = []
 
     def _text(node) -> str:
@@ -8879,7 +8931,7 @@ def _parse_matlab_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
         return []
 
     tree = parser.parse(source_bytes)
-    source = source_bytes.decode("utf-8", errors="replace")
+    source = ByteSlicedSource(source_bytes)
     symbols: list[Symbol] = []
 
     def _text(node) -> str:
@@ -8965,7 +9017,7 @@ def _parse_ada_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
         return []
 
     tree = parser.parse(source_bytes)
-    source = source_bytes.decode("utf-8", errors="replace")
+    source = ByteSlicedSource(source_bytes)
     symbols: list[Symbol] = []
 
     def _text(node) -> str:
@@ -9149,7 +9201,7 @@ def _parse_commonlisp_symbols(source_bytes: bytes, filename: str) -> list[Symbol
         return []
 
     tree = parser.parse(source_bytes)
-    source = source_bytes.decode("utf-8", errors="replace")
+    source = ByteSlicedSource(source_bytes)
     symbols: list[Symbol] = []
 
     def _text(node) -> str:
@@ -9241,7 +9293,7 @@ def _parse_solidity_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
         return []
 
     tree = parser.parse(source_bytes)
-    source = source_bytes.decode("utf-8", errors="replace")
+    source = ByteSlicedSource(source_bytes)
     symbols: list[Symbol] = []
 
     def _text(node) -> str:
@@ -9352,7 +9404,7 @@ def _parse_zig_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
         return []
 
     tree = parser.parse(source_bytes)
-    source = source_bytes.decode("utf-8", errors="replace")
+    source = ByteSlicedSource(source_bytes)
     symbols: list[Symbol] = []
 
     def _text(node) -> str:
@@ -9487,7 +9539,7 @@ def _parse_powershell_symbols(source_bytes: bytes, filename: str) -> list[Symbol
         return []
 
     tree = parser.parse(source_bytes)
-    source = source_bytes.decode("utf-8", errors="replace")
+    source = ByteSlicedSource(source_bytes)
     symbols: list[Symbol] = []
 
     def _text(node) -> str:
@@ -9597,7 +9649,7 @@ def _parse_apex_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
         return []
 
     tree = parser.parse(source_bytes)
-    source = source_bytes.decode("utf-8", errors="replace")
+    source = ByteSlicedSource(source_bytes)
     symbols: list[Symbol] = []
 
     def _text(node) -> str:
@@ -9701,7 +9753,7 @@ def _parse_ocaml_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
         return []
 
     tree = parser.parse(source_bytes)
-    source = source_bytes.decode("utf-8", errors="replace")
+    source = ByteSlicedSource(source_bytes)
     symbols: list[Symbol] = []
 
     def _text(node) -> str:
