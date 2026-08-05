@@ -1,5 +1,6 @@
 """Blast-radius analysis: find files affected by changing a symbol."""
 
+import posixpath
 import re
 import time
 from collections import deque
@@ -7,6 +8,11 @@ from typing import Optional
 
 from ..storage import IndexStore, result_cache_get, result_cache_put
 from ..parser.imports import resolve_specifier
+from ..retrieval.verdict import (
+    build_verdict,
+    index_changed_since_load as _index_changed_since_load,
+    index_coverage_meta,
+)
 from ._utils import index_status_to_tool_error, resolve_repo, resolve_fqn
 from .package_registry import extract_root_package_from_specifier
 from ._call_graph import build_symbols_by_file, bfs_callers
@@ -114,6 +120,94 @@ def _build_reverse_adjacency(
                 rev.setdefault(target, []).append(src_file)
     # Deduplicate
     return {k: list(dict.fromkeys(v)) for k, v in rev.items()}
+
+
+def _unresolved_package_edges(
+    imports: dict,
+    source_files: frozenset,
+    sym_file: str,
+    alias_map: Optional[dict] = None,
+    psr4_map: Optional[dict] = None,
+    sample_cap: int = 5,
+) -> Optional[dict]:
+    """Evidence that the importer graph cannot REACH ``sym_file``, not that nothing imports it.
+
+    A file-level import graph resolves one specifier to one file. Languages that
+    address imports at package/directory granularity (Go's ``import "mod/pkg"``
+    names a directory of files, and files inside that package need no import at
+    all) therefore produce edges this graph captures but cannot land on a member
+    file. The importer set comes back empty for every symbol in the package, and
+    that emptiness is a property of the resolver, not of the repository.
+
+    Deliberately MEASURED rather than declared from a language table. An edge
+    naming this symbol's own directory that resolved to nothing is direct
+    evidence for this specific query; a hardcoded list of package-granular
+    languages would be a claim about every repo, kept in sync by hand, and wrong
+    the first time a resolver improves.
+
+    Returns None when there is nothing to disclose — no such edge exists, or the
+    symbol sits at the repo root where a directory name cannot discriminate.
+    """
+    target_dir = posixpath.dirname((sym_file or "").replace("\\", "/")).strip("/")
+    if not target_dir:
+        # A root-level file has no directory to match a specifier against, so any
+        # answer here would rest on a coincidence rather than on evidence.
+        return None
+    tail = target_dir.rsplit("/", 1)[-1]
+
+    exact: list[dict] = []
+    loose: list[dict] = []
+    for src_file, file_imports in (imports or {}).items():
+        for imp in file_imports or []:
+            spec = (imp.get("specifier") or "").replace("\\", "/").strip("/")
+            if not spec:
+                continue
+            if resolve_specifier(
+                imp.get("specifier") or "", src_file, source_files, alias_map, psr4_map
+            ):
+                continue  # the graph handled this one; it is not evidence of a gap
+            if spec == target_dir or spec.endswith("/" + target_dir):
+                exact.append({"importer": src_file, "specifier": imp.get("specifier")})
+            elif spec.rsplit("/", 1)[-1] == tail:
+                loose.append({"importer": src_file, "specifier": imp.get("specifier")})
+
+    matched = exact or loose
+    if not matched:
+        return None
+
+    # Sibling files in the same directory. For a package-granular language these
+    # can call the symbol with no import statement at all, so they are invisible
+    # to an import graph by construction — a second, independent reason the zero
+    # cannot be read as absence.
+    siblings = sum(
+        1
+        for f in source_files
+        if f != sym_file
+        and posixpath.dirname(f.replace("\\", "/")).strip("/") == target_dir
+    )
+    return {
+        "reason": "package_granular_imports",
+        "package_dir": target_dir,
+        "match": "exact" if exact else "basename",
+        "unresolved_edges": len(matched),
+        "unresolved_sample": matched[:sample_cap],
+        "same_package_files": siblings,
+        "note": (
+            f"No importer of '{sym_file}' could be resolved to a file, but "
+            f"{len(matched)} import edge(s) name its package directory "
+            f"'{target_dir}' and resolve to no file. This language addresses "
+            "imports at package granularity, so the file-level import graph "
+            "cannot reach this symbol"
+            + (
+                f", and {siblings} file(s) in the same package can call it with no "
+                "import statement at all"
+                if siblings
+                else ""
+            )
+            + ". An empty result here is NOT evidence that nothing depends on this "
+            "symbol. Use check_references for a text-backed answer."
+        ),
+    }
 
 
 def _bfs_importers(
@@ -473,6 +567,28 @@ def get_blast_radius(
             index, store, owner, name, sym, rev, symbols_by_file, call_depth
         )
 
+    # An answer is "empty" only when every channel this call actually ran came
+    # back with nothing. Checked before the response is built so the risk score
+    # can be withheld rather than computed and then contradicted.
+    answered_nothing = (
+        total == 0
+        and not confirmed
+        and not potential
+        and not callers
+        and not cross_repo_confirmed
+    )
+    unresolvable = (
+        _unresolved_package_edges(
+            index.imports,
+            source_files,
+            sym_file,
+            index.alias_map,
+            getattr(index, "psr4_map", None),
+        )
+        if answered_nothing
+        else None
+    )
+
     elapsed = (time.perf_counter() - start) * 1000
     result = {
         "repo": f"{owner}/{name}",
@@ -486,7 +602,11 @@ def get_blast_radius(
         "depth": depth,
         "importer_count": total,
         "direct_dependents_count": direct_count,
-        "overall_risk_score": round(overall_risk, 4),
+        # Withheld, not zeroed, when the graph could not reach this symbol at
+        # all. `0.0` is a measurement meaning "nothing depends on this"; a caller
+        # deciding whether a change is safe reads it as one, and that is the whole
+        # defect. `None` is the third answer: not measurable here.
+        "overall_risk_score": None if unresolvable else round(overall_risk, 4),
         "confirmed_count": len(confirmed),
         "potential_count": len(potential),
         "confirmed": confirmed,
@@ -500,6 +620,25 @@ def get_blast_radius(
             ),
         },
     }
+
+    # The same honesty contract search_text already keeps: an empty result the
+    # scan could not have found anything in is `degraded`, never citable absence.
+    # `incomplete` is the registered hook for "inputs the scan was supposed to
+    # read but could not", which is exactly an import edge that names this
+    # symbol's package and lands nowhere. build_verdict then sets
+    # `absence_refused`, and the dispatcher turns that into
+    # `absence_citable: False` + `absence_blocked_by` with no second rule to keep
+    # in sync.
+    result["_meta"]["verdict"] = build_verdict(
+        result_count=0 if answered_nothing else max(total, len(confirmed), len(callers)),
+        scanned_files=len(source_files),
+        coverage=index_coverage_meta(index),
+        # An empty answer measured while the .db was being rewritten underneath
+        # this call cannot prove absence either, and that gate outranks ours: it
+        # names something the caller can retry.
+        index_changed=_index_changed_since_load(index),
+        incomplete=unresolvable,
+    )["verdict"]
     if call_depth > 0:
         result["caller_count"] = len(callers)
         result["callers"] = callers

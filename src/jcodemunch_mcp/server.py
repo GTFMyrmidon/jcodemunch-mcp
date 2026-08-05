@@ -6542,10 +6542,20 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent] | CallToolR
                 _v = (result.get("_meta") or {}).get("verdict")
                 if isinstance(_v, dict):
                     from . import handoff as _handoff_abs
+                    # #415. The subject of a scan is not always spelled `query`.
+                    # `note_absence` requires a non-empty string and returns
+                    # (None, None) without one, so a verdict-emitting tool keyed on
+                    # `symbol` recorded nothing and re-attached no carrier — and on
+                    # the shipped default (`meta_fields: []`) the verdict itself is
+                    # filtered out, so its refusal reached the caller as a bare
+                    # empty response. The guard is emitting a verdict at all, which
+                    # is a tool opting into the honesty contract; the fallback only
+                    # names what that tool called its subject.
+                    _subject = arguments.get("query") or arguments.get("symbol")
                     _ref, _why = _handoff_abs.note_absence(
                         name,
                         repo_arg,
-                        arguments.get("query"),
+                        _subject,
                         _v,
                         arguments=arguments,
                         truncated=bool((result.get("_meta") or {}).get("index_truncated")),

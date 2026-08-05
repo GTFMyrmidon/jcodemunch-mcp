@@ -2,6 +2,66 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.245] - 2026-08-05 - a blast radius of zero now says whether it was measured
+
+`get_blast_radius` returned `caller_count: 0`, `confirmed_count: 0` and
+`overall_risk_score: 0.0` for a Go symbol with three live call sites, and the
+response carried nothing to distinguish that from a symbol nothing depends on
+(#415).
+
+Go addresses imports at package granularity. `import "mod/pkg"` names a
+directory of files, and files inside that package call each other with no import
+statement at all, so a file-level importer graph lands on no member file. The
+import edge itself was captured correctly — `find_references` reports it with
+`match_type: "specifier_stem"` — but a package specifier was never turned into
+the set of files that make up the package. The result: an empty blast radius for
+**any** symbol in a multi-file Go package, reached through an interface or a
+concrete type alike, presented as a measurement.
+
+The zero is now refused rather than explained away:
+
+- `overall_risk_score` is **`null`**, not `0.0`, when the graph could not reach
+  the symbol. `0.0` is a measurement meaning "nothing depends on this", and a
+  caller deciding whether a change is safe reads it as one.
+- `_meta.verdict` reports `state: "degraded"` with `absence_refused: true` and an
+  `incomplete` block naming the package directory, the unresolved edges, and the
+  count of same-package files that need no import at all. The dispatcher turns
+  that into `absence_citable: false` + `absence_blocked_by`, the same contract
+  `search_text` has kept since 1.108.184 — no second refusal rule to hold in sync.
+- The note points at `check_references`, which answers this correctly today
+  because it falls back to the content channel.
+
+⚠ **The detection is MEASURED, not declared from a language table.** An import
+edge that names this symbol's own directory and resolves to no file is evidence
+for that specific query; a hardcoded list of package-granular languages would be
+a claim about every repo, maintained by hand, and wrong the first time a resolver
+improves. It generalises to the next language with the same import model at no
+cost.
+
+⚠ **A verdict alone would have been invisible on a default install.**
+jcodemunch ships `meta_fields: []`, which deletes `_meta.verdict` before the
+caller sees it; only the re-attached absence carrier survives, and that carrier
+is populated by `note_absence`, which requires a non-empty subject **string** and
+was being handed `arguments.get("query")`. This tool's subject is `symbol`, so it
+recorded nothing and the refusal reached a default-configured caller as a bare
+empty response — the exact failure the carrier exists to prevent. The dispatcher
+now falls back to `symbol`. Scoped by measurement, not by hope: of the seven
+tools exposing a `symbol` argument, `get_blast_radius` is the only one that emits
+a verdict, so nothing else changes today.
+
+⚠ **An honest zero still proves absence.** A symbol whose module has a resolvable
+importer and genuinely has no dependents keeps `overall_risk_score: 0.0`, a
+`state: "absent"` verdict, and no `incomplete` block. Both controls are asserted,
+because a "fix" that refuses every answer would pass the refusal tests alone.
+
+Not fixed here, and deliberately: Go package-level import **resolution**. That is
+the larger change and it needs design. The refusal is correct with or without it,
+and once resolution lands it simply stops firing for Go while still covering the
+next language the graph cannot model.
+
+Tests: `test_blast_radius_package_granular_verdict.py` (12), proven non-vacuous
+against a pre-fix worktree — all six behavioural assertions fail there.
+
 ## [1.108.244] - 2026-08-05 - symbol names corrupted by any non-ASCII character earlier in the file
 
 Reported by **@MotoMato85** (#414) against 1.108.241, with a standalone repro,
