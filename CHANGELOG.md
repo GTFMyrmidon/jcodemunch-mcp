@@ -928,7 +928,7 @@ param to prove the handler still acts on it.
 
 ## [1.108.226] - 2026-08-03 - the dead-code check stops calling live code dead
 
-Reported by **@rknighton** in
+Reported by **@MotoMato85** in
 [#406](https://github.com/jgravelle/jcodemunch-mcp/issues/406) and
 [#407](https://github.com/jgravelle/jcodemunch-mcp/issues/407), each with a
 reproduction, a patch, and a verified before/after.
@@ -943,7 +943,7 @@ reported `is_referenced: false`, which is exactly the question the tool exists
 to answer, answered backwards. Single-file modules were hit hardest.
 
 Now the definition's own **line span** is excluded, as a list of spans per file
-— @rknighton measured 102 duplicate `(file, name)` pairs on a real 1837-symbol
+— @MotoMato85 measured 102 duplicate `(file, name)` pairs on a real 1837-symbol
 index (overloads, nested defs), so one span per file would leave the others
 counting their own signatures. A self-recursive call sits inside the span and
 stays excluded, which is correct for the dead-code question.
@@ -991,7 +991,7 @@ does not match the `(403, 429)` retry branch and fell through to
 call sites in `tools/index_repo.py` now pass `follow_redirects=True`, matching
 `cli/install_pack.py` and `org/license.py`.
 
-Safe with a token, as @rknighton established: httpx drops the `Authorization`
+Safe with a token, as @MotoMato85 established: httpx drops the `Authorization`
 header on a cross-origin redirect (anything but a bare HTTP→HTTPS upgrade), and
 GitHub's rename redirects stay on `api.github.com` regardless. A test drives the
 real `fetch_repo_tree` through a `MockTransport` that 301s, and asserts the
