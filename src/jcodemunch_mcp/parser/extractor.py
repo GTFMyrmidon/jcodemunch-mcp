@@ -598,6 +598,32 @@ def _walk_tree(
         if const_symbol:
             symbols.append(const_symbol)
 
+    # A JS/TS class field INITIALIZER is not the class body. Everything the
+    # initializer contains is attributed to the field, never to the class.
+    #
+    # `class Host { handlers = { onDone(){} } }` puts a `method_definition`
+    # under `Host` -- the grammar uses that node type for object-literal
+    # shorthand as well as for real methods, and the only discriminator is the
+    # parent. Left alone it yields `Host.onDone`, a member `Host` does not
+    # declare. A free `function_declaration` in an arrow initializer has the
+    # same symptom by a different route: a field initializer is not a scope
+    # boundary, so `parent_is_container` survives into it and promotes the
+    # function to a method.
+    #
+    # A real class method is a DIRECT child of `class_body` and never reaches
+    # here, so declared members are untouched. Object literals inside a
+    # FUNCTION are also untouched: `pluginCreator.prepare` is ordinary lexical
+    # nesting, the same shape Python already emits for `Host.real.inner`.
+    if (
+        language in ("javascript", "typescript", "tsx")
+        and node.type in _JS_CLASS_FIELD_NODE_TYPES
+        and parent_symbol is not None
+    ):
+        field_scope = _js_field_scope(node, parent_symbol, source_bytes, language)
+        if field_scope is not None:
+            next_parent = field_scope
+            next_is_container = False
+
     # Recurse into children
     for child in node.children:
         _walk_tree(
@@ -614,6 +640,52 @@ def _walk_tree(
             calls,
             next_is_container,
         )
+
+
+# Class field declarations in the JS grammar (`field_definition`) and the
+# TS/TSX grammars (`public_field_definition`). Both hold the initializer whose
+# contents must not be attributed to the enclosing class.
+_JS_CLASS_FIELD_NODE_TYPES = frozenset({"field_definition", "public_field_definition"})
+
+
+def _js_field_scope(node, parent_symbol: Symbol, source_bytes: bytes, language: str):
+    """A naming scope for the inside of a class field initializer.
+
+    Returns a ``Symbol`` used ONLY as a `parent_symbol` while walking the
+    initializer -- it is never appended to the symbol list, so this adds no
+    symbol and changes no count. `parent` still points at the class, keeping
+    the graph edge from the class to whatever the field holds.
+
+    ⚠ The two grammars disagree on the field name's field name: JS exposes it
+    as ``property``, TS/TSX as ``name``. Reading only one silently leaves the
+    other language unfixed -- which it did, until a TSX case caught it.
+
+    A computed key (`[expr] = ...`) keeps its brackets verbatim, matching how
+    a computed METHOD name is already stored. It is not a resolvable
+    identifier either way, and blocking the class attribution still matters.
+    Returns ``None`` only when no key node exists at all.
+    """
+    name_node = node.child_by_field_name("property") or node.child_by_field_name("name")
+    if name_node is None or name_node.type not in (
+        "property_identifier",
+        "private_property_identifier",
+        "computed_property_name",
+    ):
+        return None
+    field_name = source_bytes[name_node.start_byte:name_node.end_byte].decode(
+        "utf-8", errors="replace"
+    ).strip()
+    if not field_name:
+        return None
+    return Symbol(
+        id=parent_symbol.id,
+        file=parent_symbol.file,
+        name=field_name,
+        qualified_name=f"{parent_symbol.qualified_name}.{field_name}",
+        kind="constant",
+        language=language,
+        signature="",
+    )
 
 
 def _detect_interface_keywords(node, language: str) -> list[str]:

@@ -2,6 +2,81 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.246] - 2026-08-05 - a class field initializer no longer donates members to its class
+
+### JS/TS phantom methods
+
+    class Host {
+      handlers = { onDone(){} };
+      real(){}
+    }
+
+reported `Host.onDone` as a **method** — a member `Host` does not declare. The
+tree-sitter JS grammar spells object-literal shorthand and a real class method
+with the same node type (`method_definition`), and the only discriminator is the
+parent; a field initializer was not treated as a boundary. A free
+`function_declaration` inside an arrow initializer reached the same wrong answer
+by a second, independent route: the container flag that promotes a function to a
+method survived into the initializer.
+
+The sharpest consequence was not the spurious name. When a phantom collided with
+a real method, the disambiguator handed `~1` to the phantom and `~2` to the real
+one — **a real symbol's id depended on the phantom existing.** Distinct names
+mean the disambiguator no longer runs.
+
+Members of a class field initializer now nest under the field: `Host.onDone`
+becomes `Host.handlers.onDone`, and `T.innerFn` becomes `T.cb.innerFn` with
+`kind` corrected to `function`. Affects javascript, typescript and tsx.
+
+⚠ **An object literal inside a FUNCTION is deliberately untouched.**
+`pluginCreator.prepare` is ordinary lexical nesting, the same shape Python
+already emits for `Host.real.inner`. Reclassifying it would move ~190 real
+symbols in Next.js alone.
+
+⚠ **No `PARSER_GENERATION` bump, and that is a measured decision rather than an
+omission.** A parser change that DELETES symbols needs one, because existing
+indexes keep rows no incremental path revisits. This one deletes nothing — the
+same symbols return under corrected names, asserted as a release gate in
+`test_fix_renames_and_never_removes` — and the corrected shape occurs **zero
+times across 2,670 files of NestJS/Next.js/React**, re-confirmed here at zero
+changes over the local JS/TS corpus. Forcing every user a full re-parse to
+rename nothing is the wrong half of that trade. If that test ever fails, the fix
+has started removing symbols and the decision has to be revisited.
+
+Tests: `test_js_class_field_phantom_methods.py` (17), proven non-vacuous — 12
+fail against the pre-fix walker while the 5 must-not-change controls pass on
+both sides.
+
+### Packaging: the sdist shipped 27 MB of TypeScript type stubs
+
+The source distribution carried `vscode-extension/node_modules/` — 128 entries of
+`@types/node`, `undici-types` and the TypeScript compiler — plus the extension's
+compiled `out/` directory and a built `.vsix` binary. None of it is usable by a
+consumer of a Python sdist, and none of it is needed to rebuild the project.
+
+The mechanism is the one already documented for `.claude/`: **hatchling reads the
+filesystem, and only the ROOT `.gitignore` reaches it.** `vscode-extension/`
+carries its own `.gitignore` covering `node_modules/` and `out/`, so git has
+never tracked them and they never appear in `git status` — which is precisely why
+this survived every review that looked at the tree instead of the artifact. The
+`.vsix` is untracked for the same reason.
+
+`[tool.hatch.build.targets.sdist] exclude` now names all three. Measured against
+the 1.108.245 tarball: **1005 entries → 872, 3.86 MB → 3.23 MB, node_modules
+matches 128 → 0.** The extension SOURCE is unaffected and deliberately so — all
+eight tracked files under `vscode-extension/` (including `src/extension.ts` and
+`src/riskGutter.ts`) still ship, because an sdist that cannot rebuild what the
+repo builds is a different defect.
+
+No runtime behaviour changes; the wheel is untouched.
+
+Also recorded, not changed: **`munch_bench` as a second top-level package in the
+wheel is deliberate.** It backs the `munch-bench` console script declared in
+`[project.scripts]`, and an artifact scan reporting a second top-level name is
+expected output rather than a finding. A comment at the `packages` declaration
+now says so, because the alternative — dropping it — would remove a working
+command from every installed user.
+
 ## [1.108.245] - 2026-08-05 - a blast radius of zero now says whether it was measured
 
 `get_blast_radius` returned `caller_count: 0`, `confirmed_count: 0` and

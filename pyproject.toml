@@ -1,6 +1,6 @@
 [project]
 name = "jcodemunch-mcp"
-version = "1.108.245"
+version = "1.108.246"
 description = "Token-efficient MCP server for source code exploration via tree-sitter AST parsing"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -91,10 +91,24 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
+# Two top-level packages is DELIBERATE, reaffirmed 2026-08-05. munch_bench
+# backs the `munch-bench` console script below; dropping it from this list
+# would remove a working command from every installed user. An artifact scan
+# reports it as a second top-level name -- that is expected, not a finding.
 packages = ["src/jcodemunch_mcp", "munch-bench/munch_bench"]
 
 [tool.hatch.build.targets.sdist]
-exclude = [".claude/", "index.php"]
+# Build artifacts of the VS Code extension. The extension SOURCE stays (it is
+# tracked and small); these three are generated and never rebuildable-from
+# inputs a Python sdist consumer needs. node_modules alone was 128 entries.
+# Nested .gitignore files do not reach hatchling, only the root one does.
+exclude = [
+    ".claude/",
+    "index.php",
+    "vscode-extension/node_modules/",
+    "vscode-extension/out/",
+    "*.vsix",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
