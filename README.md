@@ -424,6 +424,33 @@ Beyond the user-invoked calls listed above, the base package makes no other netw
 
 ## Offloadable-work annotation (`JMUNCH_OFFLOADABLE`, off by default)
 
+**jCodeMunch can tell you when the expensive model may be unnecessary.**
+
+When an answer is simple, self-contained, and complete enough to hand to a cheaper model, jCodeMunch marks it as `offloadable`.
+
+That's all it does. It never calls another model, never routes the request, and never touches your API keys. You decide what happens next.
+
+Off by default. Enable it with `JMUNCH_OFFLOADABLE=1`, then:
+
+```python
+# swap in your own repo, e.g. "owner/name"
+result = get_symbol_source(repo="fastapi/fastapi", symbol_id=symbol_id)
+
+label = (result.get("_meta", {})
+               .get("offloadable", {})
+               .get("offloadable", "not_evaluated"))
+
+if label == "offloadable":
+    answer = cheap_model(question, result["source"])
+else:
+    # covers "not_offloadable" and "not_evaluated" alike. Anything we
+    # didn't approve goes to the good model. That includes the case where
+    # the flag is off, so this is safe to ship before you turn it on.
+    answer = good_model(question, result["source"])
+```
+
+The rest of this section is the detail behind that label.
+
 Set `JMUNCH_OFFLOADABLE=1` (or the per-server `JCODEMUNCH_OFFLOADABLE=1`) and every `get_symbol_source` reply carries an advisory `_meta.offloadable` block saying whether the work that payload enables is grunt-work a cheaper model can do. Nothing is emitted unless you switch it on, and nothing about the answer itself changes when you do.
 
 **We label. We never route, execute, or hold model credentials.** No new process, no network call, no catalog action, and no model of ours ever runs. What to do with the label is entirely the client's decision.
