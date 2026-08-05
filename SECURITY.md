@@ -281,3 +281,56 @@ The performance and ranking telemetry introduced in v1.74.0–v1.80.0 is
 | Ranking ledger storage    | `perf_telemetry_enabled`       | **Disabled** (opt-in)       |
 | Tuning overrides          | Explicit `tune_weights` call   | None until invoked          |
 | Embedding canary          | Explicit `check_embedding_drift` call | None until invoked   |
+
+---
+
+## Background behavior, fully disclosed
+
+Everything jCodeMunch does beyond answering a tool call is listed here. All of it is visible, opt-in or opt-out, and reversible.
+
+- **File watching.** The `watch` / `watch-all` / `watch-claude` commands (and `watch: true` in config) re-index files when they change. Watching runs **inside a process you started** and stops when that process exits. Nothing monitors your filesystem unless a jCodeMunch process you launched is running.
+- **Login service — explicit opt-in only.** `jcodemunch-mcp watch-install` registers `watch-all` as a login service (Windows Task Scheduler / macOS launchd / Linux systemd) so indexes stay fresh across reboots. This happens **only** when you run `watch-install` yourself; `init`, `install`, and normal server use never register a service. Inspect it with `watch-status`; remove it with `watch-uninstall`.
+- **Anonymous savings telemetry.** The server periodically sends a random anonymous ID plus aggregate token-savings counters to the project's public community meter. No code, no file paths, no repo names, no PII — counters only. The sender is a single background daemon thread that starts lazily on the first share (never at import, and never if you have opted out), so a plain import has no background side effect. Opt out with `share_savings: false` in `config.jsonc` or `JCODEMUNCH_SHARE_SAVINGS=0`; redirect the endpoint with `JCODEMUNCH_TELEMETRY_URL`.
+- **Startup import of the local embedding backend.** When a native embedding provider is configured (the bundled ONNX encoder, or a sentence-transformers model), the server imports that library at startup, on the main thread, before it begins serving. That adds a few seconds to launch and is not optional polish: importing it later, on the worker thread a tool call runs in, deadlocks on the Windows loader lock and hangs the call forever. Nothing is downloaded and no model is loaded — the import alone is what matters, and no network is touched. Opt out with `JCODEMUNCH_EAGER_EMBED_IMPORT=0`.
+- **In-process embedding cache.** After a semantic search reads a repository's stored vectors out of `~/.code-index/`, the decoded matrix stays in that server process's memory so the next query doesn't re-read and re-decode the whole thing (roughly 46 MB for a 30,000-symbol index). At most 2 repositories are held at a time, it is dropped when the index is written, and it dies with the process — nothing is written anywhere and no network is touched. Turn retention off with `JCODEMUNCH_EMBED_MATRIX_CACHE=0`.
+- **Agent hooks.** `init` / `install` can write hook entries (auto-reindex on edit, read-interception nudges) into your MCP client's settings. They're offered during the interactive flow, shown before writing, and fully removed by `uninstall`.
+- **Local index storage.** Indexes live at `~/.code-index/` (override with `CODE_INDEX_PATH`). Delete the directory and every trace of indexing is gone.
+- **Live session journal.** While the server runs, it periodically writes a small `_session_live.json` in `~/.code-index/` recording the files and searches the agent touched this session (paths and query strings only, no file contents). It exists so the out-of-process PreCompact hook can restore session orientation after context compaction. Throttled, atomically written, overwritten in place; disable with `JCODEMUNCH_LIVE_JOURNAL=0`.
+- **Process presence file.** While a server runs, it writes one small JSON file at `~/.code-index/_processes/<pid>.json` recording its own PID, transport, version, start time, and the launching client's name — nothing about your code, repos, or queries. It exists so `get_session_stats` can tell you how many jCodeMunch servers are sharing one index store: some MCP clients don't reap stdio servers at session end, and they accumulate invisibly (one user found 25+ holding ~17 GB between them). The file is removed on exit, and any reader prunes entries whose process is no longer alive, so a hard kill leaves nothing behind. No daemon, no timer, no network.
+- **Local performance ledger — off by default.** With `perf_telemetry_enabled: true` in `config.jsonc`, the server records tool latencies, ranking events (query strings and returned symbol ids), and one per-session row of delivery counts (`session_yield`: how many symbols were delivered, how many of those were the same symbol twice, and an estimated token count for the repeats) into `~/.code-index/telemetry.db`. It is what `analyze_perf`, `suggest_corrections`, and the weight tuner read. **This database never leaves your machine** — the anonymous savings meter above sends aggregate counters only and never reads this file. Off unless you turn it on; delete the file to erase it.
+- **User-invoked network calls.** A few commands you run explicitly reach the network. None run in the background or fire on a plain import; each happens only when you invoke the command:
+  - **License validation.** `license`, `org-rollup`, and `install-pack --license` send your license key to `validate.php` on `j.gravelle.us` to confirm it. The key travels in the request body / a header, never the URL, so it can't land in intermediary access logs. This gates only the team `org-rollup` feature; the individual tools never call it.
+  - **Starter-pack download.** `install-pack` fetches the pack catalog and any pre-built index pack you request from `jcodemunch.com` (a premium pack also sends your license key). Each pack indexes third-party open-source repositories and carries their license and attribution files verbatim under `licenses/<owner>-<name>/` in your index directory; `install-pack` prints the terms and the path, and `install-pack --list` names them before you download.
+  - **Embedding-model download.** `download-model` — and the first semantic encode when the `[local-embed]` extra is installed — downloads the ONNX model (`all-MiniLM-L6-v2`, ~23 MB, one time) from `huggingface.co`; after that, semantic search needs no network.
+  - **Team savings report.** `org-report` (team SKU) sends **only** `org_id`, `seat_id`, `tokens_saved`, `usd`, `calls`, and a date. No code, no file paths, no queries, no repo names. It goes to a host **you** choose, on your own network, never to a jMunch server. With no `--endpoint` or `JCODEMUNCH_ORG_ENDPOINT` set it writes to a local file (`org_savings.db`) and nothing leaves the machine at all. ⚠ **`seat_id` defaults to your machine's hostname**, which often contains a person's name: set `JCODEMUNCH_CLIENT_ID` to send an identifier of your choosing instead. It runs only when you invoke it. There is no scheduler and no background reporting.
+
+- **Accepting reports from other machines. Off by default, behind three explicit gates.** One machine can act as the "org host" that collects the reports above, via `POST /org/report`. This is the only route in jCodeMunch that accepts writes from another computer, so it is gated three ways: the HTTP transport has to be running at all (`serve --transport streamable-http`), `org_ingest_enabled` must be turned on (it defaults to **false**, via `JCODEMUNCH_ORG_INGEST_ENABLED=1`), and the request must carry your `JCODEMUNCH_HTTP_TOKEN` bearer. It stores exactly the six fields listed above, in `org_savings.db` on that host. A default install accepts nothing, listens for nothing, and needs no action from you to keep it that way.
+
+Beyond the user-invoked calls listed above, the base package makes no other network calls and leaves no other persistent processes. AI-summary extras call their configured provider's API only when you enable them — see the [extras matrix below](#optional-extras--system-surfaces-each-pulls-in).
+
+---
+
+## Optional extras — system surfaces each pulls in
+
+Most extras are pure-Python and self-contained. A few pull libraries that touch
+system surfaces worth noting for managed-endpoint and SOC 2 / HIPAA-adjacent
+deployments. For the base package alone, none of these surfaces are introduced.
+
+| Extra | Transitive dependencies of note | System surfaces |
+|---|---|---|
+| (base, no extra) | none | none |
+| `[local-embed]` | `onnxruntime` | local CPU inference (no network after model download); model fetched on first run |
+| `[anthropic]` | `anthropic` SDK | outbound HTTPS to `api.anthropic.com` when AI summaries are enabled |
+| `[gemini]` | `google-generativeai` | outbound HTTPS to Google AI endpoints when AI summaries are enabled |
+| `[openai]` | `openai` SDK | outbound HTTPS to `api.openai.com` (or `OPENAI_API_BASE`) when AI summaries are enabled |
+| `[groq]` | `openai` SDK | outbound HTTPS to Groq endpoints; used by the `gcm` CLI and speedreview Action |
+| `[groq-voice]` | `sounddevice`, `numpy` | **microphone access** — `sounddevice.InputStream` opens the system audio device when the voice path is invoked |
+| `[groq-explain]` | `Pillow` | image decode / re-encode of attached screenshots |
+| `[all]` | union of all the above | union of all surfaces above, including microphone (`[groq-voice]`) and image libraries (`[groq-explain]`) |
+
+For managed-endpoint deployments where microphone access on developer machines
+is policy-restricted (HIPAA, SOC 2, finance), pin to the base package or to the
+specific provider extras you need. The voice and explain paths are opt-in
+features, not part of the core MCP server functionality, and `[all]` is the
+only extra that bundles them together.
+

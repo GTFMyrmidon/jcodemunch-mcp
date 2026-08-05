@@ -490,3 +490,133 @@ These environment variables are **not** config keys and remain env-var only:
 | `JCODEMUNCH_EMBED_MODEL` | Semantic search — selects local `sentence-transformers` model (e.g. `all-MiniLM-L6-v2`). Install dep: `pip install "jcodemunch-mcp[semantic]"` |
 | `OPENAI_EMBED_MODEL` | Semantic search — activates OpenAI embedding provider (requires `OPENAI_API_KEY`). Example: `text-embedding-3-small` |
 | `GOOGLE_EMBED_MODEL` | Semantic search — activates Gemini embedding provider (requires `GOOGLE_API_KEY`). Example: `models/text-embedding-004` |
+
+---
+
+### Token-control levers (reduce schema tokens per turn)
+
+| Config key | What it controls | Typical savings |
+|-----------|-----------------|----------------|
+| `tool_profile` | `"core"` (17 tools), `"standard"` (79), `"full"` (91, default) | ~5-6k tokens (core) |
+| `compact_schemas` | Strip rarely-used advanced params from schemas | ~1-2k tokens |
+| `disabled_tools` | Remove individual tools from schema entirely | ~100–400 tokens/tool |
+| `languages` | Shrink language enum + gate features | ~2–86 tokens/turn |
+| `meta_fields` | Filter `_meta` response fields | ~50–150 tokens/call |
+| `descriptions` | Control description verbosity | ~0–600 tokens/turn |
+
+**Recommended for context-conscious setups:** `"tool_profile": "core", "compact_schemas": true` reduces the schema footprint from ~11.5k tokens to ~4k tokens.
+
+See the full template for all available keys. Run `jcodemunch-mcp config --init` to generate one.
+
+### Tool Tiering
+
+jcodemunch-mcp exposes 90+ tools. On request-capped plans, having all of them visible to small models causes primitive-preference bias (many `search → read → search → read` cycles instead of one `get_context_bundle`). The server mitigates this by narrowing the exposed tool list per the running model.
+
+#### Tiers (configurable)
+
+Three tiers ship with sensible defaults, fully editable in `config.jsonc`:
+
+- `core` (17 tools): indexing, search, retrieval. Recommended for Haiku / small local models.
+- `standard` (79 tools): core + analytics / architecture / quality. Recommended for Sonnet / GPT-4o class.
+- `full` (all 91 tools): no filter. Recommended for Opus / o1 / frontier models.
+
+Edit `tool_tier_bundles.core` / `tool_tier_bundles.standard` in your `config.jsonc` to add or remove tools from each tier.
+
+#### Runtime switching (opt-in, zero extra requests)
+
+Runtime tier switching is **off by default**. To enable it, set in `config.jsonc`:
+
+```jsonc
+"adaptive_tiering": true
+```
+
+When on, `plan_turn` — already the opening-move tool — accepts an optional `model` parameter that switches the session tier as a side effect, with **no extra MCP request**:
+
+```
+plan_turn(repo="...", query="...", model="claude-haiku-4-5")
+```
+
+The server resolves the model to a tier via `model_tier_map` in config (fuzzy matching: normalizes the id, then exact → glob → substring → `*` → `full` fallback). Subsequent `tools/list` calls return only the narrowed set.
+
+When `adaptive_tiering` is false, `plan_turn(model=...)` and `announce_model(...)` accept their arguments but do not switch the tier — the static `tool_profile` continues to drive the exposed tools. `set_tool_tier(tier=...)` remains honored either way because it's an explicit user call, not automatic behavior.
+
+#### The Counter — collapse to a 3-tool front door (`tool_surface`)
+
+`tool_surface` goes further than tiering: it collapses the resident tool list to a **three-tool front door** that fronts the entire catalog without losing any capability. Every turn the host serializes each resident tool's schema into context; the front door shrinks that fixed per-turn cost and removes the "pick one of N" dispatch dilution. Measured on v1.108.199: **25,801 → 1,038 estimated schema tokens, ~25×**. That figure is an estimate at `bytes/4`, not a tokenizer count, and it moves as the catalog grows — so don't take ours. Run `jcodemunch-mcp surface` for your own install's number.
+
+**New installs default to `counter`** so a first-time user gets maximal token savings out of the box, with every tool one `menu()` / `route()` call away. This default is applied only to a genuinely first-ever install: an **existing install keeps its surface across upgrades** — if you never set `tool_surface`, a package update leaves you on `full` exactly as before, never silently collapsing your tool list. Set it explicitly any time:
+
+```jsonc
+"tool_surface": "counter"
+```
+
+- **`order(action, args)`** — dispatch any catalog action by name. Read-only by default at the boundary: actions that change index/session state require `allow_state_change=true`, and execution/file-write verbs are refused outright (the front door is a charter checkpoint, never a mutation path).
+- **`menu(query?)`** — search/browse the action catalog (compact rows: action, summary, required args, `state_changing`), so the full set of schemas needn't stay resident in context.
+- **`route(task, repo?, execute?)`** — map a natural-language task to the best action(s); with `execute=true`, dispatch the top recommendation in the same call. Recommends `assemble_task_context` / `plan_turn` for context-gathering intents.
+
+`counter` keeps the always-present controls (`set_tool_tier`, `announce_model`, `jcodemunch_guide`) alongside the front door. Setting `full` advertises every tool schema (the pre-`counter` behavior). The two mechanisms compose: under `counter`, `order` / `route` still reach every action regardless of the active `core` / `standard` / `full` tier. Seeing only three tools in your client's tool list is expected under `counter` — call `menu()` to list the full catalog.
+
+#### `disabled_tools` precedence
+
+`disabled_tools` applies **after** tier filtering. A tool listed in both a tier bundle and `disabled_tools` will not be exposed. The server logs a `WARNING` on startup and `jcodemunch-mcp config --check` prints a `WARN:` row if this happens.
+
+### Architecture layer enforcement (`architecture.layers`)
+
+Place a `.jcodemunch.jsonc` file at your project root to declare the layers your architecture must respect. `get_layer_violations` will then enforce that imports only flow in the declared direction.
+
+```jsonc
+// .jcodemunch.jsonc — example for a layered Python project
+{
+  "architecture": {
+    "layers": [
+      { "name": "api",      "paths": ["src/routes", "src/controllers"] },
+      { "name": "service",  "paths": ["src/services"] },
+      { "name": "repo",     "paths": ["src/repositories"] },
+      { "name": "db",       "paths": ["src/models", "src/migrations"] }
+    ],
+    "rules": [
+      { "layer": "api",     "may_not_import": ["db"] },
+      { "layer": "service", "may_not_import": ["api"] },
+      { "layer": "repo",    "may_not_import": ["api", "service"] }
+    ]
+  }
+}
+```
+
+Call `get_layer_violations(rules=[...])` directly to pass rules inline — the config file is optional and used as a fallback. When no config is present, `get_layer_violations` infers layers from top-level directory structure.
+
+### Deprecated env vars (v2.0 will remove)
+
+The following env vars still work but are deprecated. Config file values take priority:
+
+| Variable | Config key | Default |
+|----------|-----------|---------|
+| `JCODEMUNCH_USE_AI_SUMMARIES` | `use_ai_summaries` | `true` |
+| `JCODEMUNCH_TRUSTED_FOLDERS` | `trusted_folders` | `[]` |
+| `JCODEMUNCH_MAX_FOLDER_FILES` | `max_folder_files` | `2000` |
+| `JCODEMUNCH_MAX_INDEX_FILES` | `max_index_files` | `10000` |
+| `JCODEMUNCH_STALENESS_DAYS` | `staleness_days` | `7` |
+| `JCODEMUNCH_MAX_RESULTS` | `max_results` | `500` |
+| `JCODEMUNCH_EXTRA_IGNORE_PATTERNS` | `extra_ignore_patterns` | `[]` |
+| `JCODEMUNCH_CONTEXT_PROVIDERS` | `context_providers` | `true` |
+| `JCODEMUNCH_REDACT_SOURCE_ROOT` | `redact_source_root` | `false` |
+| `JCODEMUNCH_STATS_FILE_INTERVAL` | `stats_file_interval` | `3` |
+| `JCODEMUNCH_SHARE_SAVINGS` | `share_savings` | `true` |
+| `JCODEMUNCH_TELEMETRY_URL` | (none) | community meter URL |
+| `JCODEMUNCH_SUMMARIZER_CONCURRENCY` | `summarizer_concurrency` | `4` |
+| `JCODEMUNCH_ALLOW_REMOTE_SUMMARIZER` | `allow_remote_summarizer` | `false` |
+| `JCODEMUNCH_RATE_LIMIT` | `rate_limit` | `0` |
+| `JCODEMUNCH_TRANSPORT` | `transport` | `stdio` |
+| `JCODEMUNCH_HOST` | `host` | `127.0.0.1` |
+| `JCODEMUNCH_PORT` | `port` | `8901` |
+| `JCODEMUNCH_LOG_LEVEL` | `log_level` | `WARNING` |
+
+AI provider keys (`ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `OPENAI_API_BASE`, `MINIMAX_API_KEY`, `ZHIPUAI_API_KEY`, etc.), `JCODEMUNCH_SUMMARIZER_PROVIDER`, and `CODE_INDEX_PATH` are **always** read from env vars — they are never placed in config files.
+
+AI provider priority in auto-detect mode: Anthropic → Gemini → OpenAI-compatible (`OPENAI_API_BASE`) → MiniMax → GLM-5 → signature fallback. Set `JCODEMUNCH_SUMMARIZER_PROVIDER` to force `anthropic`, `gemini`, `openai`, `minimax`, `glm`, or `none`. `jcodemunch-mcp config` shows which provider is active.
+
+`allow_remote_summarizer` only affects OpenAI-compatible HTTP endpoints. When `false`, jcodemunch accepts only localhost-style endpoints such as Ollama or LM Studio on `127.0.0.1` and rejects remote hosts like `api.minimax.io`. When a remote endpoint is rejected, AI summarization falls back to docstrings or signatures instead of sending source code to that provider. Set `allow_remote_summarizer: true` in `config.jsonc` if you intentionally want to use a hosted OpenAI-compatible provider such as MiniMax or GLM-5.
+
+`openai_extra_body` (config key, or `JCODEMUNCH_OPENAI_EXTRA_BODY` env var as a JSON object) is merged into every OpenAI-compatible `/chat/completions` and `/responses` summarizer request. Use it for provider knobs the standard payload doesn't expose — most commonly to turn off a local **thinking model's** reasoning so the output budget isn't spent on reasoning tokens (which silently degrades summaries to generic signatures). For llama.cpp / Qwen: `JCODEMUNCH_OPENAI_EXTRA_BODY='{"chat_template_kwargs":{"enable_thinking":false}}'`. When a summarization run produces mostly generic fallbacks despite successful responses, jcodemunch now logs a degradation warning pointing at this setting (issue #323).
+
+---

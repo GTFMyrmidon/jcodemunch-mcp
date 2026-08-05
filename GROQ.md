@@ -254,3 +254,80 @@ Key properties:
 - **No local install** — jCodeMunch runs on the remote server, not on the client
 - **Token-efficient** — jCodeMunch returns only relevant symbols/context, not raw files
 - **Fast** — Groq inference at 280-1000 tok/s means sub-second answer synthesis
+
+---
+
+### speedreview — AI Code Review GitHub Action
+
+Get a structured PR review in under 5 seconds:
+
+```yaml
+# .github/workflows/speedreview.yml
+- uses: jgravelle/jcodemunch-mcp/speedreview@v1.108.52
+  with:
+    groq_api_key: ${{ secrets.GROQ_API_KEY }}
+```
+
+For stricter supply-chain hygiene, pin to the tag's commit SHA instead of the
+tag itself (`git ls-remote https://github.com/jgravelle/jcodemunch-mcp refs/tags/v1.108.52`).
+The action installs pinned package versions by default and exposes
+`jcodemunch_version` / `openai_version` inputs for override.
+
+See **[speedreview/README.md](speedreview/README.md)** for full setup and configuration.
+
+### gcm — Codebase Q&A CLI
+
+Ask any question about any codebase. Get an answer in under 3 seconds.
+
+```bash
+pip install "jcodemunch-mcp[groq]"
+export GROQ_API_KEY=gsk_...
+
+# Ask about a GitHub repo (auto-indexes on first use)
+gcm "how does authentication work?" --repo pallets/flask
+
+# Ask about the current directory
+gcm "where are the API routes defined?"
+
+# Interactive chat mode
+gcm --chat --repo facebook/react
+
+# Use the fast 8B model
+gcm "what does parse_file do?" --fast
+```
+
+Combines jCodeMunch's token-efficient retrieval (BM25 + PageRank) with Groq's 280+ tok/s inference for near-instant answers. See `gcm --help` for all options.
+
+### gcm --voice — Voice-to-Codebase
+
+Speak a question, hear the answer. Full audio loop: Whisper STT → retrieval → LLM → Orpheus TTS.
+
+```bash
+pip install "jcodemunch-mcp[groq-voice]"
+
+# Voice conversation with a codebase
+gcm --voice --repo pallets/flask
+
+# Press Enter to start recording, Enter again to stop
+# Or type a question directly as text fallback
+```
+
+Push-to-talk via Enter key. Caps answers to ~100 words for natural spoken delivery. Requires a microphone.
+
+### gcm explain — Auto Repo Explainer
+
+Generate a narrated explainer video for any codebase in a single command.
+
+```bash
+pip install "jcodemunch-mcp[groq-explain]"
+
+# Generate a 60-second narrated explainer
+gcm explain --repo pallets/flask -o flask-explainer.mp4
+
+# With verbose timing
+gcm explain --repo facebook/react -v
+```
+
+Pipeline: repo structure → LLM narration script → Orpheus TTS → Pillow slides → FFmpeg MP4. Requires FFmpeg on PATH.
+
+---
