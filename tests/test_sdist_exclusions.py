@@ -58,6 +58,44 @@ REQUIRED_PATHS = [
 ]
 
 
+def _build_sdist(outdir: Path) -> subprocess.CompletedProcess:
+    """Build an sdist with whatever builder this environment actually has.
+
+    ⚠ `python -m build` is NOT present in CI: the job installs dependencies
+    with `uv sync --locked --group dev`, and `build` is not in that group.
+    Adding it would mean re-locking, and `uv lock` is off-limits here (it
+    rewrites unrelated marker lines and has twice restripped `revision = 3`).
+    CI does have `uv`, which the workflow already uses to build an sdist.
+
+    ⚠⚠ **This deliberately does not skip when no builder is found.** A skip is
+    how the guard this module replaces became decorative -- it returned early
+    in exactly the environment that matters. If neither builder exists the
+    tests error, which is the honest outcome: the exclusion went unverified.
+    """
+    attempts: list[str] = []
+    for argv in (
+        [sys.executable, "-m", "build", "--sdist", "--outdir", str(outdir)],
+        ["uv", "build", "--sdist", "--out-dir", str(outdir)],
+    ):
+        try:
+            result = subprocess.run(
+                argv, cwd=REPO_ROOT, capture_output=True, text=True
+            )
+        except FileNotFoundError:
+            attempts.append(f"{argv[0]}: not on PATH")
+            continue
+        # "No module named build" is an absent builder, not a build failure.
+        if result.returncode != 0 and "No module named build" in result.stderr:
+            attempts.append(f"{argv[0]} -m build: module not installed")
+            continue
+        return result
+
+    raise AssertionError(
+        "no sdist builder available, so the exclude rules went unverified: "
+        + "; ".join(attempts)
+    )
+
+
 @pytest.fixture(scope="module")
 def built_sdist(tmp_path_factory) -> list[str]:
     """Plant the canaries, build one sdist, return its member names.
@@ -80,12 +118,7 @@ def built_sdist(tmp_path_factory) -> list[str]:
             planted.append(canary)
 
         outdir = tmp_path_factory.mktemp("sdist")
-        result = subprocess.run(
-            [sys.executable, "-m", "build", "--sdist", "--outdir", str(outdir)],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-        )
+        result = _build_sdist(outdir)
         assert result.returncode == 0, (
             "sdist build failed:\n" + result.stdout[-4000:] + "\n" + result.stderr[-4000:]
         )
