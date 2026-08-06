@@ -5,6 +5,17 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Manual re-trigger. During the 2026-08-06 Actions major outage the dispatch
+  # for a push to main was DROPPED, not deferred: Dependency Graph ran, Tests
+  # and Replay never appeared, and recovery does not retroactively create runs
+  # for a push GitHub already discarded. With only push/pull_request triggers
+  # the sole remedy was a junk commit or a throwaway PR to re-provoke the event.
+  #
+  # `gh workflow run test.yml --ref <branch>` re-runs the matrix against any ref
+  # without touching history. Deliberately no inputs: this exists to re-run the
+  # suite exactly as a push would, so an input that changed what ran would
+  # defeat the point.
+  workflow_dispatch:
 
 jobs:
   test:
