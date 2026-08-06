@@ -42,6 +42,16 @@ jobs:
           #
           # => Contributors need a LOCAL uv >= this pin. Check `uv --version`
           #    before running `uv lock`, and check `head -2 uv.lock` after.
+          #
+          # ⚠ THIRD direction, found on the 1.108.247 bump: a local uv NEWER
+          # than this pin keeps `revision = 3` — so `head -2` looks fine — but
+          # its resolver rewrites unrelated content. uv 0.12.1 stripped the
+          # `sys_platform` conjuncts off 53 nvidia markers (`(aarch64 and linux)
+          # or (x86_64 and linux) or (AMD64 and win32)` -> `aarch64 or x86_64`),
+          # widening them, on a run whose only intent was a version bump.
+          # => Never `uv lock` to change the project version. Edit the one
+          #    `name = "jcodemunch-mcp"` version line and check `git diff --stat
+          #    uv.lock` reads 1 insertion, 1 deletion.
           version: "0.9.5"
 
       - name: Set up Python ${{ matrix.python-version }}

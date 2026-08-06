@@ -2,6 +2,52 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.247] - 2026-08-06 - a project's file-count cap is no longer resolved and then discarded
+
+### `max_folder_files` in `.jcodemunch.jsonc` was parsed, reported, and ignored
+
+Reported by **@domis86** (#416). Setting
+
+    { "max_folder_files": 15000 }
+
+in a repo's `.jcodemunch.jsonc` had no effect on `jcodemunch-mcp index .` — the
+walk stopped at the 2,000 default. `config --check` printed
+`max_folder_files 15000 [project]` throughout, because the config layer was
+never the broken part.
+
+`index_folder` resolved the cap from **global config only** and handed the
+result to the walk as an explicit `max_files=` argument. The walk resolves the
+cap itself, repo-aware, on entry (v1.108.194/.197) — but a non-`None` argument
+is a caller override there by design, so the correct project value was computed
+and immediately overwritten by the global one. Not a missing route: a route that
+won over the right one.
+
+The cap now resolves against the walked root, the same key
+`load_project_config` was called with.
+
+⚠ **This was wider than the report.** The issue diagnosed it as an
+incremental-only path, with full walks unaffected. Measured, the global value
+won on **every** entry point — full walk, explicit `paths=[...]`, watcher and
+`PostToolUse` re-index alike — because all of them are fed the same overriding
+argument. The `JCODEMUNCH_MAX_FOLDER_FILES` env var worked (the reporter's
+workaround) only because it lands in global config, which is what was being
+read.
+
+The truncation block (#366) reads the same value, so a capped index was also
+under-reporting how much it had dropped.
+
+Audited alongside, per the report's closing question: every other config read in
+`index_folder` (`trusted_folders`, `trusted_folders_whitelist_mode`,
+`redact_source_root`, `context_providers`, `gitignore_warn_threshold`) already
+passes `repo=`, and `max_file_size` resolves correctly on both the walk and the
+watcher fast path. This was the last one.
+
+Tests: `tests/test_count_cap_end_to_end.py` (10) — the sibling of
+`test_size_cap_end_to_end.py`, asserting the same (documented route) x (entry
+point) matrix for the count cap. Non-vacuous: exactly the three `project_config`
+cells fail against pre-fix code, and the `env_var` / `global_config` controls
+pass on both sides.
+
 ## [1.108.246] - 2026-08-05 - a class field initializer no longer donates members to its class
 
 ### JS/TS phantom methods

@@ -1482,7 +1482,18 @@ def index_folder(
     else:
         walk_prefix = walk_root.relative_to(folder_path).as_posix()
 
-    max_files = get_max_folder_files()
+    # ⚠ v1.108.247: pass `repo=`. Resolving here WITHOUT a repo key was not a
+    # missing route — it was a route that OVERRODE the correct one. `max_files`
+    # is handed to `discover_local_files`/`resolve_explicit_paths` below, and
+    # `_discover_source_files` treats a non-None `max_files` as an explicit
+    # caller override, short-circuiting its own repo-aware resolution (line
+    # ~1134). So the global value resolved here silently won on EVERY path, full
+    # walk included — `.jcodemunch.jsonc` was parsed, reported by
+    # `config --check`, and then never consulted (#416 @domis86). The key is
+    # `walk_root`, matching both `load_project_config` above and the key
+    # `_discover_source_files` builds, and it is read BEFORE the git-root
+    # retarget moves `folder_path`.
+    max_files = get_max_folder_files(repo=str(walk_root.resolve()))
 
     try:
         t0 = time.monotonic()
