@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "jmunch",
+  "description": "Token-efficient retrieval MCP servers for code, docs, and tabular data.",
+  "owner": {
+    "name": "J. Gravelle",
+    "url": "https://github.com/jgravelle"
+  },
+  "plugins": [
+    {
+      "name": "jcodemunch",
+      "source": "./",
+      "displayName": "jCodeMunch",
+      "description": "Symbol-level code exploration via tree-sitter AST parsing. 70+ languages.",
+      "category": "code-intelligence",
+      "tags": ["code", "search", "ast", "token-efficiency"]
+    },
+    {
+      "name": "jdocmunch",
+      "source": {
+        "source": "github",
+        "repo": "jgravelle/jdocmunch-mcp"
+      },
+      "displayName": "jDocMunch",
+      "description": "Section-level documentation retrieval across Markdown, RST, notebooks, and OpenAPI specs.",
+      "category": "documentation",
+      "tags": ["docs", "search", "openapi", "token-efficiency"]
+    },
+    {
+      "name": "jdatamunch",
+      "source": {
+        "source": "github",
+        "repo": "jgravelle/jdatamunch-mcp"
+      },
+      "displayName": "jDataMunch",
+      "description": "Tabular data retrieval over CSV and Excel. Query rows and aggregate without loading the file.",
+      "category": "data",
+      "tags": ["data", "csv", "excel", "token-efficiency"]
+    }
+  ]
+}
