@@ -937,11 +937,35 @@ def _resolve_repo_key(repo: str) -> str | None:
 
 
 def get(key: str, default: Any = None, repo: str | None = None) -> Any:
-    """Get config value. If repo is given, uses merged project config."""
+    """Get config value, resolving project -> global -> default.
+
+    ⚠ v1.108.250 (#416 follow-up, @domis86): `_PROJECT_CONFIGS` holds ONLY the
+    keys a project's `.jcodemunch.jsonc` actually declares — it is an OVERLAY,
+    not a merged snapshot. Global is consulted HERE, on every read, so a key the
+    project file omits resolves live.
+
+    It used to hold `deepcopy(_GLOBAL_CONFIG)` overlaid with the project keys,
+    and this function returned `default` for anything missing from it. That is
+    two bugs wearing one costume:
+
+    1. ORDERING. The snapshot is taken whenever `load_project_config` runs. In
+       `config --check` that is BEFORE `load_config()` populates global, so the
+       copy captured an empty global and every undeclared key reported its
+       hardcoded default while `_detect_source` truthfully tagged the row
+       `[config]`. Indexing loads in the other order, so runtime behaviour was
+       correct and only the diagnostic lied — the exact inverse of #416.
+    2. STALENESS. A file-backed entry is excluded from the mirror refresh below,
+       so a later edit to global config was invisible to it forever.
+
+    Resolving at read time kills both: there is no snapshot to be taken early or
+    to go stale. Do NOT reintroduce a merge at load time to "save a lookup".
+    """
     if repo:
         resolved = _resolve_repo_key(repo)
-        if resolved and resolved in _PROJECT_CONFIGS:
-            return _PROJECT_CONFIGS[resolved].get(key, default)
+        if resolved:
+            project = _PROJECT_CONFIGS.get(resolved)
+            if project is not None and key in project:
+                return project[key]
     return _GLOBAL_CONFIG.get(key, default)
 
 
@@ -1098,7 +1122,11 @@ def load_project_config(source_root: str) -> None:
             project_config = json.loads(stripped)
 
             with _CONFIG_LOCK:
-                merged = deepcopy(_GLOBAL_CONFIG)
+                # ⚠ An OVERLAY of the project's own keys, NOT a merge over
+                # global. `get()` consults global at read time; baking a copy of
+                # it in here is what made `config --check` report defaults and
+                # made a later global edit invisible. See get()'s docstring.
+                overlay: dict[str, Any] = {}
                 for key, value in project_config.items():
                     if key in CONFIG_TYPES:
                         if _validate_type(key, value, CONFIG_TYPES[key]):
@@ -1143,47 +1171,47 @@ def load_project_config(source_root: str) -> None:
                                             Path(folder).expanduser().resolve()
                                         )
                                     valid_folders.add(expanded_folder)
-                                merged[key] = list(valid_folders)
+                                overlay[key] = list(valid_folders)
                             elif key == "server_output" and isinstance(value, str):
                                 normalized = _normalize_server_output(value)
                                 if normalized is not None:
-                                    merged[key] = normalized
+                                    overlay[key] = normalized
                             else:
-                                merged[key] = value
+                                overlay[key] = value
                         else:
                             logger.warning(
                                 "Project config key '%s' has invalid type. Using global default.",
                                 key,
                             )
-                _PROJECT_CONFIGS[repo_key] = merged
+                # A rejected key is simply absent from the overlay, so it falls
+                # through to global on read — which is what the warning promises.
+                _PROJECT_CONFIGS[repo_key] = overlay
                 _PROJECT_CONFIG_HASHES[repo_key] = content_hash
                 # File-backed, so no longer a mirror of global.
                 _PROJECT_CONFIG_MIRRORS.discard(repo_key)
         except Exception as e:
             logger.warning("Failed to load project config: %s", e)
             with _CONFIG_LOCK:
-                # A file exists but did not parse. The fallback is global, but
-                # this is NOT a mirror: the next call must retry the file.
-                _PROJECT_CONFIGS[repo_key] = deepcopy(_GLOBAL_CONFIG)
+                # A file exists but did not parse. An empty overlay means every
+                # key falls through to global on read. This is NOT a mirror:
+                # the next call must retry the file.
+                _PROJECT_CONFIGS[repo_key] = {}
                 _PROJECT_CONFIG_MIRRORS.discard(repo_key)
     else:
         with _CONFIG_LOCK:
-            # ⚠ v1.108.197: REFRESH, don't seed-once. A repo with no
-            # `.jcodemunch.jsonc` has nothing of its own to say, so its entry is
-            # a mirror of global — and a mirror that is only ever written on
-            # first sight stops being one the moment global changes. The old
-            # `if repo_key not in _PROJECT_CONFIGS` guard froze the snapshot
-            # taken at first index, so a later global change was invisible to
-            # every `get(..., repo=...)` read for that repo. Harmless while
-            # repo-scoped reads were rare; not harmless now that the three limit
-            # resolvers take `repo=` (#390).
+            # A repo with no `.jcodemunch.jsonc` has nothing of its own to say,
+            # so its overlay is empty and every key resolves against global at
+            # read time. v1.108.197 needed a REFRESH here because the entry was
+            # a frozen COPY of global that went stale the moment global changed;
+            # an empty overlay cannot go stale, so the refresh is now trivially
+            # correct rather than load-bearing.
             #
-            # ⚠ Refresh ONLY entries this branch wrote (`_PROJECT_CONFIG_MIRRORS`).
+            # ⚠ Still write ONLY entries this branch owns (`_PROJECT_CONFIG_MIRRORS`).
             # An entry installed by anyone else — a caller configuring a repo in
             # memory with no file on disk — is theirs. Overwriting it is data
             # loss wearing a cache-maintenance costume, and it is silent.
             if repo_key not in _PROJECT_CONFIGS or repo_key in _PROJECT_CONFIG_MIRRORS:
-                _PROJECT_CONFIGS[repo_key] = deepcopy(_GLOBAL_CONFIG)
+                _PROJECT_CONFIGS[repo_key] = {}
                 _PROJECT_CONFIG_MIRRORS.add(repo_key)
             _PROJECT_CONFIG_HASHES.pop(repo_key, None)
 

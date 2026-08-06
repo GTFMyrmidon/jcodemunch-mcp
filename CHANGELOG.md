@@ -2,6 +2,58 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.250] - 2026-08-06 - `config --check` reported a default while the indexer used your config
+
+Reported by [@domis86](https://github.com/jgravelle/jcodemunch-mcp/issues/416) as a
+follow-up on #416. With a `.jcodemunch.jsonc` present but **not** declaring
+`max_folder_files`, and a global `config.jsonc` that did declare it,
+`config --check` printed the hardcoded default `2000` and tagged the row
+`[config]`.
+
+**Indexing was correct the whole time.** A run with a global cap of 3 against 5
+files discovered 5, indexed 3 and dropped 2, with the right warning. Only the
+diagnostic lied, which is the exact inverse of #416 and harder to trust, because
+`config --check` is the tool users are pointed at to debug this class of problem.
+
+### One cause, two defects
+
+`_PROJECT_CONFIGS` held `deepcopy(_GLOBAL_CONFIG)` overlaid with the project's
+keys, and `get(key, repo=)` returned the caller's `default` for anything missing
+from it. Global was never consulted for a key the project file did not declare.
+
+1. **Ordering.** The snapshot is taken whenever `load_project_config()` runs.
+   `config --check` runs it *before* `load_config()` populates global, so the copy
+   captured an empty global and every undeclared key reported its hardcoded
+   default. Indexing loads in the other order, which is why the two disagreed.
+2. **Staleness.** A file-backed entry was excluded from the v1.108.197 mirror
+   refresh, so a later edit to global config stayed invisible to it forever. That
+   release fixed this for repos with *no* project file; the defect survived one
+   branch over.
+
+`_PROJECT_CONFIGS` now holds an **overlay** of only the keys the project file
+actually declares, and `get()` resolves project → global → default on every read.
+There is no snapshot left to be taken early or to go stale. A key rejected for bad
+type is simply absent from the overlay and falls through to global, which is what
+its "using global default" warning always claimed.
+
+### Not `max_folder_files`-specific
+
+Answering the report's closing question: `max_file_size` and `max_index_files`
+were wrong in the same conditions and are fixed by the same change. Any key read
+through the project-aware path that the project file omitted showed a default
+wearing a `[config]` tag.
+
+⚠ This is the third time a `config --check` row has disagreed with the runtime it
+describes (#300/#304 `summarizer_model`, #393 `use_ai_summaries` /
+`summarizer_provider`, now the three indexing limits). Each was previously fixed
+one row at a time. `tests/test_config_check_matches_resolver.py` (11 tests) is
+written against the defect class instead: the row-versus-effective-value and
+load-order-independence guards are parametrized over the whole limit set, one test
+compares the row against the cap the walk *reported enforcing* rather than against
+a second read of config, and three controls pass on both sides of the fix so the
+file cannot go green by project config or capping quietly ceasing to work. Eight
+of the eleven fail against pre-fix code.
+
 ## [1.108.249] - 2026-08-06 - a flag that claimed compaction, and an advisory that measures where a doc points
 
 Two things stopped lying and one new advisory arrived. Both fixes are cases of a
