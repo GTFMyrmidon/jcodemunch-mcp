@@ -2,6 +2,93 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.249] - 2026-08-06 - a flag that claimed compaction, and an advisory that measures where a doc points
+
+Two things stopped lying and one new advisory arrived. Both fixes are cases of a
+signal asserting something the code never did.
+
+### `_meta.auto_compacted` claimed a compaction that never happened
+
+Past 80% of turn budget the dispatcher set `auto_compacted: true` on the response
+while **shortening nothing**. The comment at the emission site conceded it
+outright: *"downgrade detail_level before dispatch would be ideal, but result is
+already computed. Inject warning + flag instead."* The shipped agent policy — the
+`init` template and its committed rendering in `AGENTS.md` — documented the flag
+to the reader as *"results were automatically compressed due to turn budget"*.
+
+⚠⚠ **The annotation alone is the cost.** A reader told its result was truncated
+re-fetches or widens to recover data that was never removed, and the flag fires
+only when the budget is already tight, so the waste lands at the worst possible
+moment.
+
+No test caught it because the tests asserted the **predicate** (`should_compact()`
+returns `True` past the threshold) and nothing asserted a payload got smaller.
+
+The flag is gone. `budget_warning` and the turn counters still ship — advisory
+signals that leave the decision with the reader are honest; a truncation claim
+is not. `should_compact()` is retained as a reader of the turn counters
+(`test_v1_108_55.py` uses it to prove the #327 idle-gap reset fires in every
+reader) with a docstring saying not to rewire it without implementing the
+compaction it names.
+
+⚠ **The dispatcher deliberately does NOT shorten the payload**, and the comment
+now says why: discarding context after computing it, before the caller has
+revealed which parts it needs, is the failure mode eager compaction is known for.
+
+### Skill-candidate advisory — "a skill might outperform a doc here"
+
+`agent_selector` already tells a caller *a lesser model might handle this*. The
+same shape now applies to agent config files: `audit_agent_config` gains a sixth
+check that flags always-resident sections whose symbol and path references
+resolve into a **single subtree** of the repo. Content that costs tokens on every
+turn but only matters when you are working in that subtree is a skill candidate —
+move the prose, leave a pointer.
+
+Surfaced as the `skill_candidate` correction kind in `suggest_corrections` (so it
+rides the `reflect` CLI), gated by `skill_advisor_mode`, **default `off`**. An
+unrecognised value also resolves to `off`, so a typo cannot silently enable it.
+
+⚠ **The signal is reference CONCENTRATION, not size.** A size threshold fires on
+every large config and tells the user what they can already see. The check returns
+nothing at all without an index, because a concentration claim needs something to
+resolve against.
+
+⚠⚠ **Nothing is generated, summarised, or rewritten.** The recommended action is
+a move of prose the user already wrote. `suggested_patch` is deliberately `None`:
+a diff showing only the deletion would read as *"delete this section"*, which is
+not the recommendation.
+
+⚠ **STATED LIMIT: relevance is not measured.** Resident cost and concentration
+are; whether a section was ever *needed* is not, because nothing records which
+config section a turn used. Every finding says so in its own text and carries
+`relevance_measured: false`.
+
+⚠⚠ **Thresholds were tuned by measurement and the first guess was backwards.**
+The check picks the deepest directory prefix clearing the concentration floor, so
+a narrow subtree that fails the floor hands selection to its *permissive parent* —
+raising the floor makes the answer **less** specific. An 0.8 floor with an 0.6
+share cap found nothing across five real configs; that is "off", not "strict". The
+subtree-share cap is the real discriminator (measured: genuine subtrees 0.12-0.13
+of their tree, package roots 0.33-0.50), so it tightened to 0.25 and the floor
+came down to 0.65. The tuning corpus is named in `tests/test_skill_candidates.py`.
+
+⚠ It yields two findings, **one a known weak positive** (global routing guidance
+scores as concentrated because the tool names it cites resolve to the files
+implementing those tools). Recorded rather than tuned away. Two findings is not a
+precision measurement and must not be quoted as one.
+
+### `stale_config` corrections had never once been emitted
+
+Found while extending the same wiring: `_stale_config_corrections` read
+`f.get("type")`, but `audit_agent_config` labels every finding with `category`.
+The membership test could not match, so this correction kind produced nothing from
+the day it was written. Both spellings are now accepted — silently dropping a
+finding stream is the exact failure being fixed.
+
+Tests: `test_skill_candidates.py` (19, negative assertions load-bearing),
+`test_turn_budget.py` (+2 including a source contract over `src/` and the policy
+surfaces, proven to fail pre-fix).
+
 ## [1.108.248] - 2026-08-06 - starter packs install again, and stop misreporting why they did not
 
 Three findings from **@MotoMato85** (#417), plus the client half of #418. Every

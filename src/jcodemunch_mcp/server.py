@@ -6444,8 +6444,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent] | CallToolR
                 tb = get_turn_budget()
                 # Reconfigure if config changed (thread-safe)
                 tb.configure(budget_tokens, config_module.get("turn_gap_seconds", 30.0))
-                # Auto-compact: downgrade detail_level before dispatch would be ideal,
-                # but result is already computed. Inject warning + flag instead.
+                # Advisory only: the result is already computed, so the reader —
+                # not this dispatcher — decides what to do about budget pressure.
+                # Deliberately does NOT shorten the payload. Discarding context
+                # here, before the caller has revealed which parts it needs, is
+                # the failure mode that eager compaction is known for.
                 result_bytes = len(json.dumps(result, default=str))
                 token_count = result_bytes // 4  # ~4 bytes per token
                 budget_info = tb.record_output(token_count)
@@ -6454,8 +6457,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent] | CallToolR
                     meta["budget_warning"] = budget_info["budget_warning"]
                     meta["turn_tokens_used"] = budget_info["turn_tokens_used"]
                     meta["turn_budget_remaining"] = budget_info["turn_budget_remaining"]
-                    if tb.should_compact():
-                        meta["auto_compacted"] = True
                     # Also promote to top-level for visibility
                     result["budget_warning"] = budget_info["budget_warning"]
             elif budget_tokens > 0:

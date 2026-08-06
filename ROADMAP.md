@@ -916,6 +916,150 @@ closed.
 
 ---
 
+## Skill-candidate advisory — "a skill might outperform a doc here" — SHIPPED
+
+`agent_selector` already tells a caller *a lesser model might handle this*: cheap
+signals, named thresholds, an annotation on the result, and `mode: off` until you
+ask for it. The same shape applied to agent config files answers a different
+question with the same economics — **which parts of an always-resident doc are
+paying rent they don't earn?**
+
+A global `CLAUDE.md` is loaded into every session under its directory. A section
+that only matters when you happen to be working in one subtree still costs its
+full token weight on every turn that has nothing to do with it. That is a skill:
+same prose, loaded when the topic comes up.
+
+### The signal is scope concentration, not size
+
+⚠⚠ **A size threshold is the wrong instrument and must not ship as one.** "Your
+CLAUDE.md is large" fires on every large CLAUDE.md, tells the user what they can
+already see, and gets muted — after which the advisory costs tokens and delivers
+nothing. The measurable claim is that a section's *references* are concentrated
+while its *residency* is global.
+
+`audit_agent_config` already holds both halves. `_extract_symbol_refs` and
+`_extract_file_refs` pull the symbols and paths a section names; the index
+resolves them; `_estimate_tokens` prices the section; `_discover_files` already
+distinguishes global configs from project ones. A section whose resolved
+references all land under one subtree is scoped content sitting in an unscoped
+file. Finding shape:
+
+> `CLAUDE.md` lines 412-486 — 3,100 est. tokens, resident every session. All 14
+> symbol references and 9 path references resolve under
+> `src/jcodemunch_mcp/runtime/`. Sections with this profile are skill candidates:
+> same prose, loaded when the topic comes up.
+
+⚠ **STATED LIMIT, do not let the finding imply otherwise: nothing records which
+config section was actually relevant to a turn.** Resident cost and concentration
+ratio are both measured; *need* is not. The finding must say what it observed and
+must not assert the section went unused. Adding that telemetry is a separate
+decision with its own privacy surface, and this entry does not assume it.
+
+### Why this one carries no derivation risk
+
+The recommended action is a cut-and-paste of prose the user already wrote, plus a
+pointer. No model rewrite, no summary, nothing derived, no receipt to forge.
+
+⚠ **This is the whole reason this entry exists and a document-to-skill
+*generator* does not.** Distilling a source document into
+model-written per-chapter files produces an artifact an agent then answers from,
+with no evidence binding it to the source — the opposite posture to the evidence
+arc above, under the same brand. A generator is out of lane. An advisory over
+prose the user owns is not. Do not let the two merge during implementation: if a
+future revision proposes writing the skill *content*, that is a different
+proposal and needs its own review.
+
+### Placement
+
+No new tool — the catalog moratorium holds.
+
+- a sixth check in `tools/audit_agent_config.py`, sibling to `_check_bloat` /
+  `_check_redundancy` / `_check_scope_leaks`
+- a fifth finding category in `suggest_corrections`, alongside routing /
+  vocabulary / index-freshness / stale-config
+- rides the `reflect` CLI unchanged; its difflib unified-diff preview already
+  renders exactly this edit (a deletion plus a pointer)
+- scoring copies `agent_selector`'s structure — signals dataclass, weights dict,
+  a `DEFAULT_THRESHOLDS`-style named floor, `mode: off | manual | auto`
+
+### Close condition — met 2026-08-06, same day it was filed
+
+Built in `tools/audit_agent_config.py` (`_check_skill_candidates`,
+`_split_sections`, `_best_subtree`, `_resolve_section_refs`), surfaced as the
+`skill_candidate` correction kind in `suggest_corrections`, gated by
+`skill_advisor_mode` (default `off`). Tests in `tests/test_skill_candidates.py`.
+
+Each condition as accepted, and how it landed:
+
+- *resident-token cost and concentration both computed from the index rather
+  than file size* — **amended, deliberately.** Token cost cannot come from the
+  index; it comes from the section text via `_estimate_tokens`. What the
+  condition was protecting is that the **trigger** is index-resolved references,
+  never size: `_check_skill_candidates` returns `[]` outright when no index is
+  available, and `test_large_section_with_scattered_refs_is_not_flagged` fails
+  any implementation that reverts to a size threshold.
+- *finding text states relevance was not measured* — shipped, in the message and
+  as a `relevance_measured: False` field. Test-asserted.
+- *`mode` defaults to `off`* — shipped. An unrecognised value also resolves to
+  `off`, so a typo cannot silently enable it.
+- *floor tuned against real configs outside this repo, tuning set named in the
+  test* — shipped; `_TUNING_SET` in the test file names the five configs, their
+  sizes, and the two findings they produce.
+- *a skill generator is out of scope* — held. Nothing is generated, summarised,
+  or rewritten; `suggested_patch` is deliberately `None` because a diff showing
+  only the deletion would read as "delete this section".
+
+⚠⚠ **Two things measurement changed, both worth keeping.**
+
+**The thresholds inverted.** The filed design assumed a high concentration floor
+meant a strict check. It does not: the floor and the subtree-share cap pull
+against each other, because a narrow subtree that fails the floor hands selection
+to its permissive parent. An 0.8 floor with an 0.6 share cap found **nothing** in
+the tuning corpus — that is "off", not "strict". The share cap is the real
+discriminator (measured: genuine subtrees 0.12-0.13 of their tree, package roots
+0.33-0.50), so it tightened to 0.25 and the floor came *down* to 0.65.
+
+**The dogfood case was wrong.** This entry cited jcm's own Current State
+section — 157 entries, ~233k chars, ~58k tokens per session — as the case the
+advisory would have caught. It would not. Measured, jcm's `CLAUDE.md` yields
+**zero** skill candidates: Current State is genuine bloat, but its references
+span the whole package, so it is not scope-concentrated. `_check_bloat` is the
+check that catches it, and already did. The claim was plausible, load-bearing for
+the entry's motivation, and false.
+
+⚠ **The corpus produced two findings and one of them is a known weak positive**
+(`AGENTS.md` "Session-Aware Routing" — global guidance that scores concentrated
+because the tool names it cites resolve to the files implementing those tools).
+Recorded in `_TUNING_SET` rather than tuned away. **Two findings is not a
+precision measurement and must not be quoted as one.**
+
+### Follow-on found while building, not fixed as scope creep
+
+`_stale_config_corrections` read `f.get("type")`; `audit_agent_config` labels
+findings with `category`. The membership test could not match, so the
+`stale_config` correction kind had **never once been emitted** since it was
+written. Fixed in the same commit because it is the identical wiring this entry
+extends, with a regression test that fails against the old reader.
+
+### Provenance
+
+jjg, 2026-08-06, after reviewing
+[book-to-skill](https://github.com/virgiliojr94/book-to-skill) by
+[@virgiliojr94](https://github.com/virgiliojr94) — an MIT-licensed tool that turns
+a book, doc folder, or source collection into an Agent Skills bundle — and
+concluding the advisory was the part worth having here. Its idea, a different
+lane, and the framing below is a comment on fit with *this* project's evidence
+posture, not a criticism of that one.
+
+⚠ The motivating example originally recorded here — this repo's own Current State
+bloat, 157 entries / ~233k chars / ~58k est. tokens per session, noted 2026-07-25
+in maintenance practice #5 — **did not survive measurement**; see the close
+condition above. The advisory is still worth having, but it answers a narrower
+question than the one that prompted it, and the example that sold it was not an
+example of it.
+
+---
+
 ## Conventions
 
 - Entries here are **accepted**, not speculative. A rejected proposal gets a

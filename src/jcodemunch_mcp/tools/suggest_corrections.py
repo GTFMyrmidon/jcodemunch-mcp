@@ -192,7 +192,13 @@ def _stale_config_corrections(audit: dict) -> list[dict]:
     detected by the static auditor."""
     out = []
     for f in (audit.get("findings") or []):
-        ftype = f.get("type", "")
+        # ⚠ audit_agent_config labels findings with "category", never "type".
+        # This read `f.get("type", "")`, so the membership test could not match
+        # and this correction kind had never once been emitted. Accept both
+        # spellings rather than only the right one: a caller may pass a
+        # finding stream from elsewhere, and silently dropping it is the exact
+        # failure being fixed here.
+        ftype = f.get("category") or f.get("type", "")
         if ftype in ("stale_symbol", "dead_path", "stale_reference", "dead_file"):
             out.append({
                 "kind": "stale_config",
@@ -204,6 +210,43 @@ def _stale_config_corrections(audit: dict) -> list[dict]:
                     "suggestion", "Remove or update the stale reference in your config file."),
                 "suggested_patch": None,
             })
+    return out
+
+
+def _skill_candidate_corrections(audit: dict) -> list[dict]:
+    """Fold skill-candidate findings into the correction stream.
+
+    Emitted only when the advisory is enabled (``skill_advisor_mode: advise``);
+    ``audit_agent_config`` returns no such findings otherwise, so this is a
+    no-op on a default install.
+
+    ⚠ ``suggested_patch`` stays None on purpose. The action is "move this prose
+    into a skill and leave a pointer" — a two-file edit whose destination this
+    tool does not know. A unified diff that only showed the deletion would read
+    as "delete this section", which is not the recommendation.
+    """
+    out = []
+    for f in (audit.get("findings") or []):
+        if (f.get("category") or f.get("type", "")) != "skill_candidate":
+            continue
+        out.append({
+            "kind": "skill_candidate",
+            "severity": f.get("severity", "info"),
+            "cause": f.get("message", ""),
+            "evidence": {
+                k: f[k] for k in (
+                    "file", "line", "end_line", "section", "tokens", "subtree",
+                    "concentration", "repo_share", "resolved_refs",
+                    "symbols_resolved", "paths_resolved", "relevance_measured",
+                ) if k in f
+            },
+            "recommended_action": (
+                f"Move the '{f.get('section', '')}' section into a skill loaded on "
+                f"demand and leave a one-line pointer in its place. The prose moves "
+                f"unchanged — nothing is summarised or rewritten."
+            ),
+            "suggested_patch": None,
+        })
     return out
 
 
@@ -270,6 +313,7 @@ def suggest_corrections(
         # weight_proposal below rather than a per-cluster correction.
 
     corrections.extend(_stale_config_corrections(audit))
+    corrections.extend(_skill_candidate_corrections(audit))
 
     # Dedupe: multiple regret signals can converge on the same recommendation
     # (e.g. thin_result and requery_churn both steering search_text ->

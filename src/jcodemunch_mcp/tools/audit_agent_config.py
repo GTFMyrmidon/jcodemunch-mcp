@@ -333,6 +333,229 @@ def _check_scope_leaks(file_info: dict) -> list[dict[str, Any]]:
     return findings
 
 
+# ---------------------------------------------------------------------------
+# Skill-candidate advisory
+# ---------------------------------------------------------------------------
+#
+# "A skill might outperform a doc here." Same shape as agent_selector's "a
+# lesser model might handle this": cheap signals, named thresholds, an advisory
+# annotation, and OFF until asked for.
+#
+# ⚠ The signal is reference CONCENTRATION, not size. A size threshold fires on
+# every large config, tells the user what they can already see, and gets muted.
+# What is actually claimed here is narrower: this section's references resolve
+# into one subtree of the repo, while the section itself is resident in every
+# turn regardless of what the turn is about.
+#
+# ⚠ STATED LIMIT: nothing records which config section was RELEVANT to a turn.
+# Resident cost and concentration are measured; need is not. Every finding says
+# so in its own text — do not remove that sentence to make the message shorter.
+
+# Tuned 2026-08-06 against the corpus named in tests/test_skill_candidates.py
+# (_TUNING_SET). ⚠ Both numbers moved on measurement and the direction is worth
+# keeping: an 0.8 floor with a 0.6 share cap found NOTHING real, because raising
+# the floor makes the selected prefix SHALLOWER (a narrow subtree fails the
+# floor, so its permissive parent wins) — the two knobs pull against each other.
+# The share cap is what actually discriminates: real subtrees measured 0.12-0.13
+# of their trees, package roots 0.33-0.50. Tightening the cap to 0.25 rejects
+# package roots outright and lets the floor come DOWN to where real sections sit.
+DEFAULT_SKILL_THRESHOLDS: dict[str, float] = {
+    # A section has to be worth moving before it is worth mentioning.
+    "minSectionTokens": 600,
+    # Fraction of a section's resolved references that must land in one subtree.
+    # Real candidates in the tuning corpus concentrated at 0.67-0.74; nothing
+    # cleared 0.8, so 0.8 is not "strict", it is "off".
+    "concentrationFloor": 0.65,
+    # Below this, concentration is an artifact of a tiny sample.
+    "minResolvedRefs": 5,
+    # The subtree must be a minority of the repo, or "concentrated in
+    # src/<package>" is trivially true and means nothing.
+    "subtreeShareCap": 0.25,
+}
+
+# A bare name in this many indexed files is vocabulary, not a reference.
+_MAX_SYMBOL_FANOUT = 3
+
+_H2 = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
+
+
+def _split_sections(text: str) -> list[dict[str, Any]]:
+    """Split markdown into level-2 sections with 1-based line spans.
+
+    Content before the first ``##`` is deliberately skipped: a preamble is
+    orientation for the whole file, which is the one thing that genuinely
+    belongs in an always-resident doc.
+    """
+    matches = list(_H2.finditer(text))
+    out: list[dict[str, Any]] = []
+    for i, m in enumerate(matches):
+        start = m.start()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        body = text[start:end]
+        line = text.count("\n", 0, start) + 1
+        # ⚠ rstrip before counting: the slice runs to the NEXT heading's start,
+        # so the raw newline count lands end_line ON that heading. Report the
+        # last line with content, not the blank run before the next section.
+        out.append({
+            "title": m.group(1).strip(),
+            "text": body,
+            "line": line,
+            "end_line": line + body.rstrip("\n").count("\n"),
+        })
+    return out
+
+
+def _norm(path: str) -> str:
+    return path.replace("\\", "/")
+
+
+def _resolve_section_refs(
+    section_text: str, symbol_files: dict[str, set[str]], source_files: set[str],
+) -> dict[str, Any]:
+    """Resolve a section's symbol and path references to indexed file paths.
+
+    Only UNAMBIGUOUS references count. A symbol name that lives in many files
+    tells us nothing about where the section points, and a path fragment that
+    suffix-matches several files is the same problem.
+    """
+    paths: list[str] = []
+    symbols_hit = 0
+    files_hit = 0
+
+    for ref in _extract_symbol_refs(section_text):
+        name = ref.split(".")[-1]
+        owners = symbol_files.get(name)
+        if owners and len(owners) <= _MAX_SYMBOL_FANOUT:
+            paths.extend(owners)
+            symbols_hit += 1
+
+    for ref in _extract_file_refs(section_text):
+        normalized = _norm(ref).lstrip("./")
+        matched = [
+            sf for sf in source_files
+            if _norm(sf) == normalized or _norm(sf).endswith("/" + normalized)
+        ]
+        if len(matched) == 1:
+            paths.append(matched[0])
+            files_hit += 1
+
+    return {"paths": paths, "symbols_hit": symbols_hit, "files_hit": files_hit}
+
+
+def _best_subtree(
+    paths: list[str], all_files: set[str], floor: float, share_cap: float,
+) -> Optional[dict[str, Any]]:
+    """Deepest directory prefix covering >= floor of paths without covering the repo.
+
+    Deepest-qualifying rather than highest-scoring: ``src`` covers everything in
+    a src-layout project, so the most specific prefix that still clears the bar
+    is the informative one. ``share_cap`` is what actually rejects ``src`` — a
+    prefix containing most of the repo describes the repo, not the section.
+    """
+    total = len(paths)
+    if not total or not all_files:
+        return None
+
+    counts: dict[str, int] = {}
+    for p in paths:
+        parts = _norm(p).split("/")[:-1]
+        for depth in range(1, len(parts) + 1):
+            prefix = "/".join(parts[:depth])
+            counts[prefix] = counts.get(prefix, 0) + 1
+
+    normalized_files = [_norm(f) for f in all_files]
+    repo_total = len(normalized_files)
+    best: Optional[dict[str, Any]] = None
+
+    for prefix, count in counts.items():
+        concentration = count / total
+        if concentration < floor:
+            continue
+        share = sum(1 for f in normalized_files if f.startswith(prefix + "/")) / repo_total
+        if share > share_cap:
+            continue
+        depth = prefix.count("/") + 1
+        if best is None or depth > best["depth"]:
+            best = {
+                "prefix": prefix,
+                "count": count,
+                "concentration": concentration,
+                "repo_share": share,
+                "depth": depth,
+            }
+    return best
+
+
+def _check_skill_candidates(
+    file_info: dict,
+    symbol_files: dict[str, set[str]],
+    source_files: set[str],
+    thresholds: Optional[dict[str, float]] = None,
+) -> list[dict[str, Any]]:
+    """Find always-resident config sections whose references sit in one subtree.
+
+    Returns [] when the index is unavailable — a concentration claim needs the
+    index to resolve against, and file size alone must never trigger this.
+    """
+    if not symbol_files and not source_files:
+        return []
+
+    t = {**DEFAULT_SKILL_THRESHOLDS, **(thresholds or {})}
+    min_tokens = t["minSectionTokens"]
+    floor = t["concentrationFloor"]
+    min_refs = t["minResolvedRefs"]
+    share_cap = t["subtreeShareCap"]
+
+    residency = (
+        "every session in every project" if file_info["scope"] == "global"
+        else "every session in this project"
+    )
+
+    findings: list[dict[str, Any]] = []
+    for section in _split_sections(file_info["content"]):
+        tokens = _estimate_tokens(section["text"])
+        if tokens < min_tokens:
+            continue
+
+        resolved = _resolve_section_refs(section["text"], symbol_files, source_files)
+        paths = resolved["paths"]
+        if len(paths) < min_refs:
+            continue
+
+        subtree = _best_subtree(paths, source_files, floor, share_cap)
+        if subtree is None:
+            continue
+
+        findings.append({
+            "file": file_info["path"],
+            "severity": "info",
+            "category": "skill_candidate",
+            "message": (
+                f"Section '{section['title']}' (lines {section['line']}-{section['end_line']}) "
+                f"is ~{tokens:,} tokens, resident {residency}. "
+                f"{subtree['count']} of {len(paths)} resolved references "
+                f"({subtree['concentration']:.0%}) land under '{subtree['prefix']}', "
+                f"which is {subtree['repo_share']:.0%} of the indexed tree. "
+                f"Sections with this profile are skill candidates: move the prose to a "
+                f"skill and leave a pointer, so it loads when the topic comes up. "
+                f"Relevance was NOT measured — nothing records which section a turn "
+                f"actually needed, only what it costs and where it points."
+            ),
+            "line": section["line"],
+            "section": section["title"],
+            "end_line": section["end_line"],
+            "tokens": tokens,
+            "subtree": subtree["prefix"],
+            "concentration": round(subtree["concentration"], 3),
+            "repo_share": round(subtree["repo_share"], 3),
+            "resolved_refs": len(paths),
+            "symbols_resolved": resolved["symbols_hit"],
+            "paths_resolved": resolved["files_hit"],
+            "relevance_measured": False,
+        })
+    return findings
+
+
 def _fuzzy_suggest(name: str, candidates: set[str], max_dist: int = 3) -> Optional[str]:
     """Find the closest candidate by edit distance."""
     name_lower = name.lower()
@@ -371,11 +594,23 @@ def _edit_distance(a: str, b: str, max_d: int) -> int:
 # Main entry point
 # ---------------------------------------------------------------------------
 
+def _skill_advisor_mode() -> str:
+    """Resolve skill_advisor_mode; anything unrecognised means off."""
+    try:
+        from .. import config as config_module
+        mode = config_module.get("skill_advisor_mode", "off")
+    except Exception:
+        logger.debug("Could not read skill_advisor_mode", exc_info=True)
+        return "off"
+    return mode if mode in ("off", "advise") else "off"
+
+
 def audit_agent_config(
     *,
     repo: Optional[str] = None,
     project_path: Optional[str] = None,
     storage_path: Optional[str] = None,
+    skill_candidates: Optional[bool] = None,
 ) -> dict[str, Any]:
     """Audit agent configuration files for token waste and stale references.
 
@@ -385,6 +620,9 @@ def audit_agent_config(
         project_path: Project directory to scan for config files.
                      Defaults to cwd.
         storage_path: Override index storage path.
+        skill_candidates: Force the skill-candidate advisory on or off for this
+              call. ``None`` (default) defers to ``skill_advisor_mode``, which
+              is ``off`` unless the user turned it on.
 
     Returns:
         Structured audit result with files_scanned, total_tokens,
@@ -405,6 +643,7 @@ def audit_agent_config(
     # Load index if repo is provided
     index = None
     all_symbol_names: set[str] = set()
+    symbol_files: dict[str, set[str]] = {}
     source_files: set[str] = set()
     source_root = ""
 
@@ -416,10 +655,19 @@ def audit_agent_config(
             index = store.load_index(owner, name)
             if index:
                 all_symbol_names = {s.get("name", "") for s in index.symbols if s.get("name")}
+                for s in index.symbols:
+                    sname, sfile = s.get("name"), s.get("file")
+                    if sname and sfile:
+                        symbol_files.setdefault(sname, set()).add(sfile)
                 source_files = set(index.source_files)
                 source_root = index.source_root or ""
         except Exception as e:
             logger.debug("Could not load index for %s: %s", repo, e)
+
+    want_skills = (
+        _skill_advisor_mode() == "advise" if skill_candidates is None
+        else bool(skill_candidates)
+    )
 
     # Run all checks
     findings: list[dict[str, Any]] = []
@@ -429,6 +677,8 @@ def audit_agent_config(
         if index:
             findings.extend(_check_stale_symbols(f, index, all_symbol_names))
             findings.extend(_check_dead_paths(f, source_files, source_root))
+            if want_skills:
+                findings.extend(_check_skill_candidates(f, symbol_files, source_files))
     findings.extend(_check_redundancy(files))
 
     # Sort: warnings first, then info
@@ -450,6 +700,15 @@ def audit_agent_config(
         "finding_counts": {
             "warning": sum(1 for f in findings if f["severity"] == "warning"),
             "info": sum(1 for f in findings if f["severity"] == "info"),
+        },
+        "skill_advisor": {
+            "enabled": want_skills,
+            "index_available": bool(index),
+            "hint": None if want_skills else (
+                "Skill-candidate advisory is off. Enable with "
+                "`jcodemunch-mcp config set skill_advisor_mode advise` to flag "
+                "always-resident config sections whose references sit in one subtree."
+            ),
         },
         "token_breakdown": [
             {

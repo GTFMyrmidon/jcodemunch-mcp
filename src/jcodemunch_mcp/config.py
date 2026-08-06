@@ -409,6 +409,7 @@ DEFAULTS = {
     },
     "adaptive_tiering": False,
     "compact_schemas": False,
+    "skill_advisor_mode": "off",  # "off" | "advise"
     "server_output": "adaptive",  # "raw", "encoded", or "adaptive"
     "server_output_threshold": 0.15,  # Minimum savings ratio for adaptive mode
     "disabled_tools": ["test_summarizer"],
@@ -509,6 +510,7 @@ CONFIG_TYPES = {
     "model_tier_map": dict,
     "adaptive_tiering": bool,
     "compact_schemas": bool,
+    "skill_advisor_mode": str,
     "server_output": str,
     "server_output_threshold": float,
     "disabled_tools": list,
@@ -2080,6 +2082,16 @@ def generate_template() -> str:
   // fuzzy_*, etc.) from tool schemas. The server still accepts them — they're just
   // hidden from the LLM to save tokens. Saves ~1-2k tokens on top of any profile.
   // "compact_schemas": false,
+
+  // === Skill Advisor ===
+  // "advise" makes audit_agent_config / suggest_corrections flag always-resident
+  // config sections whose symbol and path references resolve into a single
+  // subtree of the repo — content that costs tokens on every turn but only
+  // matters when you are working in that subtree. The suggestion is to move the
+  // prose into a skill and leave a pointer; nothing is rewritten or generated.
+  // Advisory only, and it does NOT measure whether a section went unused —
+  // only what it costs and where it points.
+  // "skill_advisor_mode": "off",
 
   // === Server Output ===
   // Controls how tool responses are emitted:

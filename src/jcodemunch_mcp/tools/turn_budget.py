@@ -108,7 +108,20 @@ class TurnBudget:
             self._turn_gap = gap_seconds
 
     def should_compact(self) -> bool:
-        """Return True if results should be auto-compacted due to budget pressure."""
+        """Return True past the 80% budget-pressure threshold.
+
+        A PREDICATE, not an instruction, and deliberately not wired to any
+        payload mutation. It used to gate an `auto_compacted: true` flag in
+        `_meta` that shortened nothing — the annotation told the reader its
+        result had been truncated when it had not, which invites a re-fetch of
+        data that was never removed. The dispatcher now emits `budget_warning`
+        alone and leaves the decision with the reader; do not restore the flag
+        without also implementing the compaction it claims.
+
+        Retained as a reader of the turn counters: `test_v1_108_55.py` uses it
+        to prove the #327 idle-gap reset fires in every reader, not just in
+        `record_output`.
+        """
         if self._turn_budget == 0:
             return False
         with self._lock:
