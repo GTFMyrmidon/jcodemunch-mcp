@@ -9,6 +9,18 @@ on:
 jobs:
   test:
     strategy:
+      # One leg dying must not cancel the other seven. On 2026-08-06 a Sigstore
+      # 503 coincided with a platform-side cancellation and every matrix leg
+      # went red within the same second; only ubuntu/3.10 had finished, and it
+      # had PASSED. Nothing in the matrix reported a failing test, but the run
+      # read as a total collapse and cost a full diagnosis to rule out.
+      #
+      # The cost of fail-fast here is inverted: these legs are the ONLY place
+      # cross-platform and cross-version breakage surfaces, so cancelling the
+      # survivors discards exactly the evidence needed to tell a real regression
+      # from one flaky runner. A Windows-only failure should show as one red leg
+      # next to seven green, not as eight reds.
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
