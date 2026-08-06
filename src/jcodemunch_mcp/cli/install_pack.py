@@ -35,11 +35,22 @@ def _pack_api_headers(extra: Optional[dict] = None) -> dict:
     licensed seat was rescued by accident — `X-JCM-License` perturbs the set.
 
     ⚠⚠ This is a MITIGATION, not the fix, and it is worth knowing which is
-    which. The durable fix is a bot-protection exception for the pack API at the
-    CDN edge; that rule is not in this repo and can change under us at any time.
-    Do not delete these headers because "the 403 stopped happening" — that would
-    be the mitigation working. `X-JCM-Client` is the load-bearing one; it is
-    sixth-header padding as much as it is telemetry.
+    which. The durable fix would be a bot-protection exception for the pack API
+    at the CDN edge; that rule is not in this repo and can change under us at
+    any time.
+
+    ⚠⚠ **That exception was considered and declined (2026-08-06), so this is
+    permanent by decision, not by neglect.** The reasoning: our own client is
+    fixed here, licensing (`validate.php`) and ordering (the Stripe webhook) are
+    POST and were never affected, and the residual exposure is third-party
+    fetchers of `/badge.php` and `/llms.txt`. Do NOT delete these headers
+    because "the 403 stopped happening" — that would be the mitigation working.
+    `X-JCM-Client` is the load-bearing one; it is sixth-header padding as much
+    as it is telemetry.
+
+    The tripwire is `install-pack --list` failing for everyone at once. If that
+    happens the rule has tightened and the CDN exception is back on the table; a
+    drafted support ticket with the measured variant table exists for that day.
     """
     from .. import __version__
 
