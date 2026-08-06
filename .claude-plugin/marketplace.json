@@ -13,29 +13,44 @@
       "displayName": "jCodeMunch",
       "description": "Symbol-level code exploration via tree-sitter AST parsing. 70+ languages.",
       "category": "code-intelligence",
-      "tags": ["code", "search", "ast", "token-efficiency"]
+      "tags": [
+        "code",
+        "search",
+        "ast",
+        "token-efficiency"
+      ]
     },
     {
       "name": "jdocmunch",
       "source": {
-        "source": "github",
-        "repo": "jgravelle/jdocmunch-mcp"
+        "source": "url",
+        "url": "https://github.com/jgravelle/jdocmunch-mcp.git"
       },
       "displayName": "jDocMunch",
       "description": "Section-level documentation retrieval across Markdown, RST, notebooks, and OpenAPI specs.",
       "category": "documentation",
-      "tags": ["docs", "search", "openapi", "token-efficiency"]
+      "tags": [
+        "docs",
+        "search",
+        "openapi",
+        "token-efficiency"
+      ]
     },
     {
       "name": "jdatamunch",
       "source": {
-        "source": "github",
-        "repo": "jgravelle/jdatamunch-mcp"
+        "source": "url",
+        "url": "https://github.com/jgravelle/jdatamunch-mcp.git"
       },
       "displayName": "jDataMunch",
       "description": "Tabular data retrieval over CSV and Excel. Query rows and aggregate without loading the file.",
       "category": "data",
-      "tags": ["data", "csv", "excel", "token-efficiency"]
+      "tags": [
+        "data",
+        "csv",
+        "excel",
+        "token-efficiency"
+      ]
     }
   ]
 }
