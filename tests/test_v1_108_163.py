@@ -157,17 +157,31 @@ def test_install_pack_key_rides_header_not_url(monkeypatch, tmp_path):
     assert len(fake.get_calls) == 1
     url, kwargs = fake.get_calls[0]
     assert "SECRETKEY001" not in url
-    assert kwargs["headers"] == {"X-JCM-License": "SECRETKEY001"}
+    # ⚠ The invariant is where the KEY travels, not what else is in the dict.
+    # This asserted `== {"X-JCM-License": ...}` until v1.108.248 added identifying
+    # headers to every pack API call (#417): a request carrying httpx's exact
+    # default header set is answered with a CDN bot-challenge page, so the client
+    # now sends User-Agent + X-JCM-Client too. Exact equality made an unrelated,
+    # required change look like a V12 violation.
+    assert kwargs["headers"]["X-JCM-License"] == "SECRETKEY001"
 
 
 def test_install_pack_no_key_sends_no_header(monkeypatch, tmp_path):
+    """No key configured → no license header. NOT "no headers at all".
+
+    This asserted `headers is None` until v1.108.248, when every pack API request
+    gained identifying headers (#417). The V12 property being protected is that a
+    seat with no key never transmits one — which is about the ABSENCE of
+    X-JCM-License, not the absence of a headers dict.
+    """
     fake = FakeHTTPX(get_responses=[
         FakeResponse({"error": "This pack requires a jCodeMunch license."}),
     ])
     rc = _run_install(monkeypatch, tmp_path, fake, key=None)
     assert rc == 1
     _, kwargs = fake.get_calls[0]
-    assert kwargs["headers"] is None
+    assert "X-JCM-License" not in (kwargs["headers"] or {})
+    assert not any("SECRETKEY" in str(v) for v in (kwargs["headers"] or {}).values())
 
 
 def test_install_pack_never_puts_the_key_in_a_url(monkeypatch, tmp_path):

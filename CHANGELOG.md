@@ -2,6 +2,103 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.248] - 2026-08-06 - starter packs install again, and stop misreporting why they did not
+
+Three findings from **@MotoMato85** (#417), plus the client half of #418. Every
+measurement in both reports reproduced here exactly.
+
+⚠⚠ **The two root causes are NOT in this repo.** The 403 is a CDN rule in front
+of `jcodemunch.com`; the ignored `X-JCM-License` header is `index.php`. What
+shipped here is the client half: a request that survives the edge, and an honest
+account of what happened when something upstream refuses.
+
+### `install-pack` could not reach the pack API at all (#417)
+
+The Hostinger CDN answers httpx's **exact default header set** — `Host, Accept,
+Accept-Encoding, Connection, User-Agent`, Title-Case, in that order — with a 403
+bot-challenge page. `install-pack --list` failed for everyone, and a free-pack
+install failed on any seat with no license key, which is precisely the audience
+the free pack exists for.
+
+The rule keys on the header **name set**, not on any value: replacing the
+`User-Agent` value changes nothing, while adding any sixth header clears it.
+That is also why a licensed seat was rescued by accident — `X-JCM-License`
+perturbs the set, so free packs installed fine for licensed users and through
+jMunch Console.
+
+Every pack API request now carries `User-Agent: jcodemunch-mcp/<version>` and
+`X-JCM-Client`, which also makes our traffic identifiable in the pack API's own
+logs.
+
+⚠ **This is a mitigation, not the fix.** The durable fix is a bot-protection
+exception for the pack API at the CDN edge, which is not code in this repo. Do
+not remove these headers because "the 403 stopped happening" — that would be the
+mitigation working.
+
+### A 403 was reported as "check your network connection" (#417)
+
+`_list_packs` called `resp.raise_for_status()` inside `except httpx.HTTPError`,
+and `HTTPStatusError` **subclasses** `HTTPError` — so every non-2xx response from
+a server that was up and answering printed a connectivity message. The reporter
+checked DNS, his Pi-hole and his firewall before reading the response body.
+
+`_install_pack` already had this right, and its own comment described the exact
+bug its sibling still had. The two paths now agree. A genuine transport failure
+still reads as one and now names the exception; anything else reports the status
+and content-type it actually got.
+
+### A pack's install marker was called a corrupt index, and the advice deleted it (#417)
+
+`IndexStore.list_repos` globs `*.json` in the storage root, and **`pathlib.glob`
+matches dotfiles** — unlike the shell glob that line reads like. So
+`.pack-<id>.json`, written by `install-pack`, was read as a repo index, split
+into owner `.pack`, and rejected by the migration schema guard:
+
+    Migration schema validation failed for .pack/nodejs — missing required
+    fields (stale or corrupt JSON index; remove it with
+    `jcodemunch-mcp delete-index .pack/nodejs`)
+
+⚠⚠ **Following that advice is destructive.** `_repo_slug(".pack", "nodejs")`
+round-trips to `.pack-nodejs.json` — the marker itself — so `delete-index`
+unlinks it, the pack's "already installed" check goes blind, and its indexes
+stay on disk. Reproduced on the maintainer's own box: three markers, three lines,
+on every CLI invocation.
+
+### A sent license key no longer reads as a rejected one (#418, client half)
+
+`action=download` ignores `X-JCM-License` and answers a valid key with "This pack
+requires a jCodeMunch license" plus the hint *"Use: install-pack `<pack>`
+--license YOUR-KEY"* — advice the client has already followed, since `--license`
+lands in that same ignored header. Relaying it tells a paying user their valid
+key was refused.
+
+The hint is now suppressed when a key was actually sent, replaced by what
+happened: the key WAS sent, this is not a problem with the key, here is how to
+verify it, and here is the tracked server-side gap. A keyless seat still gets the
+server's hint, because there it is correct and actionable.
+
+⚠ **The transport itself is deliberately unchanged.** Moving the key to
+`?license=` would work today and would undo audit finding V12, which put it in a
+header specifically to keep it out of server and proxy access logs. That trade is
+not the client's to make.
+
+⚠ **Two V12 tests were over-specified and had to be rewritten to their own
+invariant.** `test_v1_108_163.py` asserted `headers == {"X-JCM-License": ...}`
+and `headers is None`, so adding identifying headers read as a V12 violation.
+The property that module exists to protect is *where the key travels* — never a
+URL, and never transmitted at all by a keyless seat — not the exact contents of
+the dict. Its sibling `test_install_pack_never_puts_the_key_in_a_url` already
+stated it correctly and passed unchanged, which is what identified the other two
+as over-specification rather than a real regression.
+
+Tests: `tests/test_pack_api_transport.py` (10), `tests/test_pack_marker_not_a_repo_index.py` (5).
+⚠ The marker file's first draft was **vacuous and passed against pre-fix code** —
+the warning goes through `logging`, so a `capsys` assertion never saw it, and the
+emitter dedupes on `(owner, name)` in a process-global set. Rewritten against
+`caplog` with a unique pack id, it fails pre-fix on exactly the behavioural
+assertion. The `_list_packs` misdiagnosis was likewise confirmed by running the
+pre-fix function directly.
+
 ## [1.108.247] - 2026-08-06 - a project's file-count cap is no longer resolved and then discarded
 
 ### `max_folder_files` in `.jcodemunch.jsonc` was parsed, reported, and ignored
