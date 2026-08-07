@@ -2,6 +2,65 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.260] - 2026-08-07 - A receipt that confirms your typo
+
+Found while re-checking #424. Not the issue itself, which stays open and is the
+maintainer's call.
+
+`JCODEMUNCH_TOOL_SURFACE=countr` reported itself back verbatim while serving the
+full 91-tool surface, because only `"counter"` is ever special-cased:
+
+```
+JCODEMUNCH_TOOL_SURFACE=countr
+  reported surface : countr        <- receipt echoes the typo back
+  front door active: False
+  visible tools    : 91            <- full surface, silently
+```
+
+Someone who typo'd the value and went looking for why their token cost did not
+drop read a receipt that **confirmed the setting had been accepted**. The
+`surface` CLI and `get_session_stats` both carry this field.
+
+Fifth occurrence of the diagnostic-disagrees-with-the-runtime class, after
+v1.108.250 and v1.108.255. A diagnostic must resolve its value the same way the
+runtime does, or it is worse than no diagnostic, because it is believed.
+
+### The fix
+
+`_effective_surface()` now always returns one of `VALID_TOOL_SURFACES`
+(`counter`, `full`). Unrecognized values resolve to `full`, which is what they
+have always **done**; only the reported value moves.
+
+Silently normalising would not have been enough on its own, because that hides
+the typo in the other direction. The receipt names the rejected value instead:
+
+```json
+{"surface": "full", "surface_requested": "countr", "surface_unrecognized": true,
+ "surface_note": "tool_surface 'countr' is not recognized and was ignored; ..."}
+```
+
+A correct setting carries none of those keys. A one-time WARNING names the bad
+value, the valid set, and the knob that sets it. Config values are validated on
+the same path as env values, since the config key shares the hazard.
+
+### Behaviour is unchanged
+
+An unrecognized surface has always served the full surface. This release changes
+what is **reported**, which is the entire defect. `tests/test_tool_surface_clamp.py`
+(25) pins that with a before/after tool count plus a non-vacuity floor asserting
+the two surfaces are actually distinguishable.
+
+Note on evidence: the test file cannot be run against the pre-fix module, because
+the symbols it imports did not exist. The defect was captured empirically before
+the change, and the numbers above are that capture.
+
+### What this does NOT do
+
+It does not touch the telemetry payload. That is #424 and it stays the
+maintainer's decision. Verified while here and now pinned by a test: the savings
+payload is `{delta, total, anon_id}` and carries no surface dimension, so this
+release is decision-neutral on whether it ever should.
+
 ## [1.108.259] - 2026-08-07 - A re-index you can schedule
 
 Closes #395, from a constraint reported by @dkiaulakis.

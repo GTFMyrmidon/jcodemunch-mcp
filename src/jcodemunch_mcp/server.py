@@ -246,15 +246,58 @@ _COUNTER_FRONT_DOOR: frozenset[str] = _counter.FRONT_DOOR
 _RAW_CATALOG: "Optional[list]" = None
 
 
-def _effective_surface() -> str:
-    """Active tool surface. 'counter' collapses list_tools to the front door;
-    anything else (default 'full') preserves existing tiered behavior unchanged.
-    Env JCODEMUNCH_TOOL_SURFACE wins over config 'tool_surface'.
+# The only two tool surfaces that exist. Anything else has always BEHAVED as
+# "full" (only "counter" is ever special-cased); v1.108.260 makes the reported
+# value agree with that instead of echoing whatever was typed.
+VALID_TOOL_SURFACES = ("counter", "full")
+_UNRECOGNIZED_SURFACES_LOGGED: set = set()
+
+
+def _surface_resolution() -> tuple:
+    """(effective, requested, recognized) for the active tool surface.
+
+    v1.108.260 (#424 follow-up). `JCODEMUNCH_TOOL_SURFACE=countr` used to report
+    itself back verbatim while silently serving the full 91-tool surface, because
+    only "counter" is ever special-cased. Someone debugging "why didn't my token
+    cost drop" then read a receipt that CONFIRMED their typo.
+
+    ⚠ Fifth occurrence of the diagnostic-disagrees-with-the-runtime class (see
+    .250 and .255). The reported value must be what is actually in force.
+
+    ⚠ Resolving to "full" is not enough on its own: silently normalising hides
+    the typo in the other direction. The requested value is carried alongside so
+    the receipt can say the setting was REJECTED, not merely that something else
+    is active.
     """
     env = os.environ.get("JCODEMUNCH_TOOL_SURFACE")
     if env:
-        return env.strip().lower()
-    return (config_module.get("tool_surface", "full") or "full").strip().lower()
+        requested = env.strip().lower()
+    else:
+        requested = (config_module.get("tool_surface", "full") or "full").strip().lower()
+
+    if requested in VALID_TOOL_SURFACES:
+        return requested, requested, True
+
+    if requested not in _UNRECOGNIZED_SURFACES_LOGGED:
+        _UNRECOGNIZED_SURFACES_LOGGED.add(requested)
+        logger.warning(
+            "Unrecognized tool_surface %r; using 'full'. Valid values: %s. "
+            "(Set via JCODEMUNCH_TOOL_SURFACE or the 'tool_surface' config key.)",
+            requested, ", ".join(VALID_TOOL_SURFACES),
+        )
+    return "full", requested, False
+
+
+def _effective_surface() -> str:
+    """Active tool surface. 'counter' collapses list_tools to the front door;
+    'full' (the default) preserves existing tiered behavior unchanged.
+    Env JCODEMUNCH_TOOL_SURFACE wins over config 'tool_surface'.
+
+    ⚠ Always one of VALID_TOOL_SURFACES. An unrecognized value resolves to
+    "full", which is what it has always DONE; see `_surface_resolution` for why
+    it used to be reported differently.
+    """
+    return _surface_resolution()[0]
 
 
 def _counter_front_door_tools() -> list:
@@ -401,8 +444,9 @@ def _tool_surface_stats(top_n: int = 15) -> dict:
     visible_total = sum(visible.values())
     catalog_total = sum(catalog.values())
     heaviest = dict(sorted(visible.items(), key=lambda kv: -kv[1])[:top_n])
-    return {
-        "surface": _effective_surface(),
+    _surface, _requested, _recognized = _surface_resolution()
+    out = {
+        "surface": _surface,
         "profile": _effective_profile(),
         "visible_tools": len(visible),
         "catalog_tools": len(catalog),
@@ -412,6 +456,17 @@ def _tool_surface_stats(top_n: int = 15) -> dict:
         "heaviest_tools": heaviest,
         "estimator": "bytes/4",
     }
+    # Omit-when-clean: a correct setting pays nothing. An unrecognized one is
+    # named, because resolving to "full" without saying so hides the typo in the
+    # other direction.
+    if not _recognized:
+        out["surface_requested"] = _requested
+        out["surface_unrecognized"] = True
+        out["surface_note"] = (
+            f"tool_surface {_requested!r} is not recognized and was ignored; "
+            f"'full' is in force. Valid values: {', '.join(VALID_TOOL_SURFACES)}."
+        )
+    return out
 
 
 # --- Runtime session tier state -------------------------------------------- #
