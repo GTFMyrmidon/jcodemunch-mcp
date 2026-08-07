@@ -8,6 +8,11 @@ from ._utils import index_status_to_tool_error, resolve_repo
 from .get_blast_radius import _build_reverse_adjacency, _find_symbol
 from ._call_graph import build_symbols_by_file, bfs_callers, bfs_callees
 from ._scip_consume import open_scip_reader, scip_meta_and_stale, scip_meta_block
+from ..retrieval.verdict import (
+    build_verdict,
+    index_coverage_meta,
+    index_changed_since_load as _index_changed_since_load,
+)
 
 
 def _attach_scip_to_hierarchy(response: dict, store, owner: str, name: str) -> dict:
@@ -299,4 +304,76 @@ def get_call_hierarchy(
     # Compile-time evidence (SCIP): union compiler-verified callers the AST missed.
     # Honest no-op when no .scip was ingested.
     response = _attach_scip_to_hierarchy(response, store, owner, name)
+
+    # Disclose inbound edges the callers query could not consult (jcm#423).
+    # Attached AFTER SCIP, because a compiler-verified caller is a real answer
+    # and must be allowed to reduce what we report as excluded.
+    if direction in ("callers", "both"):
+        _attach_caller_gate_disclosure(response, index, sym, reverse_adj)
+    return response
+
+
+def _attach_caller_gate_disclosure(
+    response: dict, index, sym: dict, reverse_adj: dict
+) -> dict:
+    """Say when the callers query could not see edges that exist (jcm#423).
+
+    The callers direction only considers files the import graph says import this
+    symbol's file. The callees direction consults no such gate, so an edge can be
+    returned in one direction and missing in the other, and the response gave no
+    way to tell that from "nothing calls this".
+
+    ⚠ Deliberately NOT gated on ``caller_count == 0``. The report's second case
+    came back with 16 callers -- every one a test -- while the single production
+    caller was excluded. A non-zero count can be just as incomplete as a zero,
+    and only the zero case was ever going to be noticed.
+    """
+    sym_name = sym.get("name", "")
+    sym_file = sym.get("file", "")
+    if not sym_name or not sym_file:
+        return response
+
+    get_callers = getattr(index, "get_callers_by_name", None)
+    callers_by_name = get_callers() if get_callers else None
+    if not callers_by_name:
+        return response
+
+    reachable = set(reverse_adj.get(sym_file, [])) | {sym_file}
+    returned = {c.get("file", "") for c in (response.get("callers") or [])}
+    excluded: set[str] = set()
+    for (caller_file, called_name), ids in callers_by_name.items():
+        if called_name != sym_name or not ids:
+            continue
+        if caller_file in reachable or caller_file in returned:
+            continue
+        excluded.add(caller_file)
+    if not excluded:
+        return response
+
+    meta = response.setdefault("_meta", {})
+    meta["caller_graph_incomplete"] = {
+        "excluded_files": sorted(excluded)[:10],
+        "excluded_file_count": len(excluded),
+        "reason": "import_graph_did_not_reach",
+        "detail": (
+            f"{len(excluded)} file(s) contain a call to '{sym_name}' but do not "
+            "resolve an import edge to its file, so the callers direction never "
+            "considered them. The callees direction applies no such gate, which "
+            "is why an edge can appear there and not here."
+        ),
+    }
+    # An answer that could not search part of the graph cannot prove absence.
+    if not response.get("callers"):
+        meta["verdict"] = build_verdict(
+            result_count=0,
+            scanned_files=len(getattr(index, "source_files", []) or []),
+            coverage=index_coverage_meta(index),
+            # An empty answer measured while the .db was being rewritten under
+            # this call cannot prove absence either, and that gate outranks ours
+            # because it names something the caller can retry.
+            # `test_absence_wiring_guard` enforces this on every build_verdict
+            # call site, and caught this one being added without it.
+            index_changed=_index_changed_since_load(index),
+            incomplete=meta["caller_graph_incomplete"],
+        )["verdict"]
     return response

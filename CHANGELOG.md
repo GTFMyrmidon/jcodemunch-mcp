@@ -2,6 +2,80 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.254] - 2026-08-07 - Python package-relative imports built no graph edge at all
+
+Reported by [@faxik](https://github.com/jgravelle/jcodemunch-mcp/issues/423) as an
+asymmetry in `get_call_hierarchy`: an edge returned by `direction="callees"` was
+missing from `direction="callers"` on the other endpoint, so `caller_count: 0`
+read as proof of absence. The asymmetry is real, and it was the visible symptom
+of something larger.
+
+### Cause
+
+`resolve_specifier` read relative imports with **JavaScript path semantics**.
+Python's relative form is not a path: in `from ..parser.fqn import x` the leading
+dots count package levels and the rest is a dotted module path. Joining it as a
+path produced the single segment `tools/..parser.fqn`, which matches nothing.
+
+Measured on this repository:
+
+| python relative specifiers (all internal by definition) | 818 |
+| --- | ---: |
+| resolved before | 71 (**8.7%**) |
+| resolved after | 817 (99.9%) |
+| internal import edges recovered | **746** |
+
+Everything gated on the import graph inherited this: `find_importers`,
+`get_blast_radius`, `get_dependency_graph`, `get_call_hierarchy`'s callers
+direction, and `check_delete_safe`.
+
+**The consequence is the serious part, and it reproduced here.**
+`find_importers` on our own `parser/fqn.py` returned exactly one importer, a
+test file, while `tools/_utils.py` imports it in production through
+`from ..parser.fqn import fqn_to_symbol`. A live symbol presented as imported by
+tests only — which is precisely the bucket a delete-safety check calls removable.
+
+### Fix
+
+`_resolve_python_relative` implements the real semantics: N leading dots walk
+N-1 packages up from the importer's own package, the remainder names a module,
+and a package resolves to its `__init__`. Climbing past the repo root returns
+None rather than guessing.
+
+⚠ **Gated on the importer's extension, not the specifier's shape**, so no JS/TS
+specifier can take this branch — `./foo`, `../lib/util` and the `#284` dotted
+basename convention keep the path reading exactly, asserted by test. Python
+semantics are tried first and fall through on a miss, so the forms that already
+resolved still do.
+
+### Disclosure: the callers direction now says when it could not look
+
+The resolver fix removes today's cause, but an unresolvable import will always
+exist for some language, so a `0` still needs to be non-citable when the graph
+was not searched. `get_call_hierarchy` now reports
+`_meta.caller_graph_incomplete` naming the files that call the symbol but were
+never considered, and refuses the absence verdict when the answer is empty.
+
+⚠ **Deliberately not gated on `caller_count == 0`.** The report's second case
+came back with 16 callers, every one a test, while the single production caller
+was excluded. A non-zero count can be exactly as incomplete as a zero, and it is
+the one nobody inspects.
+
+### Two tests that failed for the right reason
+
+- `test_find_importers.py`'s `python_relative` case asserted
+  `(".helpers", "lib/module.py", {"lib/helpers.py"}) -> None`, **encoding the
+  defect as intended behaviour**. Corrected, with the reason recorded inline.
+- `test_absence_wiring_guard.py` caught the new `build_verdict` call site being
+  added without `index_changed`. That guard exists so the next verdict-emitting
+  tool cannot quietly join the list, and it worked on the first tool to join
+  after it was written.
+
+Tests: `test_python_relative_imports.py` (19; **7 fail pre-fix**, and the 8 that
+pass on both sides are deliberate controls — the JS/TS path-reading guards and
+the absolute/external cases — so a green run cannot be produced by relative
+resolution quietly breaking).
+
 ## [1.108.253] - 2026-08-07 - route answered an ambiguous question with one confident action
 
 Follow-on to the emitted-task measurement in

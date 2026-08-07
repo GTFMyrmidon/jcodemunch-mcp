@@ -1309,6 +1309,43 @@ def expand_barrel_leaves(
     return leaves
 
 
+def _resolve_python_relative(
+    specifier: str, importer_path: str, source_files: "set[str]"
+) -> Optional[str]:
+    """Resolve a Python package-relative specifier (jcm#423).
+
+    ``from ..parser.fqn import x`` in ``src/pkg/tools/_utils.py`` resolves to
+    ``src/pkg/parser/fqn.py``: N leading dots walk N-1 packages up from the
+    importer's own package, and the remaining dotted path names a module.
+
+    Returns None rather than guessing when the walk climbs past the repo root or
+    nothing on disk matches, so a caller can fall through to the path reading.
+    """
+    match = re.match(r"^(\.+)(.*)$", specifier)
+    if not match:
+        return None
+    dots, remainder = match.group(1), match.group(2)
+
+    base_dir = posixpath.dirname(importer_path)
+    for _ in range(len(dots) - 1):  # one dot means the importer's own package
+        parent = posixpath.dirname(base_dir)
+        if parent == base_dir:  # climbed past the root; refuse to guess
+            return None
+        base_dir = parent
+
+    if remainder:
+        base = posixpath.join(base_dir, remainder.replace(".", "/"))
+    else:
+        base = base_dir  # `from . import x` -> the package's own __init__
+    if not base:
+        return None
+
+    for candidate in _candidates(base):
+        if candidate in source_files:
+            return candidate
+    return None
+
+
 def resolve_specifier(
     specifier: str,
     importer_path: str,
@@ -1337,6 +1374,28 @@ def resolve_specifier(
     """
     # Relative import
     if specifier.startswith("."):
+        # Python's relative form is NOT a path. `..parser.fqn` means "up one
+        # package, then parser/fqn" -- the leading dots count package levels and
+        # the remaining dots are module separators. Joining it as a path (the
+        # JS/TS reading below) yields the single segment `tools/..parser.fqn`,
+        # which matches nothing, so package-relative Python imports never built
+        # an edge (jcm#423: 71 of 818 resolved on this repo, 8.7%).
+        #
+        # Everything gated on the import graph inherited that: find_importers,
+        # get_blast_radius, get_dependency_graph, get_call_hierarchy's callers
+        # direction, and check_delete_safe. A symbol whose only production
+        # importer used a relative import presented as imported by tests only,
+        # which is the bucket a delete-safety check calls removable.
+        #
+        # ⚠ Gated on the IMPORTER's extension, not on the specifier's shape, so
+        # no JS/TS specifier can take this branch. `./foo` and `../foo/bar` keep
+        # the path reading exactly. Python semantics are TRIED FIRST and fall
+        # through on miss, so the forms that already resolved still do.
+        if importer_path.endswith((".py", ".pyi")):
+            resolved = _resolve_python_relative(specifier, importer_path, source_files)
+            if resolved:
+                return resolved
+
         importer_dir = posixpath.dirname(importer_path)
         joined = posixpath.normpath(posixpath.join(importer_dir, specifier))
         for c in _candidates(joined):

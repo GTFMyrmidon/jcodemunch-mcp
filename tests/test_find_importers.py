@@ -347,7 +347,13 @@ class TestResolveSpecifier:
         ("../app", "src/utils/helpers.js", SOURCE_FILES, "src/app.js"),
         ("react", "src/app.js", SOURCE_FILES, None),
         ("src/app.js", "other.js", SOURCE_FILES, "src/app.js"),
-        (".helpers", "lib/module.py", {"lib/helpers.py"}, None),
+        # jcm#423: this expected None until v1.108.254, encoding the defect as
+        # intended behaviour. `.helpers` from `lib/module.py` is Python for "the
+        # importer's own package, module helpers" -> `lib/helpers.py`, which is
+        # right there in the file set. The old path reading produced the segment
+        # `lib/.helpers` and matched nothing, so every package-relative Python
+        # import built no edge and this case pinned that as correct.
+        (".helpers", "lib/module.py", {"lib/helpers.py"}, "lib/helpers.py"),
     ], ids=["js_with_ext", "js_without_ext", "tsx_component", "astro_component", "index_resolution", "dotdot", "unresolvable_pkg", "absolute_match", "python_relative"])
     def test_basic_resolution(self, specifier, from_file, files, expected):
         result = resolve_specifier(specifier, from_file, files)
