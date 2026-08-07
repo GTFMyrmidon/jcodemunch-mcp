@@ -82,6 +82,40 @@ except (UnicodeEncodeError, LookupError):
     _DOT = " - "
 
 
+def _clear_builder_paths(db_path: Path) -> None:
+    """Blank `source_root` / `git_root` on a freshly extracted pack index.
+
+    Pack indexes are built from clones on the pack CI machine, so their meta
+    carries that machine's `/tmp/jcm-pack-clones/<owner>-<repo>` path. Shipped
+    verbatim, it made the server's startup orphan sweep classify every pack as
+    a vanished local repo and delete it — silently, on every start, while the
+    `.pack-<id>.json` marker survived and kept reporting the pack installed
+    (#419, @MotoMato85).
+
+    An empty `source_root` is the store's existing, honest way of saying "no
+    local clone backs this index", which is the truth for a downloaded pack.
+    It is also what keeps packs out of `watch-all`.
+
+    ⚠ Deliberately best-effort: a pack that installs but is not neutralised is
+    still recoverable (`heal_pack_index_paths()` repairs it at next start, and
+    the sweep skips it regardless). Failing the install here would turn a
+    cosmetic meta problem into an unusable pack.
+    """
+    try:
+        import sqlite3
+
+        conn = sqlite3.connect(str(db_path))
+        try:
+            conn.execute(
+                "UPDATE meta SET value = '' WHERE key IN ('source_root', 'git_root')"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
+
 def _storage_path() -> Path:
     """Return the global index directory."""
     return Path(os.environ.get("CODE_INDEX_PATH", str(Path.home() / ".code-index")))
@@ -338,6 +372,8 @@ def _install_pack(
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 with zf.open(info.filename) as src, open(dest, "wb") as dst:
                     dst.write(src.read())
+                if dest.suffix == ".db":
+                    _clear_builder_paths(dest)
 
             # Write install marker
             if manifest_data is None:

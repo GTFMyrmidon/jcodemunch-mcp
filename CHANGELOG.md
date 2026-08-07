@@ -2,6 +2,59 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.251] - 2026-08-06 - every server start silently deleted your installed starter packs
+
+Reported by [@MotoMato85](https://github.com/jgravelle/jcodemunch-mcp/issues/419)
+with a complete root-cause trace, a controlled sweep run, and a counter-experiment
+that proved the trigger. Every claim reproduced exactly.
+
+**Installed starter packs were deleted on the next server start.** Reproduced end
+to end against a real download: install the free `nodejs` pack, run the startup
+sweep, `cleanup_orphan_indexes() -> 4`, store empty.
+
+### Cause
+
+The pack builder clones into
+`tempfile.gettempdir() / "jcm-pack-clones" / <owner>-<repo>`, and that absolute
+path ships inside every pack `.db`'s `meta.source_root` and `meta.git_root`.
+`install-pack` extracted files verbatim. `cleanup_orphan_indexes()` deletes any
+index whose non-empty `source_root` is not a directory, skipping only **empty**
+ones as remote repos. On every machine except the builder's, each pack was
+therefore an "orphaned local repo".
+
+**Worse than disappearing.** The sweep does not delete the `.pack-<id>.json`
+marker, so `install-pack`'s already-installed check and jMunch Console kept
+reporting the pack as present over an empty store. Reinstalling restarted the
+cycle. The deletions log at INFO, which a stdio MCP server's user never sees.
+
+### Fixed in three places
+
+- `install-pack` blanks `source_root` / `git_root` on each extracted `.db`.
+  Best-effort by design: a pack that installs un-neutralised is still recoverable,
+  and failing the install would turn a meta problem into an unusable pack.
+- `heal_pack_index_paths()` repairs packs **already on disk**, run at startup
+  before the sweep. Fixing the producer does not fix its history, and reinstalling
+  is not a remedy a user knows to apply when everything reports "installed".
+- `cleanup_orphan_indexes()` skips pack-clone paths outright, as a backstop for a
+  store that has not been healed yet. The order of those two is never load-bearing.
+
+Blanking is the correct repair rather than a special case: an empty `source_root`
+is already the store's way of saying "no local clone backs this index", which is
+the truth for a downloaded pack. It also takes packs out of `watch-all`, which had
+been picking up all 15 and logging a failed index per pack (the reporter's
+Isolation 5). Matching is on a path **component**, so a user directory merely named
+`my-jcm-pack-clones-backup` is not exempted from orphan cleanup.
+
+⚠ **This was invisible to us by construction.** An audit of the maintainer's own
+store found 95 indexes and zero deletions pending: those packs predate the current
+builder and carry an empty `source_root`. The person most able to notice was
+structurally immune.
+
+⚠ `cleanup_orphan_indexes()` — a primitive that deletes user data — had **no test
+coverage at all**. `tests/test_pack_index_survives_orphan_sweep.py` (18 tests) now
+covers it, including controls that keep the file from going green by orphan
+cleanup ceasing to work altogether.
+
 ## [1.108.250] - 2026-08-06 - `config --check` reported a default while the indexer used your config
 
 Reported by [@domis86](https://github.com/jgravelle/jcodemunch-mcp/issues/416) as a

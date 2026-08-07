@@ -10048,6 +10048,15 @@ def main(argv: Optional[list[str]] = None):
 
             storage_path = os.environ.get("CODE_INDEX_PATH")
             store = IndexStore(base_path=storage_path)
+            # ⚠ ORDER IS DELIBERATE: repair starter-pack indexes BEFORE the
+            # orphan sweep. Packs ship with the builder's `/tmp/jcm-pack-clones`
+            # path in their meta, which the sweep read as a vanished local repo
+            # and deleted on every start (#419). The sweep also skips them
+            # independently, so a failure here degrades to "not repaired",
+            # never to "deleted".
+            healed = store.heal_pack_index_paths()
+            if healed:
+                logger.info("Repaired %d starter-pack index(es)", healed)
             cleaned = store.cleanup_orphan_indexes()
             store.close()
             if cleaned:

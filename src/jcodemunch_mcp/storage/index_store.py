@@ -414,6 +414,16 @@ class IndexStore:
         """
         return self._sqlite.cleanup_orphan_indexes()
 
+    def heal_pack_index_paths(self) -> int:
+        """Blank the pack builder's clone paths on installed pack indexes.
+
+        Delegates to SQLiteIndexStore.heal_pack_index_paths(). ⚠ This facade is
+        what every caller actually holds — `server.py` and the CLI construct
+        `IndexStore`, not `SQLiteIndexStore` — so a method added only to the
+        implementation is invisible in production (#419).
+        """
+        return self._sqlite.heal_pack_index_paths()
+
     def _safe_repo_component(self, value: str, field_name: str) -> str:
         """Validate and sanitize owner/name components used in on-disk cache paths.
 
