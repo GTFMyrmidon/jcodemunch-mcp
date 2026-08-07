@@ -5122,8 +5122,84 @@ def _record_response_tokens(text: str) -> None:
         logger.debug("Response token recording failed", exc_info=True)
 
 
+def _response_text_bytes(result: "list[TextContent] | CallToolResult") -> int:
+    """UTF-8 byte size of everything a result would put on the wire."""
+    content = getattr(result, "content", result)
+    if not isinstance(content, list):
+        return 0
+    total = 0
+    for item in content:
+        text = getattr(item, "text", None)
+        if isinstance(text, str):
+            total += len(text.encode("utf-8", errors="replace"))
+    return total
+
+
+def _enforce_response_cap(
+    name: str, result: "list[TextContent] | CallToolResult"
+) -> "list[TextContent] | CallToolResult":
+    """Refuse a single response larger than the configured ceiling (#425).
+
+    ⚠ Applied in the wrapper around the dispatcher rather than inside it, so it
+    is immune to early returns BY CONSTRUCTION — the same reason
+    ``evidence/producers.mint()`` lives at a chokepoint. The dispatcher has more
+    than a dozen ``return`` sites across the MUNCH-encoded, JSON, in-band-error
+    and front-door paths; a check placed at any one of them is a check the next
+    new branch will not have.
+
+    ⚠ It REFUSES rather than truncating. A shortened body is indistinguishable
+    from a complete one to the caller, so silently returning less is the one
+    outcome worse than an error here. The error names the actual size, the
+    limit, and the key that moves it.
+
+    An already-failing result is passed through untouched: capping an error
+    would replace a specific diagnosis with a generic one.
+    """
+    try:
+        from .security import get_max_response_bytes
+        limit = get_max_response_bytes()
+        if limit <= 0:
+            return result  # explicitly uncapped
+        size = _response_text_bytes(result)
+        if size <= limit:
+            return result
+        if getattr(result, "isError", False):
+            return result
+        logger.warning(
+            "response_cap: %s produced %d bytes, over the %d-byte limit", name, size, limit
+        )
+        return _error_call_result(json.dumps({
+            "error": (
+                f"Response too large: {name} produced {size:,} bytes, over the "
+                f"{limit:,}-byte single-response limit."
+            ),
+            "tool": name,
+            "response_bytes": size,
+            "response_max_bytes": limit,
+            "hint": (
+                "Narrow the request (line ranges, filters, a smaller token_budget), "
+                "or raise `response_max_bytes` in config.jsonc / "
+                "JCODEMUNCH_RESPONSE_MAX_BYTES. This is a RESPONSE limit and is "
+                "independent of `max_file_size`, which governs indexing."
+            ),
+        }, separators=(",", ":")))
+    except Exception:
+        # A cap that can fail closed would be worse than no cap.
+        logger.debug("Response cap check failed; passing result through", exc_info=True)
+        return result
+
+
 @server.call_tool(validate_input=False)
 async def call_tool(name: str, arguments: dict) -> list[TextContent] | CallToolResult:
+    """Dispatch a tool call, then bound the reply it produced.
+
+    Kept as the registered entry point (and the name the front door re-dispatches
+    through) so every route into the dispatcher passes the cap.
+    """
+    return _enforce_response_cap(name, await _call_tool_impl(name, arguments))
+
+
+async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent] | CallToolResult:
     """Handle tool calls."""
     _signal_handshake()
     storage_path = os.environ.get("CODE_INDEX_PATH")

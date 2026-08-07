@@ -2,6 +2,85 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.257] - 2026-08-07 - A response limit that is a response limit
+
+Closes #425. Nothing bounded the size of a single MCP tool response. What
+bounded it in practice was `max_file_size`, an **indexing** limit, in a
+different subsystem, doing the job by coincidence, with no test pinning the
+relationship.
+
+Two consequences, both now closed:
+
+- The protection could be removed by an unrelated change to how bodies are
+  cached or sliced, and nothing would have failed.
+- Raising `max_file_size` to index a large generated file silently raised the
+  largest reply the server could emit. That key was made settable in v1.108.193
+  for indexing coverage, and its documentation never claimed to govern transport
+  payload size.
+
+### The cap
+
+New `response_max_bytes` config key (`JCODEMUNCH_RESPONSE_MAX_BYTES`), default
+**1 MiB**, resolved by `get_max_response_bytes()` in the same shape as its three
+sibling limits. `0` is an explicit opt-out; anything else invalid falls back to
+the default, because a typo must never mean "no ceiling".
+
+Enforced in a thin wrapper **around** the dispatcher, not inside it. The
+dispatcher has more than a dozen `return` sites across the MUNCH-encoded, JSON,
+in-band-error and front-door paths, so a check at any one of them is a check the
+next new branch will not have. `call_tool` is now that wrapper and
+`_call_tool_impl` is the dispatcher; the front door's `order`/`route`
+re-dispatch goes through the wrapper too.
+
+Over the cap the call returns a structured error naming the actual size, the
+limit, and the key that moves it. **It refuses rather than truncating**: a
+shortened body is indistinguishable from a complete one to the caller, which
+makes silent truncation the one outcome worse than an error here. An
+already-failing result passes through untouched, since capping an error would
+replace a specific diagnosis with a generic one, and a cap that raises is
+swallowed, because a cap that can fail closed is worse than no cap.
+
+### The reported "not verified" note was a harness artifact
+
+#425 recorded, as an open question, that neither `JCODEMUNCH_MAX_FILE_SIZE`
+nor an isolated `config.jsonc` moved `get_max_file_size()`. Reproduced, then
+traced: `config.get()` reads `_GLOBAL_CONFIG`, which is empty until
+`load_config()` runs, so **every** env-mapped key resolves to its default in a
+process that has not loaded config. It is not specific to `max_file_size`;
+`max_folder_files`, `max_index_files` and `staleness_days` behave identically.
+Calling `load_config()` first makes the env var take effect.
+
+The env var therefore works for its real consumers: the `index` and `index-file`
+subcommands are dispatched after the shared `load_config()`, as is `serve`. **No
+production path resolves that limit unloaded**, so this is not a live defect,
+and the report is more severe than the code. Recorded here rather than fixed
+because the underlying sharp edge — `config.get()` silently answering with a
+default instead of signalling "not loaded" — has already produced three
+one-subcommand-at-a-time patches in `server.py` and deserves its own issue
+rather than a fourth.
+
+### The rename made an existing parity file pass vacuously
+
+`test_dispatch_schema_parity.py` walks the dispatcher's AST for
+`name == "<tool>"` branches and asserts each argument key it reads is a declared
+`inputSchema` property. It parsed `call_tool` by name, so after the rename it
+parsed the thin wrapper, found **zero** branches, and its parity assertion
+passed over an empty set.
+
+Nothing about that assertion failed. What failed was
+`test_dispatch_chain_is_parseable_and_nonempty`, a guard-the-guard added for
+exactly this, asserting the walk finds more than 50 branches. It earned its
+keep: without it, a whole parity file would have gone silently inert on a
+rename, and the suite would have been greener than the code. The walk now
+targets `_call_tool_impl`.
+
+### Tests
+
+New `tests/test_response_cap.py` (29). Includes an end-to-end refusal through
+`call_tool` plus a control proving the refusal is the cap and not a broken tool,
+a byte-vs-character measurement case, and two decoupling tests asserting that
+moving either limit does not move the other.
+
 ## [1.108.256] - 2026-08-07 - The registry entry advertised a claim the README had already retired
 
 `server.json` is the payload the MCP registry publishes, and it is what

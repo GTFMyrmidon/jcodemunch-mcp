@@ -380,6 +380,52 @@ MAX_FOLDER_FILES_ENV_VAR = "JCODEMUNCH_MAX_FOLDER_FILES"
 # move both file-count limits three lines up.
 MAX_FILE_SIZE_ENV_VAR = "JCODEMUNCH_MAX_FILE_SIZE"
 
+# A RESPONSE limit, deliberately not an indexing one (#425). Until this existed,
+# the largest single MCP reply the server could emit was bounded by
+# `max_file_size` -- an indexing cap, living in another subsystem, doing the job
+# by coincidence with no test pinning the relationship. Two things followed:
+# the protection could be removed by an unrelated change to how bodies are
+# cached or sliced, and raising the indexing cap to cover a large generated file
+# silently raised the maximum reply size, which the indexing key's documentation
+# never claimed to do.
+#
+# 1 MiB is roughly double the largest reply measured crossing stdio intact
+# (516,376 bytes from `get_file_content` on a file at the 512KB indexing cap).
+# It is a stated bound, not a discovered one.
+DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024  # 1 MiB
+MAX_RESPONSE_BYTES_ENV_VAR = "JCODEMUNCH_RESPONSE_MAX_BYTES"
+
+
+def get_max_response_bytes(
+    max_bytes: "Optional[int]" = None,
+    repo: "Optional[str]" = None,
+) -> int:
+    """Resolve the single-response byte ceiling from arg or config.
+
+    Same shape as ``get_max_file_size`` and its two siblings, because the point
+    of #425 is that "how large can one reply be" should be one auditable number
+    with a documented default, not an emergent consequence of an unrelated cap.
+
+    Returns:
+        Positive byte limit, falling back to the default when config is unset or
+        invalid. A non-positive configured value means "no ceiling" and is
+        returned as 0, which the caller treats as disabled -- an explicit opt-out
+        is different from a typo, and a typo must not silently uncap the server.
+    """
+    if max_bytes is not None:
+        if max_bytes < 0:
+            raise ValueError("max_bytes must be non-negative")
+        return max_bytes
+
+    value = _config.get("response_max_bytes", DEFAULT_MAX_RESPONSE_BYTES, repo=repo)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return DEFAULT_MAX_RESPONSE_BYTES
+    if value == 0:
+        return 0  # explicit opt-out
+    if value < 0:
+        return DEFAULT_MAX_RESPONSE_BYTES
+    return value
+
 
 def get_max_file_size(
     max_size: Optional[int] = None,

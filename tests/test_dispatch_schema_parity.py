@@ -7,7 +7,7 @@ cannot know to pass it) slips through silently. Adding a param touches ~7
 hand-synced spots; nothing tested that the schema and the dispatch agree at the
 argument level.
 
-This parses call_tool's source, collects the literal argument keys each
+This parses the dispatcher's source (`_call_tool_impl`), collects the literal argument keys each
 `if/elif name == "<tool>"` branch reads via arguments["k"] / arguments.get("k"),
 and asserts each is a declared inputSchema property of that tool.
 """
@@ -80,7 +80,12 @@ def _arg_keys_in(nodes) -> set[str]:
 
 def _collect_dispatch_arg_keys() -> dict[str, set[str]]:
     """tool name -> the literal `arguments` keys its dispatch branch(es) read."""
-    src = textwrap.dedent(inspect.getsource(server_mod.call_tool))
+    # v1.108.257 (#425): `call_tool` is now a thin wrapper that applies the
+    # response cap; the dispatch chain lives in `_call_tool_impl`. Walking the
+    # wrapper finds zero branches and makes this whole file pass VACUOUSLY --
+    # which is exactly what `test_dispatch_chain_is_parseable_and_nonempty`
+    # caught, while the parity assertions below sailed through green.
+    src = textwrap.dedent(inspect.getsource(server_mod._call_tool_impl))
     func = ast.parse(src).body[0]
     assert isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef))
 

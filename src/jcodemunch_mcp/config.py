@@ -29,6 +29,7 @@ ENV_VAR_MAPPING = {
     "JCODEMUNCH_TRUSTED_FOLDERS": "trusted_folders",
     "JCODEMUNCH_TRUSTED_FOLDERS_WHITELIST_MODE": "trusted_folders_whitelist_mode",
     "JCODEMUNCH_MAX_FILE_SIZE": "max_file_size",
+    "JCODEMUNCH_RESPONSE_MAX_BYTES": "response_max_bytes",
     "JCODEMUNCH_MAX_FOLDER_FILES": "max_folder_files",
     "JCODEMUNCH_MAX_INDEX_FILES": "max_index_files",
     "JCODEMUNCH_STALENESS_DAYS": "staleness_days",
@@ -333,6 +334,7 @@ DEFAULTS = {
     "trusted_folders": [],
     "trusted_folders_whitelist_mode": True,
     "max_file_size": 512000,
+    "response_max_bytes": 1048576,
     "max_folder_files": 2000,
     "max_index_files": 10000,
     "staleness_days": 7,
@@ -490,6 +492,7 @@ CONFIG_TYPES = {
     "trusted_folders": list,
     "trusted_folders_whitelist_mode": bool,
     "max_file_size": int,
+    "response_max_bytes": int,
     "max_folder_files": int,
     "max_index_files": int,
     "staleness_days": int,
@@ -1986,6 +1989,16 @@ def generate_template() -> str:
   //   prove absence -- the file is real, current and wanted, it just never
   //   entered the index. The default is deliberately conservative; raise it if
   //   your repo has large legitimate source files, and re-index.
+
+  // "response_max_bytes": 1048576,
+  //   Ceiling on a SINGLE MCP tool response, in bytes, enforced at the
+  //   call_tool chokepoint. Over the cap the call returns a structured error
+  //   naming both the size and the limit -- never a shortened body presented as
+  //   complete, because a caller cannot tell the difference. This is a
+  //   RESPONSE limit and is deliberately separate from `max_file_size`, which
+  //   is an INDEXING limit; before this key existed the indexing cap bounded
+  //   reply size by coincidence, from another subsystem, with no test pinning
+  //   the relationship. Raise it if you genuinely need larger single replies.
 
   // "max_folder_files": 2000,
   //   Maximum number of files to index when indexing a local folder.
