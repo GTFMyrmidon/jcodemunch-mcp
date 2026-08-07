@@ -8,6 +8,11 @@ PostToolUse — auto-reindex after Edit/Write to keep the index fresh.
 
 Both read JSON from stdin and write JSON to stdout per the Claude Code
 hooks specification.
+
+Output channel discipline: anything meant for the *model* goes out as
+``hookSpecificOutput.additionalContext`` (see ``_emit_additional_context``).
+Neither stderr-on-exit-0 nor top-level ``systemMessage`` reaches the model —
+both surface to the user — so a nudge written to either is silently inert.
 """
 
 import json
@@ -83,8 +88,8 @@ _MIN_SIZE_BYTES = int(os.environ.get("JCODEMUNCH_HOOK_MIN_SIZE", "4096"))
 def _enforce_mode() -> str:
     """jCodemunch enforcement tier for native file tools (``JCODEMUNCH_ENFORCE``).
 
-    * ``"advisory"`` (default): warn on stderr but **allow** — the v1.108.47
-      behavior. A hard deny here would break Read-before-Edit.
+    * ``"advisory"`` (default): nudge via ``additionalContext`` but **allow** —
+      the v1.108.47 behavior. A hard deny here would break Read-before-Edit.
     * ``"strict"``: **deny** a native Read/Grep that an indexed-repo jcm route
       can already serve. Targeted reads (``offset``/``limit``), tiny files, and
       paths outside every indexed repo still pass, so the escape hatch is always
@@ -106,14 +111,43 @@ def _enforce_mode() -> str:
 def _emit_pretooluse_deny(reason: str) -> int:
     """Emit a Claude Code PreToolUse ``deny`` decision (stdout JSON) and exit 0.
 
-    The deny lives in the JSON decision channel; stderr stays free for advisory
-    hints, and exit code stays 0 so the harness reads the decision, not a crash.
+    The deny lives in the JSON decision channel, and exit code stays 0 so the
+    harness reads the decision, not a crash.
     """
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny",
             "permissionDecisionReason": reason,
+        }
+    }))
+    return 0
+
+
+def _emit_additional_context(event_name: str, text: str) -> int:
+    """Deliver ``text`` into the *model's* context for ``event_name``, and exit 0.
+
+    ``hookSpecificOutput.additionalContext`` is the only channel that reaches the
+    model from a hook that exits 0. Claude Code wraps the string in a system
+    reminder and inserts it where the hook fired. Two channels that look
+    equivalent are not:
+
+    * **stderr on exit 0** — routed to the transcript/debug log. On most events
+      it is shown to the user, never to the model. Only exit code 2 feeds stderr
+      back to the model, and on PreToolUse that also blocks the call.
+    * **top-level ``systemMessage``** — a warning shown to *the user*, not the
+      model ("unlike on every other event, where you see the systemMessage and
+      Claude doesn't"). Fine for user-facing notices, useless for steering.
+
+    Supported on SessionStart, Setup, SubagentStart, UserPromptSubmit,
+    UserPromptExpansion, PreToolUse, PostToolUse, PostToolUseFailure,
+    PostToolBatch, Stop, and SubagentStop. NOT on PreCompact — see
+    ``run_precompact``. Strings are capped at 10,000 characters by the harness.
+    """
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": event_name,
+            "additionalContext": text,
         }
     }))
     return 0
@@ -130,7 +164,7 @@ def run_pretooluse() -> int:
         + ``get_symbol_source`` instead.
 
     Strength is set by ``_enforce_mode()`` (``JCODEMUNCH_ENFORCE``): the default
-    ``advisory`` tier warns on stderr but allows (so Read-before-Edit and the
+    ``advisory`` tier nudges the model but allows (so Read-before-Edit and the
     Grep fallback keep working); ``strict`` denies the same calls but only when
     an indexed-repo jcm route can serve them — targeted reads (``offset`` /
     ``limit``), tiny files, non-code files, and paths outside every indexed repo
@@ -206,14 +240,12 @@ def run_pretooluse() -> int:
 
     # Advisory: full-file exploratory read on a large code file — warn but allow.
     # Hard deny breaks the Edit workflow (Claude Code requires Read before Edit).
-    # Stderr text is surfaced to the agent as guidance.
-    print(
+    return _emit_additional_context(
+        "PreToolUse",
         f"jCodemunch hint: this is a {size:,}-byte code file. "
         "Prefer get_file_outline + get_symbol_source for exploration. "
         "Use Read only when you need exact line numbers for Edit.",
-        file=sys.stderr,
     )
-    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -275,7 +307,10 @@ def _path_overlaps(root: str, source_roots: list[str]) -> bool:
 def _nudge_grep(tool_input: dict, cwd: str) -> int:
     """Grep PreToolUse branch: when the search targets an indexed repo, steer
     the agent to the credited jcm retrieval routes first. Allows the Grep
-    regardless (exit 0) — this is a nudge, not a block."""
+    regardless (exit 0, no permissionDecision) — this is a nudge, not a block.
+
+    The nudge rides ``additionalContext`` because that is the only channel a
+    hook exiting 0 has to the model; see ``_emit_additional_context``."""
     if not _grep_nudge_enabled():
         return 0
     roots = _indexed_source_roots()
@@ -286,16 +321,15 @@ def _nudge_grep(tool_input: dict, cwd: str) -> int:
 
     pattern = (tool_input.get("pattern") or "").strip()
     for_pat = f" for `{pattern}`" if pattern else ""
-    print(
+    return _emit_additional_context(
+        "PreToolUse",
         f"jCodemunch: this Grep{for_pat} targets an indexed repo. Exhaust the jcm "
         "routes first, since they're tighter and credited (raw Grep is neither):\n"
         "  - search_text     : same regex/substring scan, ranked + winnowed\n"
         "  - search_symbols  : when hunting a definition (function/class/const/type)\n"
         "  - find_references / find_importers : 'where is X used / who imports this'\n"
         "Fall back to Grep only once those come up empty.",
-        file=sys.stderr,
     )
-    return 0
 
 
 def _strict_grep(tool_input: dict, cwd: str) -> int:
@@ -489,9 +523,18 @@ def run_precompact() -> int:
         except Exception:
             pass  # Landmark enrichment must not block compaction
 
-    # Return snapshot as hook output for context injection.
-    # PreCompact has no hookSpecificOutput variant in Claude Code's schema,
-    # so we use the top-level systemMessage field instead.
+    # PreCompact genuinely has no additionalContext channel — its only JSON
+    # control is the top-level decision/block pair, so systemMessage is the sole
+    # non-blocking output. Note what that means: this snapshot reaches the *user*,
+    # not the post-compaction model, so it does not survive compaction as context
+    # the way the docstring's "context injection" implies.
+    #
+    # The event that CAN inject post-compaction context is SessionStart with
+    # matcher "compact", which fires after compaction completes and does support
+    # hookSpecificOutput.additionalContext. Routing the snapshot there is the real
+    # fix for context survival, but it is a behavioral change (a new hook
+    # registration in `init`) rather than a channel correction, so it stays out of
+    # this bug-fix pass. Tracked separately.
     result = {
         "systemMessage": snapshot_text,
     }
@@ -793,6 +836,14 @@ def run_taskcomplete() -> int:
         if "unreferenced_symbols" in diag:
             parts.append(f"**Unreferenced:** {', '.join(f'`{s}`' for s in diag['unreferenced_symbols'][:5])}")
 
+    # TaskCompleted is the one diagnostic event with no additionalContext channel:
+    # per the hooks reference its only model-facing route is exit code 2, which
+    # feeds stderr back as feedback *and* refuses to mark the task complete.
+    # These findings are advisory (a "possibly orphaned" symbol is often a fresh
+    # helper with its caller still unwritten), so blocking completion on them
+    # would be wrong. Keep systemMessage — a user-facing report is the honest
+    # ceiling here, and the user can act on it — rather than pretend the model
+    # will read it. See _emit_additional_context for the channel matrix.
     result = {"systemMessage": "\n".join(parts)}
     json.dump(result, sys.stdout)
     return 0
@@ -899,6 +950,8 @@ def run_subagentstart() -> int:
     )
     parts.append("\nUse `plan_turn` to get recommended approach for your task.")
 
-    result = {"systemMessage": "\n".join(parts)}
-    json.dump(result, sys.stdout)
-    return 0
+    # additionalContext, not systemMessage: this briefing exists to orient the
+    # subagent, and systemMessage is shown to the user instead of the model.
+    # On SubagentStart the text lands at the start of the subagent's own
+    # conversation, before its first prompt.
+    return _emit_additional_context("SubagentStart", "\n".join(parts))
