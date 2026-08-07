@@ -543,6 +543,59 @@ Use this when:
 
 For GitHub repos, newer builds also store the Git tree SHA so unchanged incremental re-index runs can return immediately instead of re-downloading the universe just to discover nothing changed. ([GitHub][2])
 
+## When a re-index is a maintenance event (fleets)
+
+Everything above assumes re-indexing is cheap enough to run on request. On one
+machine it is. On a fleet sharing a store it is a scheduled maintenance event,
+which makes "re-index and try again" unactionable for exactly the people with the
+most code.
+
+`refresh` does the same work in bounded, resumable slices:
+
+```bash
+jcodemunch-mcp refresh . --max-seconds 300     # one cron slot
+jcodemunch-mcp refresh . --status              # how far along, no work done
+```
+
+Each run does as much as its budget allows, records where it stopped, and
+returns. Running it again continues from there. The work converges whether it
+gets one long window or twenty short ones, so it fits a maintenance schedule
+instead of demanding one.
+
+| Flag | Effect |
+|------|--------|
+| `--max-seconds` | Wall-clock budget for this run (default 300) |
+| `--max-files` | File budget for this run (default 250) |
+| `--pause-ms` | Sleep between batches. **This is the duty-cycle knob** |
+| `--batch-size` | Files per underlying index call (default 25) |
+| `--ai-summaries` | Generate AI summaries. **Off by default** |
+| `--status` / `--reset` | Report progress / discard and re-enumerate |
+
+### What it costs
+
+Measured on this repository (795 files, 15.4k symbols, Windows, cold): **60 files
+in 3.8 s**, about **63 ms per file**, so a full campaign is roughly **50 s** of
+CPU spread over as many slices as you choose. Scale from your own file count; a
+run reports its own rate and an estimate of the work remaining, which is a better
+number than this one because it is measured on your hardware and your code.
+
+Three things worth knowing before scheduling it:
+
+* **The budget bounds when a run ENDS, not what it costs while it runs.** A slice
+  running flat out still saturates a core. `--pause-ms` is what lowers the duty
+  cycle. Python cannot preempt a running parse (tree-sitter is C), so the same
+  limit applies here as to `JCODEMUNCH_PARSE_BUDGET_SECONDS`.
+* **AI summaries are off by default here**, unlike `index_folder`. A scheduled
+  background job must not bill a paid summarizer API without being asked.
+* **A `parser_generation` upgrade is only claimed when the whole corpus has been
+  re-parsed**, verified by re-running discovery at the end. If the repo grew
+  during the campaign, the new files are appended and the stamp is deferred
+  rather than claimed early. A partially re-parsed index keeps reporting the
+  older generation, which is what makes the claim worth anything.
+
+`refresh` re-parses an existing index; it does not build the first one. Run
+`jcodemunch-mcp index <path>` for that.
+
 ---
 
 # 5. Core mental model

@@ -2,6 +2,92 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.259] - 2026-08-07 - A re-index you can schedule
+
+Closes #395, from a constraint reported by @dkiaulakis.
+
+We ask users to re-index constantly: in issue replies, in staleness warnings, in
+the `stale_index` verdict channel, and on every `INDEX_VERSION` or
+`PARSER_GENERATION` bump. All of it assumes re-indexing is cheap enough to run on
+request. On one machine it is. On a fleet sharing a store it is a scheduled
+maintenance event, so our standard advice was unactionable for exactly the users
+with the most code.
+
+New `refresh` subcommand. Same work, bounded slices that resume:
+
+```bash
+jcodemunch-mcp refresh . --max-seconds 300     # one cron slot
+jcodemunch-mcp refresh . --status              # progress, no work done
+```
+
+Each run does what its budget allows, persists where it stopped, and returns.
+Running it again continues. The work converges whether it gets one long window or
+twenty short ones.
+
+### Why `paths=[...]` was not already enough
+
+The issue noted that `index_folder(paths=[...])` scopes to an explicit list and
+only lacked a caller that knew the list. That turned out to be half the story.
+`detect_changes_with_mtimes` compares content hashes, so a subset refresh over
+unchanged files correctly reports "No changes detected" and does nothing. That is
+right for an edit and useless for a `PARSER_GENERATION` upgrade, where the bytes
+are identical and the stored **symbols** are what is wrong, which is precisely the
+case a fleet cannot afford to fix today.
+
+So `index_folder` gains `force_reparse`, valid only alongside `paths`. Forcing
+without an explicit list would re-parse the whole corpus in one call, which is
+the unbounded event this issue exists to avoid.
+
+### The defect this nearly shipped with
+
+`index_folder` escalates a stale `parser_generation` to a **full** re-parse. With
+that intact, every "bounded" slice quietly ran the entire maintenance event:
+measured on an 8-file fixture as four full re-parses where four bounded slices
+were requested. A campaign of N slices would have cost N full re-indexes, which
+is strictly worse than the single event it replaces.
+
+A forced subset refresh is now exempt from that escalation, and nothing else is,
+because no other caller has a mechanism to finish the job. Six tests fail if the
+exemption is removed.
+
+### Coverage is verified, not assumed
+
+`storage/index_store.py` already stated the rule: an incremental save leaves the
+generation stamp alone, because a partially re-parsed index must keep claiming
+the older generation. A campaign that stamps early is that bug with a scheduler
+in front of it.
+
+So a campaign stamps only after re-parsing the whole corpus, and proves it by
+re-running discovery at the end:
+
+- Files added while the campaign ran were never parsed by it. They are appended
+  and the stamp is deferred, reported as `corpus_drifted`. The campaign still
+  converges.
+- Any batch error blocks the stamp.
+- `stamp_parser_generation` refuses to move the stamp backwards.
+
+### Operational notes
+
+- `--pause-ms` is the duty-cycle knob. The budgets bound when a run **ends**, not
+  what it costs while it runs; Python cannot preempt a running parse.
+- AI summaries are **off** by default here, unlike `index_folder`. A scheduled
+  background job must not bill a paid summarizer API without being asked.
+- Campaign state is written atomically, so a killed run never leaves a
+  half-written cursor, and a corrupt state file starts a fresh campaign rather
+  than stranding the operator forever.
+- `refresh` re-parses an existing index; it does not build the first one, and
+  says so with the command that does.
+
+### Cost
+
+Measured on this repository (795 files): 60 files in 3.8 s, about 63 ms per file,
+so a full campaign is roughly 50 s spread over as many slices as you choose. Each
+run reports its own rate and the estimated work remaining, which is the number
+that matters because it is measured on the operator's hardware. Documented in
+USER_GUIDE.md under "When a re-index is a maintenance event (fleets)".
+
+Tests: `tests/test_refresh_campaign.py` (32).
+
 ## [1.108.258] - 2026-08-07 - A config read that reads the config
 
 Closes #426. `config.get()` returned the hardcoded default for every env-mapped

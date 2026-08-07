@@ -1298,6 +1298,7 @@ def index_folder(
     paths: Optional[list[str]] = None,
     progress_cb: "Optional[Callable[[int, int, str], None]]" = None,
     identity_mode: str = "config",
+    force_reparse: bool = False,
 ) -> dict:
     """Index a local folder containing source code.
 
@@ -1317,6 +1318,17 @@ def index_folder(
             and an existing index, skips full directory discovery (~3s → ~50ms).
         identity_mode: "config" (default), "local", or "git". Local mode keeps
             v1.90 path-hash identity; git mode opts in to git-root identity.
+        force_reparse: Re-parse the files listed in `paths` even when their
+            content is unchanged (v1.108.259, #395). Requires `paths` and
+            `incremental`; ignored otherwise.
+
+            ⚠ Without this, a subset refresh over unchanged files is a no-op by
+            design: `detect_changes_with_mtimes` compares hashes and correctly
+            reports "No changes detected". That is right for an edit and wrong
+            for a PARSER_GENERATION upgrade, where the file content is identical
+            and the stored SYMBOLS are the thing that is wrong. It is the whole
+            reason `index_folder(paths=[...])` could not be used to slice up a
+            generation upgrade before this existed.
 
     Returns:
         Dict with indexing results.
@@ -2171,10 +2183,22 @@ def index_folder(
                 owner, repo_name, rebuild_reason,
             )
             warnings.append(_rebuild_message)
-        elif _needs_parser_upgrade(existing_index):
+        elif _needs_parser_upgrade(existing_index) and not (force_reparse and paths is not None):
             # One-off full re-parse after an extraction-semantics bump (#414).
             # Reported through the same fields a caller already reads for an
             # unreadable index, so a substituted rebuild always has a reason.
+            #
+            # ⚠⚠ Exempted for a forced subset refresh (v1.108.259, #395). A
+            # caller passing `paths=` AND `force_reparse=True` is running the
+            # upgrade in bounded SLICES on purpose. Escalating to a full
+            # reindex here would run the entire unbounded maintenance event
+            # inside every slice — measured on an 8-file fixture as four full
+            # re-parses where four bounded ones were requested, which on the
+            # fleet this was written for is worse than doing nothing.
+            #
+            # The campaign owns coverage and the generation stamp instead; see
+            # tools/refresh.py. Nothing else may skip this escalation, because
+            # any other caller has no mechanism to finish the job.
             incremental = False
             rebuild_reason = "parser_generation_upgrade"
             logger.warning(
@@ -2302,6 +2326,31 @@ def index_folder(
                         if any(fp == req or fp.startswith(req + "/") for req in requested_rels)
                     }
                 deleted = sorted(covered - set(file_mtimes))
+
+                # v1.108.259 (#395): re-parse the listed files even when their
+                # content is unchanged. `detect_changes_with_mtimes` compares
+                # hashes, so a subset refresh over untouched files is otherwise
+                # a correct no-op — right for an edit, wrong for a parser
+                # generation upgrade, where the bytes are identical and the
+                # stored symbols are what is wrong.
+                #
+                # ⚠ Scoped to `requested_rels` deliberately. Forcing without an
+                # explicit list would mean re-parsing the whole corpus in one
+                # call, i.e. exactly the unbounded maintenance event #395 exists
+                # to avoid.
+                if force_reparse:
+                    _already = set(changed) | set(new) | set(deleted)
+                    _known = set((existing_index.file_hashes or {}).keys())
+                    _forced = [
+                        fp for fp in sorted(file_mtimes)
+                        if fp not in _already and fp in _known
+                    ]
+                    if _forced:
+                        changed = sorted(set(changed) | set(_forced))
+                        logger.info(
+                            "index_folder: force_reparse promoted %d unchanged file(s)",
+                            len(_forced),
+                        )
 
             if not changed and not new and not deleted:
                 _refresh_git_head_if_advanced(

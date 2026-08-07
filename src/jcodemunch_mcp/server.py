@@ -8345,6 +8345,73 @@ def _can_import(module: str) -> bool:
     return importlib.util.find_spec(module) is not None
 
 
+def _format_refresh(out: dict) -> str:
+    """Human-readable rendering of a `refresh` run or status (#395).
+
+    States what remains and what it will cost, because the operator's actual
+    question is "can I fit the rest of this in tonight's window", and a percent
+    alone does not answer it.
+    """
+    if not out.get("success"):
+        return f"error: {out.get('error')}"
+
+    lines = [f"repo: {out.get('repo')}"]
+
+    if "campaign" in out:  # --status
+        gen, target = out.get("parser_generation"), out.get("parser_generation_target")
+        if gen is None:
+            return "\n".join(lines + ["no index for this path; run `jcodemunch-mcp index` first"])
+        lines.append(f"parser generation: {gen} (current: {target})")
+        if out.get("needs_refresh"):
+            lines.append(f"NEEDS REFRESH: {out.get('needs_refresh_reason')}")
+        c = out.get("campaign")
+        if not c:
+            lines.append("no campaign in progress")
+            return "\n".join(lines)
+        lines.append(
+            f"campaign ({c.get('reason')}): {c.get('completed_files')}/{c.get('total_files')} "
+            f"files, {c.get('percent')}% done, {c.get('remaining_files')} remaining"
+        )
+        lines.append(f"slices run: {c.get('slices_run')}, last run: {c.get('last_run_at')}")
+        if c.get("complete"):
+            lines.append("complete" + (", generation stamped" if c.get("stamped") else ""))
+        if c.get("errors"):
+            lines.append(f"recent errors: {len(c['errors'])} (see --json)")
+        return "\n".join(lines)
+
+    done, total = out.get("completed_files", 0), out.get("total_files", 0)
+    lines.append(
+        f"this run: {out.get('files_this_run')} files in {out.get('duration_seconds')}s "
+        f"({out.get('stopped_because')})"
+    )
+    lines.append(f"progress: {done}/{total} files, {out.get('remaining_files')} remaining")
+
+    per_file = (out.get("duration_seconds") or 0) / max(out.get("files_this_run") or 0, 1)
+    remaining = out.get("remaining_files") or 0
+    if remaining and per_file > 0:
+        lines.append(
+            f"estimated remaining work: ~{round(per_file * remaining / 60.0, 1)} min "
+            f"at this run's rate"
+        )
+    if out.get("corpus_drifted"):
+        lines.append(
+            f"corpus grew by {out['corpus_drifted']} file(s) during the campaign; "
+            f"they were appended and the generation stamp is deferred"
+        )
+    if out.get("complete"):
+        lines.append(
+            "campaign complete"
+            + (f", parser generation stamped to {out.get('parser_generation')}"
+               if out.get("stamped")
+               else f", NOT stamped ({out.get('stamp_skipped_reason')})")
+        )
+    else:
+        lines.append("run again to continue")
+    if out.get("errors"):
+        lines.append(f"errors: {len(out['errors'])} (see --json)")
+    return "\n".join(lines)
+
+
 def main(argv: Optional[list[str]] = None):
     """Main entry point."""
     from .security import verify_package_integrity
@@ -9046,6 +9113,37 @@ def main(argv: Optional[list[str]] = None):
     file_risk_parser.add_argument("--storage-path", default=None,
         help="Override index storage location.")
 
+    # --- refresh (#395) ---
+    refresh_parser = subparsers.add_parser(
+        "refresh",
+        help="Re-parse an indexed repo in bounded, resumable slices. For fleets "
+             "where a full re-index is a scheduled maintenance event.",
+    )
+    refresh_parser.add_argument("path", nargs="?", default=".",
+        help="Path to the indexed folder. Defaults to '.' (cwd).")
+    refresh_parser.add_argument("--max-seconds", type=float, default=None,
+        help="Wall-clock budget for THIS run (default 300). The run stops at the "
+             "budget and persists its place; run again to continue.")
+    refresh_parser.add_argument("--max-files", type=int, default=None,
+        help="File budget for THIS run (default 250).")
+    refresh_parser.add_argument("--pause-ms", type=int, default=0,
+        help="Sleep between batches, in ms. This is the knob that lowers the DUTY "
+             "CYCLE; the budgets bound when a run ends, not what it costs while "
+             "it runs.")
+    refresh_parser.add_argument("--batch-size", type=int, default=25,
+        help="Files per index_folder call (default 25).")
+    refresh_parser.add_argument("--ai-summaries", action="store_true",
+        help="Generate AI summaries during refresh. OFF by default: a scheduled "
+             "background job must not bill a paid summarizer without being asked.")
+    refresh_parser.add_argument("--status", action="store_true",
+        help="Report campaign progress and exit without doing any work.")
+    refresh_parser.add_argument("--reset", action="store_true",
+        help="Discard any in-progress campaign and re-enumerate the corpus.")
+    refresh_parser.add_argument("--json", action="store_true",
+        help="Emit JSON instead of human-readable text.")
+    refresh_parser.add_argument("--storage-path", default=None,
+        help="Override index storage location.")
+
     # --- health ---
     health_parser = subparsers.add_parser(
         "health",
@@ -9357,7 +9455,7 @@ def main(argv: Optional[list[str]] = None):
     if any(arg in top_level_flags for arg in raw_argv):
         args = parser.parse_args(raw_argv)
     else:
-        known_commands = {"serve", "watch", "hook-event", "hook-pretooluse", "hook-posttooluse", "hook-copilot-posttooluse", "hook-precompact", "hook-taskcomplete", "hook-subagent-start", "hook-sessionstart", "watch-claude", "watch-all", "watch-install", "watch-uninstall", "watch-status", "config", "list-repos", "delete-index", "org-report", "org-rollup", "license", "index", "index-file", "import-trace", "import-scip", "claude-md", "init", "install", "install-status", "uninstall", "install-pack", "download-model", "upgrade", "whatsnew", "receipt", "digest", "reflect", "delivery", "parity", "health", "file-risk", "observatory", "keyring", "surface"}
+        known_commands = {"serve", "watch", "hook-event", "hook-pretooluse", "hook-posttooluse", "hook-copilot-posttooluse", "hook-precompact", "hook-taskcomplete", "hook-subagent-start", "hook-sessionstart", "watch-claude", "watch-all", "watch-install", "watch-uninstall", "watch-status", "config", "list-repos", "delete-index", "org-report", "org-rollup", "license", "index", "index-file", "import-trace", "import-scip", "claude-md", "init", "install", "install-status", "uninstall", "install-pack", "download-model", "upgrade", "whatsnew", "receipt", "digest", "reflect", "delivery", "parity", "refresh", "health", "file-risk", "observatory", "keyring", "surface"}
         # MCP-tool-name typos: route to the right CLI verb with a friendly hint.
         # `index_repo` and `index_folder` are MCP tools, not CLI subcommands.
         _CLI_ALIASES = {
@@ -9799,6 +9897,31 @@ def main(argv: Optional[list[str]] = None):
         if args.storage_path:
             argv += ["--storage-path", args.storage_path]
         sys.exit(file_risk_main(argv))
+
+    if args.command == "refresh":
+        from .tools.refresh import run as _refresh_run, status as _refresh_status
+        # Dispatched above the shared load_config() in main(), so load config
+        # here. See #426: get() now loads lazily, but an explicit call keeps
+        # this handler's behaviour independent of that.
+        config_module.load_config()
+        if args.status:
+            _out = _refresh_status(args.path, storage_path=args.storage_path)
+        else:
+            _out = _refresh_run(
+                args.path,
+                max_files=args.max_files,
+                max_seconds=args.max_seconds,
+                pause_ms=args.pause_ms,
+                batch_size=args.batch_size,
+                reset=args.reset,
+                storage_path=args.storage_path,
+                use_ai_summaries=args.ai_summaries,
+            )
+        if args.json:
+            print(_json.dumps(_out, indent=2))
+        else:
+            print(_format_refresh(_out))
+        sys.exit(0 if _out.get("success") else 1)
 
     if args.command == "health":
         from .cli.health import main as health_main

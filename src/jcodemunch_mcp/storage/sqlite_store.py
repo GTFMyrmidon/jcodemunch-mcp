@@ -2361,6 +2361,55 @@ class SQLiteIndexStore:
         except Exception:
             logger.debug("Failed to set coverage for %s/%s", owner, name, exc_info=True)
 
+    def stamp_parser_generation(self, owner: str, name: str, generation: int) -> bool:
+        """Record that this index's symbols were produced by `generation`.
+
+        v1.108.259 (#395). Written ONLY by a bounded refresh campaign that has
+        re-parsed every file in the corpus, which is the same thing a full save
+        earns the stamp for, arrived at in slices instead of in one event.
+
+        ⚠⚠ The stamp is a CLAIM about every symbol in the index, so the caller
+        must have verified full coverage before calling. `index_store` states the
+        rule this upholds: an incremental save deliberately leaves the stamp
+        alone, because a partially re-parsed index must keep claiming the older
+        generation. A campaign that stamps early is that bug with a scheduler in
+        front of it.
+
+        Refuses to move the stamp BACKWARDS. A lower generation is either a
+        caller bug or a downgrade, and neither is a reason to un-claim work that
+        was really done.
+
+        Returns True when the stamp was written.
+        """
+        safe_owner = self._safe_repo_component(owner, "owner")
+        safe_name = self._safe_repo_component(name, "name")
+        db_path = self._db_path(safe_owner, safe_name)
+        if not db_path.exists():
+            return False
+        try:
+            conn = self._connect(db_path)
+            try:
+                current = int(self._read_meta(conn).get("parser_generation", "0") or 0)
+                if generation <= current:
+                    return False
+                conn.execute(
+                    "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+                    ("parser_generation", str(int(generation))),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            with _cache_lock:
+                for key, entry in _index_cache.items():
+                    if key[0] == owner and key[1] == name:
+                        entry.code_index.parser_generation = int(generation)
+            return True
+        except Exception:
+            logger.debug(
+                "Failed to stamp parser_generation for %s/%s", owner, name, exc_info=True
+            )
+            return False
+
     def list_repos(self) -> list[dict]:
         """List all indexed repositories (scans .db files only)."""
         _pairs = parse_path_map()
