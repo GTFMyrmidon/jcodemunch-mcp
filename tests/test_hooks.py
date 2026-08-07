@@ -60,6 +60,18 @@ def _run_with_stdin(func, stdin_text: str) -> tuple[int, str, str]:
     return rc, fake_out.getvalue(), fake_err.getvalue()
 
 
+def _additional_context(stdout: str, event: str = "PreToolUse") -> str:
+    """Extract and validate model-facing additionalContext from hook stdout."""
+    assert stdout, "hook produced no stdout — nudge cannot reach the model"
+    payload = json.loads(stdout)
+    hso = payload.get("hookSpecificOutput", {})
+    assert hso.get("hookEventName") == event, f"wrong hookEventName: {hso!r}"
+    assert "permissionDecision" not in hso, "advisory nudge must not carry a decision"
+    ctx = hso.get("additionalContext", "")
+    assert ctx, f"no additionalContext in {payload!r}"
+    return ctx
+
+
 # ---------------------------------------------------------------------------
 # PreToolUse tests
 # ---------------------------------------------------------------------------
@@ -86,14 +98,15 @@ class TestPreToolUse:
         assert err == ""
 
     def test_warns_large_code_file(self, tmp_path):
-        """Large code files are allowed but produce a stderr warning."""
+        """Large code files are allowed, with the nudge delivered to the model."""
         f = tmp_path / "big.py"
         f.write_text("x = 1\n" * 2000)  # well above 4KB
         rc, out, err = _run_with_stdin(run_pretooluse, _make_hook_input("Read", str(f)))
         assert rc == 0
-        assert out == ""  # No deny JSON on stdout
-        assert "get_file_outline" in err
-        assert "get_symbol_source" in err
+        ctx = _additional_context(out)
+        assert "get_file_outline" in ctx
+        assert "get_symbol_source" in ctx
+        assert err == ""  # stderr would never reach the model — must stay unused
 
     def test_allows_large_code_file_with_offset(self, tmp_path):
         """Targeted reads (offset set) are allowed silently — likely pre-edit."""
@@ -157,13 +170,12 @@ class TestPreToolUse:
             assert out == ""
             assert err == ""
 
-        # With a low threshold, it should warn on stderr
+        # With a low threshold, it should nudge the model
         with mock.patch("jcodemunch_mcp.cli.hooks._MIN_SIZE_BYTES", 100):
             rc, out, err = _run_with_stdin(
                 run_pretooluse, _make_hook_input("Read", str(f))
             )
-            assert out == ""  # No deny
-            assert "jCodemunch hint" in err
+            assert "jCodemunch hint" in _additional_context(out)
 
     @pytest.mark.parametrize("ext", [".py", ".ts", ".go", ".rs", ".java", ".cpp", ".rb"])
     def test_code_extensions_covered(self, ext, tmp_path):
@@ -171,13 +183,13 @@ class TestPreToolUse:
         assert ext in _CODE_EXTENSIONS
 
     def test_warning_includes_file_size(self, tmp_path):
-        """The stderr warning includes the file size for context."""
+        """The nudge includes the file size for context."""
         f = tmp_path / "large.go"
         content = "package main\n" * 1000
         f.write_text(content)
         size = f.stat().st_size
         rc, out, err = _run_with_stdin(run_pretooluse, _make_hook_input("Read", str(f)))
-        assert f"{size:,}" in err
+        assert f"{size:,}" in _additional_context(out)
 
 
 # ---------------------------------------------------------------------------
@@ -212,11 +224,12 @@ class TestGrepNudge:
             run_pretooluse, _make_grep_input("ViewBag.Username", cwd=str(tmp_path))
         )
         assert rc == 0
-        assert out == ""  # never blocks
-        assert "search_text" in err
-        assert "search_symbols" in err
-        assert "find_references" in err
-        assert "ViewBag.Username" in err  # echoes the pattern
+        ctx = _additional_context(out)  # never blocks; reaches the model
+        assert "search_text" in ctx
+        assert "search_symbols" in ctx
+        assert "find_references" in ctx
+        assert "ViewBag.Username" in ctx  # echoes the pattern
+        assert err == ""  # stderr would never reach the model
 
     def test_nudges_grep_with_subpath_inside_repo(self, tmp_path, monkeypatch):
         """A relative `path` resolved under the indexed cwd still nudges."""
@@ -228,7 +241,7 @@ class TestGrepNudge:
             run_pretooluse, _make_grep_input("foo", path="src", cwd=str(tmp_path))
         )
         assert rc == 0
-        assert "search_text" in err
+        assert "search_text" in _additional_context(out)
 
     def test_silent_outside_indexed_repo(self, tmp_path, monkeypatch):
         """A Grep outside every indexed repo is allowed silently."""
@@ -275,7 +288,7 @@ class TestGrepNudge:
         assert rc == 0  # never crashes the agent's Grep
 
     def test_grep_never_blocks(self, tmp_path, monkeypatch):
-        """The nudge must never emit a deny/stdout payload."""
+        """The nudge informs without denying: context, but no permissionDecision."""
         monkeypatch.setattr(
             "jcodemunch_mcp.cli.hooks._indexed_source_roots",
             lambda: [os.path.normcase(os.path.abspath(str(tmp_path)))],
@@ -284,7 +297,7 @@ class TestGrepNudge:
             run_pretooluse, _make_grep_input("foo", cwd=str(tmp_path))
         )
         assert rc == 0
-        assert out == ""
+        assert _additional_context(out)
 
 
 # ---------------------------------------------------------------------------
@@ -393,8 +406,7 @@ class TestStrictEnforce:
             run_pretooluse, _make_grep_input("foo", cwd=str(tmp_path))
         )
         assert rc == 0
-        assert out == ""  # advisory never denies
-        assert "search_text" in err
+        assert "search_text" in _additional_context(out)  # advisory never denies
 
     def test_unknown_value_falls_back_to_advisory(self, tmp_path, monkeypatch):
         """A typo'd mode must never hard-block — it degrades to advisory."""
@@ -404,8 +416,7 @@ class TestStrictEnforce:
             run_pretooluse, _make_grep_input("foo", cwd=str(tmp_path))
         )
         assert rc == 0
-        assert out == ""  # not a deny
-        assert "search_text" in err
+        assert "search_text" in _additional_context(out)  # not a deny
 
 
 # ---------------------------------------------------------------------------
@@ -763,9 +774,7 @@ class TestSubagentStart:
         rc, out, _ = _run_with_stdin(run_subagentstart, '{"hook_event_name": "SubagentStart"}')
         assert rc == 0
         if out:
-            result = json.loads(out)
-            assert "systemMessage" in result
-            msg = result["systemMessage"]
+            msg = _additional_context(out, event="SubagentStart")
             assert "test/repo" in msg
             assert "search_symbols" in msg  # Tool catalog
 

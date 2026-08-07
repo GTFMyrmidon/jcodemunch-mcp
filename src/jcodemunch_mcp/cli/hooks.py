@@ -8,6 +8,12 @@ PostToolUse — auto-reindex after Edit/Write to keep the index fresh.
 
 Both read JSON from stdin and write JSON to stdout per the Claude Code
 hooks specification.
+
+Output channels — the one rule this module turns on: a hook that exits 0 reaches
+the model ONLY via ``hookSpecificOutput.additionalContext``. Both stderr and
+top-level ``systemMessage`` surface to the user instead, so steering text written
+to either is silently inert. Exit 2 does feed stderr to the model, but it also
+blocks the call, which is not what an advisory nudge wants.
 """
 
 import json
@@ -83,8 +89,8 @@ _MIN_SIZE_BYTES = int(os.environ.get("JCODEMUNCH_HOOK_MIN_SIZE", "4096"))
 def _enforce_mode() -> str:
     """jCodemunch enforcement tier for native file tools (``JCODEMUNCH_ENFORCE``).
 
-    * ``"advisory"`` (default): warn on stderr but **allow** — the v1.108.47
-      behavior. A hard deny here would break Read-before-Edit.
+    * ``"advisory"`` (default): nudge via ``additionalContext`` but **allow** —
+      the v1.108.47 behavior. A hard deny here would break Read-before-Edit.
     * ``"strict"``: **deny** a native Read/Grep that an indexed-repo jcm route
       can already serve. Targeted reads (``offset``/``limit``), tiny files, and
       paths outside every indexed repo still pass, so the escape hatch is always
@@ -106,14 +112,35 @@ def _enforce_mode() -> str:
 def _emit_pretooluse_deny(reason: str) -> int:
     """Emit a Claude Code PreToolUse ``deny`` decision (stdout JSON) and exit 0.
 
-    The deny lives in the JSON decision channel; stderr stays free for advisory
-    hints, and exit code stays 0 so the harness reads the decision, not a crash.
+    The deny lives in the JSON decision channel, and exit code stays 0 so the
+    harness reads the decision, not a crash.
     """
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny",
             "permissionDecisionReason": reason,
+        }
+    }))
+    return 0
+
+
+def _emit_additional_context(event_name: str, text: str) -> int:
+    """Emit model-facing additionalContext for an exit-0 hook.
+
+    Not available on every event — PreCompact and TaskCompleted have no such
+    channel.
+
+    Past 10,000 characters the text is NOT truncated: Claude Code writes it to a
+    file and hands the model a path plus a short preview. Nothing is lost, but the
+    model pays a re-read to see it, so keep emissions well under that. Measured on
+    this repo's index: the SubagentStart briefing is ~866 characters, and snapshot
+    plus landmarks ~91.
+    """
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": event_name,
+            "additionalContext": text,
         }
     }))
     return 0
@@ -130,7 +157,7 @@ def run_pretooluse() -> int:
         + ``get_symbol_source`` instead.
 
     Strength is set by ``_enforce_mode()`` (``JCODEMUNCH_ENFORCE``): the default
-    ``advisory`` tier warns on stderr but allows (so Read-before-Edit and the
+    ``advisory`` tier nudges the model but allows (so Read-before-Edit and the
     Grep fallback keep working); ``strict`` denies the same calls but only when
     an indexed-repo jcm route can serve them — targeted reads (``offset`` /
     ``limit``), tiny files, non-code files, and paths outside every indexed repo
@@ -206,14 +233,12 @@ def run_pretooluse() -> int:
 
     # Advisory: full-file exploratory read on a large code file — warn but allow.
     # Hard deny breaks the Edit workflow (Claude Code requires Read before Edit).
-    # Stderr text is surfaced to the agent as guidance.
-    print(
+    return _emit_additional_context(
+        "PreToolUse",
         f"jCodemunch hint: this is a {size:,}-byte code file. "
         "Prefer get_file_outline + get_symbol_source for exploration. "
         "Use Read only when you need exact line numbers for Edit.",
-        file=sys.stderr,
     )
-    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -275,7 +300,7 @@ def _path_overlaps(root: str, source_roots: list[str]) -> bool:
 def _nudge_grep(tool_input: dict, cwd: str) -> int:
     """Grep PreToolUse branch: when the search targets an indexed repo, steer
     the agent to the credited jcm retrieval routes first. Allows the Grep
-    regardless (exit 0) — this is a nudge, not a block."""
+    regardless (exit 0, no permissionDecision) — this is a nudge, not a block."""
     if not _grep_nudge_enabled():
         return 0
     roots = _indexed_source_roots()
@@ -286,16 +311,15 @@ def _nudge_grep(tool_input: dict, cwd: str) -> int:
 
     pattern = (tool_input.get("pattern") or "").strip()
     for_pat = f" for `{pattern}`" if pattern else ""
-    print(
+    return _emit_additional_context(
+        "PreToolUse",
         f"jCodemunch: this Grep{for_pat} targets an indexed repo. Exhaust the jcm "
         "routes first, since they're tighter and credited (raw Grep is neither):\n"
         "  - search_text     : same regex/substring scan, ranked + winnowed\n"
         "  - search_symbols  : when hunting a definition (function/class/const/type)\n"
         "  - find_references / find_importers : 'where is X used / who imports this'\n"
         "Fall back to Grep only once those come up empty.",
-        file=sys.stderr,
     )
-    return 0
 
 
 def _strict_grep(tool_input: dict, cwd: str) -> int:
@@ -433,24 +457,19 @@ def run_copilot_posttooluse() -> int:
     return 0
 
 
-def run_precompact() -> int:
-    """PreCompact hook: generate session snapshot before context compaction.
+def _build_session_snapshot() -> "tuple[str, bool]":
+    """Render the session snapshot, returning ``(text, used_fallback)``.
 
-    Reads hook JSON from stdin. Builds a compact snapshot of the current
-    session state and returns it as a message for context injection.
+    Shared by ``run_precompact`` (which reports it to the user before compaction)
+    and ``run_sessionstart`` (which injects it into the model afterwards), so the
+    two can never drift into describing the same session differently.
 
-    Returns exit code (always 0 — errors are swallowed to avoid blocking).
+    The hook runs as a SEPARATE process from the MCP server, so the in-process
+    SessionJournal is empty (#334). Read the live journal the server persists
+    incrementally first; fall back to the in-process journal (covers embedded
+    invocations); finally emit an explicit "no live session" message rather than
+    a misleading zero-state snapshot.
     """
-    try:
-        _note_transcript_root(json.load(sys.stdin))  # Also validates stdin
-    except (json.JSONDecodeError, ValueError):
-        return 0
-
-    # The hook runs as a SEPARATE process from the MCP server, so the in-process
-    # SessionJournal is empty (#334). Read the live journal the server persists
-    # incrementally first; fall back to the in-process journal (covers embedded
-    # invocations); finally emit an explicit "no live session" message rather
-    # than a misleading zero-state snapshot.
     snapshot_text = ""
     live_context = None
     try:
@@ -472,31 +491,85 @@ def run_precompact() -> int:
         except Exception:
             snapshot_text = ""
 
-    used_fallback = False
     if not snapshot_text:
         # Honest fallback — never emit a healthy-looking zero-state snapshot.
-        snapshot_text = _precompact_no_journal_message()
-        used_fallback = True
+        return _precompact_no_journal_message(), True
 
     # Enrich with structural landmarks (PageRank top-N) and recently-changed
     # symbols. Seed from the live journal context when we have one so landmarks
     # work out-of-process too; skip entirely on the no-journal fallback.
-    if not used_fallback:
-        try:
-            landmarks = _build_landmark_section(context=live_context)
-            if landmarks:
-                snapshot_text += landmarks
-        except Exception:
-            pass  # Landmark enrichment must not block compaction
+    try:
+        landmarks = _build_landmark_section(context=live_context)
+        if landmarks:
+            snapshot_text += landmarks
+    except Exception:
+        pass  # Landmark enrichment must not block compaction
 
-    # Return snapshot as hook output for context injection.
-    # PreCompact has no hookSpecificOutput variant in Claude Code's schema,
-    # so we use the top-level systemMessage field instead.
+    return snapshot_text, False
+
+
+def run_precompact() -> int:
+    """PreCompact hook: report the snapshot to the user before compaction.
+
+    PreCompact has no additionalContext channel, so this cannot reach the model;
+    ``run_sessionstart`` restores it there afterwards.
+
+    Returns exit code (always 0 — errors are swallowed to avoid blocking).
+    """
+    try:
+        _note_transcript_root(json.load(sys.stdin))  # Also validates stdin
+    except (json.JSONDecodeError, ValueError):
+        return 0
+
+    snapshot_text, _ = _build_session_snapshot()
     result = {
         "systemMessage": snapshot_text,
     }
     json.dump(result, sys.stdout)
     return 0
+
+
+def run_sessionstart() -> int:
+    """SessionStart hook: restore the session snapshot to the model.
+
+    Injects on compact/resume/fork, where the persisted journal still describes
+    this session. Stays silent on startup/clear — an unrelated session's journal
+    would present stale files as current focus.
+
+    Returns exit code (always 0 — errors are swallowed to avoid blocking).
+    """
+    try:
+        data = json.load(sys.stdin)
+    except (json.JSONDecodeError, ValueError):
+        return 0
+
+    # Earliest hook to fire on a resumed session, so this is the earliest point
+    # a custom-profile transcript root can be learned (#421) — every other hook
+    # waits for a first Read or Edit. Registered BEFORE the source gate, because
+    # the root is a property of the session, not of whether we inject anything.
+    _note_transcript_root(data)
+
+    source = (data.get("source") or "").strip().lower()
+    if source not in {"compact", "resume", "fork"}:
+        return 0  # Fresh session — no prior state worth restoring.
+
+    try:
+        snapshot_text, used_fallback = _build_session_snapshot()
+    except Exception:
+        return 0  # Never block session startup.
+
+    if used_fallback or not snapshot_text.strip():
+        return 0  # Do not inject the user-facing no-journal fallback.
+
+    label = {
+        "compact": "restored after compaction",
+        "resume": "restored on resume",
+        "fork": "carried into this fork",
+    }[source]
+    return _emit_additional_context(
+        "SessionStart",
+        f"## jCodemunch session state ({label})\n\n{snapshot_text}",
+    )
 
 
 def _precompact_no_journal_message() -> str:
@@ -793,6 +866,9 @@ def run_taskcomplete() -> int:
         if "unreferenced_symbols" in diag:
             parts.append(f"**Unreferenced:** {', '.join(f'`{s}`' for s in diag['unreferenced_symbols'][:5])}")
 
+    # TaskCompleted lacks additionalContext; its only model-facing route is exit 2,
+    # which also refuses task completion. These findings are advisory, so keep them
+    # user-facing rather than blocking on them.
     result = {"systemMessage": "\n".join(parts)}
     json.dump(result, sys.stdout)
     return 0
@@ -899,6 +975,4 @@ def run_subagentstart() -> int:
     )
     parts.append("\nUse `plan_turn` to get recommended approach for your task.")
 
-    result = {"systemMessage": "\n".join(parts)}
-    json.dump(result, sys.stdout)
-    return 0
+    return _emit_additional_context("SubagentStart", "\n".join(parts))

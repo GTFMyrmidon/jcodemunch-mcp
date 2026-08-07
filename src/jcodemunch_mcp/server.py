@@ -9125,6 +9125,12 @@ def main(argv: Optional[list[str]] = None):
         help="SubagentStart hook: inject condensed repo orientation for spawned agents (reads stdin)",
     )
 
+    # --- hook-sessionstart ---
+    subparsers.add_parser(
+        "hook-sessionstart",
+        help="SessionStart hook: re-inject the session snapshot after compaction/resume (reads stdin)",
+    )
+
     # --- watch-claude ---
     wc_parser = subparsers.add_parser(
         "watch-claude",
@@ -9266,7 +9272,7 @@ def main(argv: Optional[list[str]] = None):
     if any(arg in top_level_flags for arg in raw_argv):
         args = parser.parse_args(raw_argv)
     else:
-        known_commands = {"serve", "watch", "hook-event", "hook-pretooluse", "hook-posttooluse", "hook-copilot-posttooluse", "hook-precompact", "hook-taskcomplete", "hook-subagent-start", "watch-claude", "watch-all", "watch-install", "watch-uninstall", "watch-status", "config", "list-repos", "delete-index", "org-report", "org-rollup", "license", "index", "index-file", "import-trace", "import-scip", "claude-md", "init", "install", "install-status", "uninstall", "install-pack", "download-model", "upgrade", "whatsnew", "receipt", "digest", "reflect", "delivery", "parity", "health", "file-risk", "observatory", "keyring", "surface"}
+        known_commands = {"serve", "watch", "hook-event", "hook-pretooluse", "hook-posttooluse", "hook-copilot-posttooluse", "hook-precompact", "hook-taskcomplete", "hook-subagent-start", "hook-sessionstart", "watch-claude", "watch-all", "watch-install", "watch-uninstall", "watch-status", "config", "list-repos", "delete-index", "org-report", "org-rollup", "license", "index", "index-file", "import-trace", "import-scip", "claude-md", "init", "install", "install-status", "uninstall", "install-pack", "download-model", "upgrade", "whatsnew", "receipt", "digest", "reflect", "delivery", "parity", "health", "file-risk", "observatory", "keyring", "surface"}
         # MCP-tool-name typos: route to the right CLI verb with a friendly hint.
         # `index_repo` and `index_folder` are MCP tools, not CLI subcommands.
         _CLI_ALIASES = {
@@ -9810,6 +9816,10 @@ def main(argv: Optional[list[str]] = None):
     if args.command == "hook-subagent-start":
         from .cli.hooks import run_subagentstart
         sys.exit(run_subagentstart())
+
+    if args.command == "hook-sessionstart":
+        from .cli.hooks import run_sessionstart
+        sys.exit(run_sessionstart())
 
     # Apply config defaults for watcher keys: CLI args > config > env vars.
     # config.load_config() is called inside each subcommand handler, but we need

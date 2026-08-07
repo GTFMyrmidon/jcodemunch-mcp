@@ -201,6 +201,11 @@ def _enforcement_hooks() -> dict[str, Any]:
             "matcher": "",
             "hooks": [{"type": "command", "command": f"{exe} hook-precompact"}],
         }],
+        # Restore only sources whose persisted journal still describes this session.
+        "SessionStart": [{
+            "matcher": "compact|resume|fork",
+            "hooks": [{"type": "command", "command": f"{exe} hook-sessionstart"}],
+        }],
         "TaskCompleted": [{
             "matcher": "",
             "hooks": [{"type": "command", "command": f"{exe} hook-taskcomplete"}],
@@ -968,6 +973,10 @@ def install_enforcement_hooks(
     """
     path = _settings_json_path()
     data = _read_json(path)
+    # Marker is only the legacy substring fallback; primary duplicate detection is
+    # per-subcommand via _extract_jcm_subcommand, so hooks outside the "hook-p"
+    # prefix (hook-sessionstart, hook-taskcomplete, hook-subagent-start) merge
+    # correctly and are added to an existing install on re-run.
     added = _merge_hooks(data, _enforcement_hooks(), "jcodemunch-mcp hook-p")  # matches hook-pretooluse & hook-posttooluse & hook-precompact
 
     # Persist (or revert) the strict-enforce env flag the hook reads at runtime.
