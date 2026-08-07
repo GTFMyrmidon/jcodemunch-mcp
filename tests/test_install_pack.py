@@ -277,7 +277,12 @@ def test_install_pack_force_reinstall(mock_httpx, tmp_path, monkeypatch):
 
     result = _install_pack("testpack", force=True, base_path=tmp_path)
     assert result == 0
-    mock_httpx.get.assert_called_once()
+    # `--force` must actually re-download. Asserted on the DOWNLOAD call, not
+    # the total GET count: the CDN cache-key pin added a best-effort catalog
+    # probe ahead of it, and a raw count turns that required change into a
+    # phantom failure of an unrelated property.
+    downloads = [c for c in mock_httpx.get.call_args_list if "action=download" in c.args[0]]
+    assert len(downloads) == 1
 
 
 @patch("jcodemunch_mcp.cli.install_pack.httpx")

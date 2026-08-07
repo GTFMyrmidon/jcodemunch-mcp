@@ -16,6 +16,24 @@ import subprocess
 import sys
 
 
+def _note_transcript_root(data) -> None:
+    """Record the profile this session's transcripts live under (jcm#421).
+
+    Every hook payload carries ``transcript_path``, and the projects root is its
+    grandparent, so the hooks are how ``receipt`` learns about profiles started
+    with a custom ``CLAUDE_CONFIG_DIR``. Silent by construction: it writes one
+    small file under the index store and touches neither stdout (which Claude
+    Code parses as the hook's reply) nor the hook's exit code.
+    """
+    try:
+        if not isinstance(data, dict):
+            return
+        from ..storage.transcript_roots import register_from_transcript_path
+        register_from_transcript_path(data.get("transcript_path"))
+    except Exception:
+        pass
+
+
 # Extensions that benefit from jCodemunch structural navigation.
 # Kept intentionally broad — mirrors languages.py LANGUAGE_REGISTRY.
 _CODE_EXTENSIONS: set[str] = {
@@ -124,6 +142,8 @@ def run_pretooluse() -> int:
         data = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError):
         return 0  # Unparseable → allow
+
+    _note_transcript_root(data)
 
     mode = _enforce_mode()
     if mode == "off":
@@ -311,6 +331,8 @@ def run_posttooluse() -> int:
     except (json.JSONDecodeError, ValueError):
         return 0
 
+    _note_transcript_root(data)
+
     file_path: str = data.get("tool_input", {}).get("file_path", "")
     if not file_path:
         return 0
@@ -420,7 +442,7 @@ def run_precompact() -> int:
     Returns exit code (always 0 — errors are swallowed to avoid blocking).
     """
     try:
-        json.load(sys.stdin)  # Validate stdin is valid JSON
+        _note_transcript_root(json.load(sys.stdin))  # Also validates stdin
     except (json.JSONDecodeError, ValueError):
         return 0
 
@@ -649,7 +671,7 @@ def run_taskcomplete() -> int:
     Returns exit code (always 0 — errors are swallowed to avoid blocking).
     """
     try:
-        json.load(sys.stdin)  # Validate stdin
+        _note_transcript_root(json.load(sys.stdin))  # Also validates stdin
     except (json.JSONDecodeError, ValueError):
         return 0
 
@@ -791,7 +813,7 @@ def run_subagentstart() -> int:
     Returns exit code (always 0).
     """
     try:
-        json.load(sys.stdin)
+        _note_transcript_root(json.load(sys.stdin))
     except (json.JSONDecodeError, ValueError):
         return 0
 

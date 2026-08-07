@@ -138,6 +138,8 @@ Savings are stored as **tokens**, never as currency. Dollar valuations are appli
 
 `~/.code-index/_savings.json` holds the lifetime total plus per-day buckets, survives client reinstalls, and is multi-process safe. The `jcodemunch-mcp receipt` CLI reports it alongside windowed figures computed from your own local transcripts (`--since` / `--until` / `--by-day`; `--model` picks the valuation rate, `--rates` lists the price table). `receipt --export json` includes a `savings_provenance` block chaining the figures to the committed, CI-re-run measurement artifacts in `benchmarks/provenance/` — the report carries its own receipts. Full design: [UNDER_THE_HOOD.md](UNDER_THE_HOOD.md) Chapter 4.
 
+The windowed figures come from wherever Claude Code actually wrote your transcripts, not just the default profile. `CLAUDE_CONFIG_DIR` relocates that tree, so `receipt` scans a **union**: the default `~/.claude/projects`, the current `CLAUDE_CONFIG_DIR`, any roots earlier sessions registered (see [SECURITY.md](SECURITY.md#background-behavior-fully-disclosed)), deduplicated by session UUID so a copied or symlinked tree never double-counts. `--projects-root` remains an override for pinning a scan to a known tree, and is now repeatable so it can name every profile at once. `receipt --roots` prints the exact list that will be walked.
+
 ---
 
 ## Per-Tool Latency + Drift Tracking (v1.74.0+)

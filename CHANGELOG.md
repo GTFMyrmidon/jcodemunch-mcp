@@ -2,6 +2,98 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.252] - 2026-08-07 - `receipt` counted 12 of 348 calls, because it only ever looked in one profile
+
+Reported by [@MotoMato85](https://github.com/jgravelle/jcodemunch-mcp/issues/421)
+with a controlled per-root table, a correct root-cause read of the code, and the
+observation that jMunch Console's frozen tile is downstream of this, not a bug of
+its own. Every claim reproduced.
+
+**`jcodemunch-mcp receipt` scanned a hardcoded `~/.claude/projects`.** That is
+where transcripts land for the *default* profile only. `CLAUDE_CONFIG_DIR`
+relocates Claude Code's whole config tree, so every session started under a
+second profile wrote its transcript somewhere `receipt` never walked.
+
+The reporter's measurement, same binary, only the root changed:
+
+| transcript root | calls | savings_tokens |
+| --- | ---: | ---: |
+| `~/.claude/projects` (what `receipt` scanned) | 12 | 32,646 |
+| `~/.claude-headroom-code-on/projects` | 223 | 745,339 |
+| `~/.claude-headroom-code-off/projects` | 113 | 349,280 |
+
+12 of 348 calls, about 3%.
+
+### Why the existing override could not fix it
+
+`--projects-root` took a single path. With two profiles open at once there is no
+one root that contains both, so no invocation could produce a correct total.
+
+### Cause
+
+`_projects_root()` returned `Path.home() / ".claude" / "projects"` and nothing in
+the package ever learned any other location. The calls were silently missing
+rather than failing loudly.
+
+### Fix
+
+Learn the roots from the sessions themselves. We already run inside every one:
+
+- The MCP server registers `$CLAUDE_CONFIG_DIR/projects` at startup. The client
+  spawns the server as a child, so the variable is inherited.
+- Every Claude Code hook payload carries `transcript_path`, whose grandparent is
+  the projects root. The hooks register it as a backstop for installs where the
+  variable is set only for the CLI.
+
+Both append to a small list at `~/.code-index/_transcript_roots.json` (directory
+paths only, disclosed in [SECURITY.md](SECURITY.md#background-behavior-fully-disclosed)),
+and `receipt` scans the union. Registration is retroactive: the moment a root is
+known, all the history already inside it counts, so nobody has to re-run
+anything. `receipt --roots` prints exactly what will be walked, and the JSON
+export carries the same list as `transcript_roots`.
+
+jMunch Console's "jCode tool calls" tile and per-tool table are fixed by this
+with no console change: both come from the same scan.
+
+### Notes
+
+- **`--projects-root` stays an override, and is now repeatable.** Making it
+  additive would break the one thing it was already good for, pinning a scan to
+  a known tree, and the existing tests caught exactly that.
+- **Sessions de-duplicate by filename stem** (the session UUID), so a copied or
+  symlinked tree cannot double the ledger. A file skipped by the mtime filter
+  deliberately does *not* claim the stem, or a stale copy would mask a fresher
+  one in another root.
+- **An mtime prefilter skips files last written before `--since`**, with an hour
+  of margin for coarse timestamps and clock skew. A union multiplies the walk,
+  and jMunch Console drops its whole Savings panel to fixtures if the subprocess
+  takes more than 60 seconds.
+- **The hook side effect writes nothing to stdout**, which is asserted by test:
+  Claude Code parses hook stdout as the hook's reply, so a stray write there
+  corrupts the protocol.
+
+Tests: `test_transcript_roots.py` (21).
+
+### Also in this release
+
+**The starter-pack CDN cache-key pin** (`&v=<version>` on the download URL,
+committed after 1.108.251 shipped). The unversioned URL never changed between
+releases, so the CDN in front of `jcodemunch.com` kept serving the previous pack
+for a full day after each deploy — on 2026-08-07 it handed out the build whose
+indexes delete themselves on the next server start ([#419](https://github.com/jgravelle/jcodemunch-mcp/issues/419)),
+hours after the fix was live. Resolving the pack's published version from the
+catalog gives each build a distinct cache key. Best effort: any failure falls
+back to the unversioned URL rather than failing the install.
+
+**Four license-transport tests were repaired, not just re-counted.** The catalog
+probe consumed the first scripted response, so the download then failed with an
+unscripted-GET transport error. The tests still returned 1 and still passed their
+`rc` assertion while proving nothing about the license path they exist to guard.
+They now script the probe and assert on the *download* call: one download, no
+retry, and the key absent from every URL. Third time an unrelated but required
+change to the pack API has tripped a raw-count assertion in that module, so the
+counts are gone in favor of the invariant.
+
 ## [1.108.251] - 2026-08-06 - every server start silently deleted your installed starter packs
 
 Reported by [@MotoMato85](https://github.com/jgravelle/jcodemunch-mcp/issues/419)

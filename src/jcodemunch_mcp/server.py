@@ -9062,8 +9062,13 @@ def main(argv: Optional[list[str]] = None):
         help="Print the per-tool savings multiplier table + methodology, then exit.")
     receipt_parser.add_argument("--rates", action="store_true",
         help="Print the model input-price table as JSON, then exit (scans nothing).")
-    receipt_parser.add_argument("--projects-root", default=None,
-        help="Override Claude Code projects directory (default ~/.claude/projects).")
+    receipt_parser.add_argument("--projects-root", action="append", default=None,
+        metavar="DIR",
+        help="Claude Code projects directory to scan. Repeatable — pass it once per "
+             "profile. Overrides discovery: with no --projects-root, the default root, "
+             "CLAUDE_CONFIG_DIR, and roots seen in earlier sessions are all scanned.")
+    receipt_parser.add_argument("--roots", action="store_true",
+        help="Print the transcript roots that would be scanned, then exit.")
 
     # --- reflect ---
     reflect_parser = subparsers.add_parser(
@@ -9788,8 +9793,10 @@ def main(argv: Optional[list[str]] = None):
             argv += ["--explain"]
         if args.rates:
             argv += ["--rates"]
-        if args.projects_root:
-            argv += ["--projects-root", args.projects_root]
+        for _root in (args.projects_root or []):
+            argv += ["--projects-root", _root]
+        if args.roots:
+            argv += ["--roots"]
         sys.exit(receipt_main(argv))
 
     if args.command == "hook-precompact":
@@ -10117,6 +10124,18 @@ def main(argv: Optional[list[str]] = None):
             atexit.register(_unregister_process)
         except Exception:
             logger.debug("process registry: register failed", exc_info=True)
+
+        # Transcript root registry (jcm#421): Claude Code writes this session's
+        # transcript under CLAUDE_CONFIG_DIR, which the client passes down to us
+        # as a spawned child. Recording it here is what lets `receipt` count a
+        # profile other than the default one — it scanned a hardcoded
+        # ~/.claude/projects and reported 12 of 348 calls on a three-profile
+        # box. No-op on the default profile; never allowed to block startup.
+        try:
+            from .storage.transcript_roots import register_session_root
+            register_session_root()
+        except Exception:
+            logger.debug("transcript root registry: register failed", exc_info=True)
 
         # Import the native embedding backend here, on the main thread, before
         # any event loop starts. Deferring it to the first embed call runs it

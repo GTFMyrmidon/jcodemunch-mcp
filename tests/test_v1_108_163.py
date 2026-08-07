@@ -148,14 +148,42 @@ def _run_install(monkeypatch, tmp_path, fake, key="SECRETKEY001"):
     return install_pack._install_pack("fastapi", license_key=key, base_path=tmp_path)
 
 
+def _catalog_response():
+    """The catalog probe that now precedes every download.
+
+    ``_install_pack`` resolves the pack's published version first, to pin the
+    download URL's CDN cache key (an unversioned URL let hcdn serve the previous
+    build for a day). It is best effort and never raises, but it *does* consume a
+    scripted response — leaving it out made these tests fail the download with an
+    unscripted-GET transport error, so they still returned 1 while proving
+    nothing about the license path they exist to guard.
+    """
+    return FakeResponse({"packs": [{"id": "fastapi", "version": "2026.08.07"}]})
+
+
+def _download_calls(fake):
+    """The pack downloads only. The catalog probe is a different request.
+
+    Counting *all* GETs is what broke here. Third time an unrelated, required
+    change to the pack API tripped a raw-count assertion in this module (see the
+    v1.108.248 header notes below); the invariant is one download and no retry,
+    so assert that.
+    """
+    return [(u, k) for (u, k) in fake.get_calls if "action=download" in u]
+
+
 def test_install_pack_key_rides_header_not_url(monkeypatch, tmp_path):
     fake = FakeHTTPX(get_responses=[
+        _catalog_response(),
         FakeResponse({"error": "Invalid or expired license."}),
     ])
     rc = _run_install(monkeypatch, tmp_path, fake)
     assert rc == 1
-    assert len(fake.get_calls) == 1
-    url, kwargs = fake.get_calls[0]
+    assert len(_download_calls(fake)) == 1
+    url, kwargs = _download_calls(fake)[0]
+    # The key must be absent from EVERY url, not just the download's — the
+    # catalog probe carries the same header set.
+    assert not any("SECRETKEY001" in u for u, _ in fake.get_calls)
     assert "SECRETKEY001" not in url
     # ⚠ The invariant is where the KEY travels, not what else is in the dict.
     # This asserted `== {"X-JCM-License": ...}` until v1.108.248 added identifying
@@ -175,11 +203,12 @@ def test_install_pack_no_key_sends_no_header(monkeypatch, tmp_path):
     X-JCM-License, not the absence of a headers dict.
     """
     fake = FakeHTTPX(get_responses=[
+        _catalog_response(),
         FakeResponse({"error": "This pack requires a jCodeMunch license."}),
     ])
     rc = _run_install(monkeypatch, tmp_path, fake, key=None)
     assert rc == 1
-    _, kwargs = fake.get_calls[0]
+    _, kwargs = _download_calls(fake)[0]
     assert "X-JCM-License" not in (kwargs["headers"] or {})
     assert not any("SECRETKEY" in str(v) for v in (kwargs["headers"] or {}).values())
 
@@ -191,23 +220,26 @@ def test_install_pack_never_puts_the_key_in_a_url(monkeypatch, tmp_path):
     the ONLY path that could put a license key in a server access log, which is
     the finding (V12) this whole module exists for."""
     fake = FakeHTTPX(get_responses=[
+        _catalog_response(),
         FakeResponse({"error": "This pack requires a jCodeMunch license."}),
     ])
     rc = _run_install(monkeypatch, tmp_path, fake)
     assert rc == 1
-    assert len(fake.get_calls) == 1
-    url, kwargs = fake.get_calls[0]
+    assert len(_download_calls(fake)) == 1
+    url, kwargs = _download_calls(fake)[0]
+    assert not any("license=" in u for u, _ in fake.get_calls)
     assert "license=" not in url
     assert kwargs["headers"]["X-JCM-License"] == "SECRETKEY001"
 
 
 def test_install_pack_real_rejection_never_retries(monkeypatch, tmp_path):
     fake = FakeHTTPX(get_responses=[
+        _catalog_response(),
         FakeResponse({"error": "Invalid or expired license."}),
     ])
     rc = _run_install(monkeypatch, tmp_path, fake)
     assert rc == 1
-    assert len(fake.get_calls) == 1
+    assert len(_download_calls(fake)) == 1
 
 
 def test_install_pack_predicate_is_gone():

@@ -1,6 +1,6 @@
 """``jcodemunch-mcp receipt`` — token-economy ledger.
 
-Parses ``~/.claude/projects/**/*.jsonl`` transcripts, extracts every
+Parses Claude Code's ``<projects-root>/**/*.jsonl`` transcripts, extracts every
 ``mcp__jcodemunch__*`` tool call + its result, applies per-tool savings
 multipliers calibrated against the published RAG benchmarks, and prints
 an honest dollar-denominated ROI ledger.
@@ -119,7 +119,42 @@ _BYTES_PER_TOKEN = 4
 
 
 def _projects_root() -> Path:
-    return Path.home() / ".claude" / "projects"
+    """The default profile's projects root.
+
+    Kept for callers that want the one canonical path; the ledger itself scans
+    ``_projects_roots()``, which is a union (jcm#421).
+    """
+    from ..storage.transcript_roots import default_root
+    return default_root()
+
+
+def _projects_roots(explicit: Optional[list[Path]] = None) -> list[Path]:
+    """Every transcript root to scan.
+
+    Claude Code writes transcripts under the *active* profile's config dir, so a
+    box running two ``CLAUDE_CONFIG_DIR`` profiles has two disjoint trees and no
+    single root covers both (jcm#421 measured 12 of 348 calls counted). With no
+    ``--projects-root``, scan the union of the default root, ``CLAUDE_CONFIG_DIR``,
+    and the roots the server and hooks registered.
+
+    ``--projects-root`` stays an **override** — it is now repeatable, so it can
+    name every profile, but naming any root means "scan exactly these". Making it
+    additive instead would break the one thing it was already good for: pinning a
+    scan to a known tree.
+    """
+    if explicit:
+        out: list[Path] = []
+        seen: set[str] = set()
+        for item in explicit:
+            path = Path(os.path.expanduser(str(item)))
+            key = str(path).casefold() if os.name == "nt" else str(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(path)
+        return out
+    from ..storage.transcript_roots import known_roots
+    return known_roots()
 
 
 def _index_root() -> Path:
@@ -197,14 +232,59 @@ def iter_calls(
     ``until`` is exclusive so adjacent calendar windows can't double-count
     a call that lands exactly on the boundary.
     """
-    if not projects_root.exists():
-        return
+    yield from iter_calls_multi([projects_root], since=since, until=until)
 
-    for jsonl in sorted(projects_root.rglob("*.jsonl")):
+
+# A transcript whose last write predates the window start cannot hold an event
+# stamped inside it, so we can skip the file without opening it. The margin
+# absorbs coarse filesystem timestamps and small clock skew; the cost of being
+# generous is one re-parsed file, the cost of being tight is a lost call.
+_MTIME_SKIP_MARGIN = _dt.timedelta(hours=1)
+
+
+def iter_calls_multi(
+    roots: Iterable[Path],
+    *,
+    since: Optional[_dt.datetime] = None,
+    until: Optional[_dt.datetime] = None,
+) -> Iterable[dict]:
+    """``iter_calls`` over a union of transcript roots (jcm#421).
+
+    Sessions are de-duplicated by file stem — the session UUID — so a root that
+    is a symlink, a copy, or an ancestor of another contributes each session
+    once. Scanning several roots multiplies the walk, so files whose mtime
+    predates ``since`` are skipped unopened; jMunch Console gives this
+    subprocess 60 seconds before it drops its Savings panel to fixtures.
+    """
+    mtime_floor: Optional[float] = None
+    if since is not None:
+        mtime_floor = (since - _MTIME_SKIP_MARGIN).timestamp()
+
+    seen_sessions: set[str] = set()
+    for root in roots:
         try:
-            yield from _iter_calls_in_file(jsonl, since=since, until=until)
+            if not root.exists():
+                continue
+            files = sorted(root.rglob("*.jsonl"))
         except OSError:
             continue
+        for jsonl in files:
+            key = jsonl.stem
+            if key in seen_sessions:
+                continue
+            try:
+                if mtime_floor is not None and jsonl.stat().st_mtime < mtime_floor:
+                    # Deliberately does NOT claim the stem: if a later root
+                    # holds a fresher copy of the same session, that one must
+                    # still be read.
+                    continue
+            except OSError:
+                continue
+            seen_sessions.add(key)
+            try:
+                yield from _iter_calls_in_file(jsonl, since=since, until=until)
+            except OSError:
+                continue
 
 
 def _iter_calls_in_file(
@@ -509,6 +589,7 @@ def render_json(
     meter: Optional[dict] = None,
     by_day: Optional[list[dict]] = None,
     window: Optional[dict] = None,
+    roots: Optional[list[Path]] = None,
 ) -> str:
     from ..retrieval.provenance import measured_provenance
 
@@ -521,6 +602,11 @@ def render_json(
     }
     if window:
         payload["window"] = window
+    if roots:
+        # What was actually walked. A consumer that sees a suspiciously low
+        # call count can tell "one profile scanned" from "no calls made"
+        # without guessing (jcm#421).
+        payload["transcript_roots"] = [str(r) for r in roots]
     if by_day is not None:
         payload["by_day"] = by_day
     if meter:
@@ -614,8 +700,18 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument(
         "--projects-root",
         type=Path,
+        action="append",
         default=None,
-        help="Override Claude Code projects directory (default ~/.claude/projects).",
+        metavar="DIR",
+        help="Claude Code projects directory to scan. Repeatable — pass it once "
+             "per profile. Overrides discovery: with no --projects-root, the "
+             "default root, CLAUDE_CONFIG_DIR, and roots seen in earlier "
+             "sessions are all scanned.",
+    )
+    parser.add_argument(
+        "--roots",
+        action="store_true",
+        help="Print the transcript roots that would be scanned, then exit.",
     )
     args = parser.parse_args(argv)
 
@@ -627,7 +723,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         sys.stdout.write(render_rates())
         return 0
 
-    root = args.projects_root or _projects_root()
+    roots = _projects_roots(args.projects_root)
+
+    if args.roots:
+        sys.stdout.write(json.dumps({"roots": [str(r) for r in roots]}, indent=2) + "\n")
+        return 0
+
     since, until = args.since, args.until
     explicit_window = since is not None or until is not None
     if since is not None and until is not None and until <= since:
@@ -636,7 +737,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if not explicit_window and args.days > 0:
         since = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=args.days)
 
-    calls = list(iter_calls(root, since=since, until=until))
+    calls = list(iter_calls_multi(roots, since=since, until=until))
     agg = aggregate(calls)
     meter = lifetime_meter()
 
@@ -657,6 +758,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                     meter=meter,
                     by_day=aggregate_by_day(calls, model=args.model) if args.by_day else None,
                     window=window,
+                    roots=roots,
                 ),
                 encoding="utf-8",
             )
