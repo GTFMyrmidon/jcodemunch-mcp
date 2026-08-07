@@ -167,22 +167,56 @@ class TestWarning:
 
 
 class TestNoEgress:
-    """Verified while answering #424 and pinned here so it stays true.
+    """#424 was DECIDED (2026-08-07): the anonymous record does not carry a
+    config dimension. These tests enforce that decision rather than merely
+    recording it.
 
-    The savings telemetry payload is three fields. The surface value is a LOCAL
-    receipt only. Whether it should ever be sent is #424 and is the maintainer's
-    call; this test exists so that decision stays a decision instead of drifting
-    in by accident.
+    The surface value is a LOCAL receipt only. A future refactor cannot add a
+    surface dimension to the payload as a side effect, and a future session
+    cannot re-derive it as a good idea without deliberately deleting a test that
+    explains why not.
     """
 
-    def test_the_telemetry_payload_carries_no_surface_field(self):
+    def _payload_literal(self) -> str:
         import inspect
         from jcodemunch_mcp.storage import token_tracker
         src = inspect.getsource(token_tracker)
         idx = src.find('json={"delta"')
         assert idx != -1, "telemetry payload shape changed; re-read this test"
-        payload_line = src[idx:idx + 200]
-        assert "surface" not in payload_line, (
-            "a surface dimension reached the telemetry payload; that is #424 and "
-            "it is the maintainer's decision, not a refactor's side effect"
+        return src[idx:idx + 200].split("}", 1)[0]
+
+    def test_the_telemetry_payload_carries_no_surface_field(self):
+        assert "surface" not in self._payload_literal(), (
+            "a surface dimension reached the telemetry payload; #424 decided "
+            "against that, so this is a decision to re-open, not a refactor"
+        )
+
+    def test_the_payload_is_still_exactly_three_fields(self):
+        """Tripwire for the disclosure below. Any new field must fail here first,
+        so the SECURITY.md sentence cannot silently fall out of date."""
+        literal = self._payload_literal()
+        keys = {"delta", "total", "anon_id"}
+        found = {k for k in keys if f'"{k}"' in literal}
+        assert found == keys, f"expected {keys}, found {found} in {literal!r}"
+        assert literal.count(":") == 3, (
+            f"payload gained or lost a field: {literal!r}. Update SECURITY.md's "
+            f"'exactly three fields' sentence in the same change."
+        )
+
+    def test_security_md_enumerates_every_field_that_is_sent(self):
+        """v1.108.261: this said 'only sends an integer delta plus an anonymous
+        UUID' while also sending the lifetime total. Same category of number, but
+        a sentence with 'only' in it must name what actually goes out."""
+        from pathlib import Path
+        doc = Path(__file__).resolve().parents[1] / "SECURITY.md"
+        text = doc.read_text(encoding="utf-8")
+        idx = text.find("community token-savings")
+        assert idx != -1, "the disclosure sentence moved; re-target this test"
+        sentence = text[idx:idx + 400]
+        assert "three fields" in sentence
+        assert "delta" in sentence
+        assert "lifetime total" in sentence, "the total is sent and must be named"
+        assert "UUID" in sentence
+        assert "configuration value" in sentence, (
+            "the #424 decision is part of what this sentence promises"
         )

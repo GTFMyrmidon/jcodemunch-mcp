@@ -256,9 +256,10 @@ The performance and ranking telemetry introduced in v1.74.0–v1.80.0 is
 * `~/.code-index/embed_canary.json` (16-string drift canary) is written
   only by an explicit `check_embedding_drift(capture=true)` invocation.
 * No telemetry is sent over the network. The community token-savings
-  counter (`share_savings`) is unrelated and only sends an integer
-  delta plus an anonymous UUID — never query strings, paths, or repo
-  names. Disable with `JCODEMUNCH_SHARE_SAVINGS=0`.
+  counter (`share_savings`) is unrelated and sends exactly three fields:
+  an integer delta, an integer lifetime total, and an anonymous UUID —
+  never query strings, paths, repo names, or any configuration value.
+  Disable with `JCODEMUNCH_SHARE_SAVINGS=0`.
 * Stored ranking events include the **literal query string** (truncated
   result-id list, no source code). Treat the storage path with the same
   care as any local source you index.

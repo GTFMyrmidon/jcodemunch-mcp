@@ -2,6 +2,59 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.261] - 2026-08-07 - A disclosure sentence that names every field
+
+#424 is decided and closed: **the anonymous savings record does not carry a
+config dimension.** No sender change, no new field, and the disclosure sentences
+that were sequenced behind that decision stay as they are, because nothing about
+what is sent changed.
+
+Verifying that rather than assuming it turned up one sentence that was already
+incomplete.
+
+```
+SECURITY.md   "only sends an integer delta plus an anonymous UUID"
+actual        {"delta": ..., "total": ..., "anon_id": ...}
+```
+
+The lifetime `total` is sent and was not named, in a sentence containing the word
+"only". It is the same category of number as the delta, so this is an
+incompleteness rather than an undisclosed kind of data, and the other two sites
+(README and SECURITY's background-behavior list) both say "counts" and "counters"
+in the plural and were already correct.
+
+It still matters. That paragraph is the one a security reviewer reads, "only" is
+a promise about the complete set, and this project has already been quarantined
+once over the gap between what a package does and what its documentation says it
+does. The decision to add nothing is exactly what makes the existing sentence the
+final word on the subject, so it should be exactly right.
+
+Now reads:
+
+> The community token-savings counter (`share_savings`) is unrelated and sends
+> exactly three fields: an integer delta, an integer lifetime total, and an
+> anonymous UUID — never query strings, paths, repo names, or any configuration
+> value.
+
+The trailing clause carries the #424 decision into the disclosure itself.
+
+### Enforced, not just corrected
+
+Two tests, because a convention needs a test rather than a habit:
+
+- The payload literal must remain exactly three known fields. A fourth fails
+  here first and names SECURITY.md in the failure message, so the code change
+  and the disclosure edit cannot separate.
+- The SECURITY.md sentence must name delta, lifetime total, UUID, and the
+  no-configuration-value promise. It fails against the old wording, which is how
+  the fix was verified.
+
+`test_the_telemetry_payload_carries_no_surface_field` now records that #424 was
+decided rather than pending, so a future session cannot re-derive the field as a
+good idea without deliberately deleting a test that explains why not.
+
+No behaviour change. Documentation and tests only.
+
 ## [1.108.260] - 2026-08-07 - A receipt that confirms your typo
 
 Found while re-checking #424. Not the issue itself, which stays open and is the
