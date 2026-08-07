@@ -9,10 +9,11 @@ PostToolUse — auto-reindex after Edit/Write to keep the index fresh.
 Both read JSON from stdin and write JSON to stdout per the Claude Code
 hooks specification.
 
-Output channel discipline: anything meant for the *model* goes out as
-``hookSpecificOutput.additionalContext`` (see ``_emit_additional_context``).
-Neither stderr-on-exit-0 nor top-level ``systemMessage`` reaches the model —
-both surface to the user — so a nudge written to either is silently inert.
+Output channels — the one rule this module turns on: a hook that exits 0 reaches
+the model ONLY via ``hookSpecificOutput.additionalContext``. Both stderr and
+top-level ``systemMessage`` surface to the user instead, so steering text written
+to either is silently inert. Exit 2 does feed stderr to the model, but it also
+blocks the call, which is not what an advisory nudge wants.
 """
 
 import json
@@ -125,24 +126,16 @@ def _emit_pretooluse_deny(reason: str) -> int:
 
 
 def _emit_additional_context(event_name: str, text: str) -> int:
-    """Deliver ``text`` into the *model's* context for ``event_name``, and exit 0.
+    """Emit model-facing additionalContext for an exit-0 hook.
 
-    ``hookSpecificOutput.additionalContext`` is the only channel that reaches the
-    model from a hook that exits 0. Claude Code wraps the string in a system
-    reminder and inserts it where the hook fired. Two channels that look
-    equivalent are not:
+    Not available on every event — PreCompact and TaskCompleted have no such
+    channel.
 
-    * **stderr on exit 0** — routed to the transcript/debug log. On most events
-      it is shown to the user, never to the model. Only exit code 2 feeds stderr
-      back to the model, and on PreToolUse that also blocks the call.
-    * **top-level ``systemMessage``** — a warning shown to *the user*, not the
-      model ("unlike on every other event, where you see the systemMessage and
-      Claude doesn't"). Fine for user-facing notices, useless for steering.
-
-    Supported on SessionStart, Setup, SubagentStart, UserPromptSubmit,
-    UserPromptExpansion, PreToolUse, PostToolUse, PostToolUseFailure,
-    PostToolBatch, Stop, and SubagentStop. NOT on PreCompact — see
-    ``run_precompact``. Strings are capped at 10,000 characters by the harness.
+    Past 10,000 characters the text is NOT truncated: Claude Code writes it to a
+    file and hands the model a path plus a short preview. Nothing is lost, but the
+    model pays a re-read to see it, so keep emissions well under that. Measured on
+    this repo's index: the SubagentStart briefing is ~866 characters, and snapshot
+    plus landmarks ~91.
     """
     print(json.dumps({
         "hookSpecificOutput": {
@@ -307,10 +300,7 @@ def _path_overlaps(root: str, source_roots: list[str]) -> bool:
 def _nudge_grep(tool_input: dict, cwd: str) -> int:
     """Grep PreToolUse branch: when the search targets an indexed repo, steer
     the agent to the credited jcm retrieval routes first. Allows the Grep
-    regardless (exit 0, no permissionDecision) — this is a nudge, not a block.
-
-    The nudge rides ``additionalContext`` because that is the only channel a
-    hook exiting 0 has to the model; see ``_emit_additional_context``."""
+    regardless (exit 0, no permissionDecision) — this is a nudge, not a block."""
     if not _grep_nudge_enabled():
         return 0
     roots = _indexed_source_roots()
@@ -467,24 +457,19 @@ def run_copilot_posttooluse() -> int:
     return 0
 
 
-def run_precompact() -> int:
-    """PreCompact hook: generate session snapshot before context compaction.
+def _build_session_snapshot() -> "tuple[str, bool]":
+    """Render the session snapshot, returning ``(text, used_fallback)``.
 
-    Reads hook JSON from stdin. Builds a compact snapshot of the current
-    session state and returns it as a message for context injection.
+    Shared by ``run_precompact`` (which reports it to the user before compaction)
+    and ``run_sessionstart`` (which injects it into the model afterwards), so the
+    two can never drift into describing the same session differently.
 
-    Returns exit code (always 0 — errors are swallowed to avoid blocking).
+    The hook runs as a SEPARATE process from the MCP server, so the in-process
+    SessionJournal is empty (#334). Read the live journal the server persists
+    incrementally first; fall back to the in-process journal (covers embedded
+    invocations); finally emit an explicit "no live session" message rather than
+    a misleading zero-state snapshot.
     """
-    try:
-        _note_transcript_root(json.load(sys.stdin))  # Also validates stdin
-    except (json.JSONDecodeError, ValueError):
-        return 0
-
-    # The hook runs as a SEPARATE process from the MCP server, so the in-process
-    # SessionJournal is empty (#334). Read the live journal the server persists
-    # incrementally first; fall back to the in-process journal (covers embedded
-    # invocations); finally emit an explicit "no live session" message rather
-    # than a misleading zero-state snapshot.
     snapshot_text = ""
     live_context = None
     try:
@@ -506,40 +491,85 @@ def run_precompact() -> int:
         except Exception:
             snapshot_text = ""
 
-    used_fallback = False
     if not snapshot_text:
         # Honest fallback — never emit a healthy-looking zero-state snapshot.
-        snapshot_text = _precompact_no_journal_message()
-        used_fallback = True
+        return _precompact_no_journal_message(), True
 
     # Enrich with structural landmarks (PageRank top-N) and recently-changed
     # symbols. Seed from the live journal context when we have one so landmarks
     # work out-of-process too; skip entirely on the no-journal fallback.
-    if not used_fallback:
-        try:
-            landmarks = _build_landmark_section(context=live_context)
-            if landmarks:
-                snapshot_text += landmarks
-        except Exception:
-            pass  # Landmark enrichment must not block compaction
+    try:
+        landmarks = _build_landmark_section(context=live_context)
+        if landmarks:
+            snapshot_text += landmarks
+    except Exception:
+        pass  # Landmark enrichment must not block compaction
 
-    # PreCompact genuinely has no additionalContext channel — its only JSON
-    # control is the top-level decision/block pair, so systemMessage is the sole
-    # non-blocking output. Note what that means: this snapshot reaches the *user*,
-    # not the post-compaction model, so it does not survive compaction as context
-    # the way the docstring's "context injection" implies.
-    #
-    # The event that CAN inject post-compaction context is SessionStart with
-    # matcher "compact", which fires after compaction completes and does support
-    # hookSpecificOutput.additionalContext. Routing the snapshot there is the real
-    # fix for context survival, but it is a behavioral change (a new hook
-    # registration in `init`) rather than a channel correction, so it stays out of
-    # this bug-fix pass. Tracked separately.
+    return snapshot_text, False
+
+
+def run_precompact() -> int:
+    """PreCompact hook: report the snapshot to the user before compaction.
+
+    PreCompact has no additionalContext channel, so this cannot reach the model;
+    ``run_sessionstart`` restores it there afterwards.
+
+    Returns exit code (always 0 — errors are swallowed to avoid blocking).
+    """
+    try:
+        _note_transcript_root(json.load(sys.stdin))  # Also validates stdin
+    except (json.JSONDecodeError, ValueError):
+        return 0
+
+    snapshot_text, _ = _build_session_snapshot()
     result = {
         "systemMessage": snapshot_text,
     }
     json.dump(result, sys.stdout)
     return 0
+
+
+def run_sessionstart() -> int:
+    """SessionStart hook: restore the session snapshot to the model.
+
+    Injects on compact/resume/fork, where the persisted journal still describes
+    this session. Stays silent on startup/clear — an unrelated session's journal
+    would present stale files as current focus.
+
+    Returns exit code (always 0 — errors are swallowed to avoid blocking).
+    """
+    try:
+        data = json.load(sys.stdin)
+    except (json.JSONDecodeError, ValueError):
+        return 0
+
+    # Earliest hook to fire on a resumed session, so this is the earliest point
+    # a custom-profile transcript root can be learned (#421) — every other hook
+    # waits for a first Read or Edit. Registered BEFORE the source gate, because
+    # the root is a property of the session, not of whether we inject anything.
+    _note_transcript_root(data)
+
+    source = (data.get("source") or "").strip().lower()
+    if source not in {"compact", "resume", "fork"}:
+        return 0  # Fresh session — no prior state worth restoring.
+
+    try:
+        snapshot_text, used_fallback = _build_session_snapshot()
+    except Exception:
+        return 0  # Never block session startup.
+
+    if used_fallback or not snapshot_text.strip():
+        return 0  # Do not inject the user-facing no-journal fallback.
+
+    label = {
+        "compact": "restored after compaction",
+        "resume": "restored on resume",
+        "fork": "carried into this fork",
+    }[source]
+    return _emit_additional_context(
+        "SessionStart",
+        f"## jCodemunch session state ({label})\n\n{snapshot_text}",
+    )
 
 
 def _precompact_no_journal_message() -> str:
@@ -836,14 +866,9 @@ def run_taskcomplete() -> int:
         if "unreferenced_symbols" in diag:
             parts.append(f"**Unreferenced:** {', '.join(f'`{s}`' for s in diag['unreferenced_symbols'][:5])}")
 
-    # TaskCompleted is the one diagnostic event with no additionalContext channel:
-    # per the hooks reference its only model-facing route is exit code 2, which
-    # feeds stderr back as feedback *and* refuses to mark the task complete.
-    # These findings are advisory (a "possibly orphaned" symbol is often a fresh
-    # helper with its caller still unwritten), so blocking completion on them
-    # would be wrong. Keep systemMessage — a user-facing report is the honest
-    # ceiling here, and the user can act on it — rather than pretend the model
-    # will read it. See _emit_additional_context for the channel matrix.
+    # TaskCompleted lacks additionalContext; its only model-facing route is exit 2,
+    # which also refuses task completion. These findings are advisory, so keep them
+    # user-facing rather than blocking on them.
     result = {"systemMessage": "\n".join(parts)}
     json.dump(result, sys.stdout)
     return 0
@@ -950,8 +975,4 @@ def run_subagentstart() -> int:
     )
     parts.append("\nUse `plan_turn` to get recommended approach for your task.")
 
-    # additionalContext, not systemMessage: this briefing exists to orient the
-    # subagent, and systemMessage is shown to the user instead of the model.
-    # On SubagentStart the text lands at the start of the subagent's own
-    # conversation, before its first prompt.
     return _emit_additional_context("SubagentStart", "\n".join(parts))

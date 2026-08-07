@@ -1,22 +1,7 @@
-"""Regression tests for hook output *channels* (not content).
+"""Regression tests ensuring model-facing hook output uses additionalContext.
 
-A hook can compute a perfect nudge and still be inert: on a hook that exits 0,
-only ``hookSpecificOutput.additionalContext`` reaches the model. Both other
-plausible-looking channels surface to the user instead —
-
-* stderr on exit 0 → transcript / debug log
-* top-level ``systemMessage`` → "unlike on every other event, where you see the
-  systemMessage and Claude doesn't"
-
-— so a steering message on either is silently discarded. That is exactly what
-shipped in v1.22.5 (the fix for #241, which correctly stopped hard-blocking Read
-but moved the nudge onto stderr) and stayed broken through v1.108.x: the hook
-fired, computed the right text, and the model never saw a word of it.
-
-The pre-existing tests asserted `"search_text" in err`, which *encoded* the
-defect — they passed precisely because the message went nowhere useful. These
-tests assert the delivery channel directly so a future refactor cannot silently
-re-mute the hooks.
+These assert the delivery channel, not message content: a hook can compute a
+perfect nudge and still be inert if it writes to stderr or systemMessage.
 """
 
 import io
@@ -30,6 +15,7 @@ import pytest
 from jcodemunch_mcp.cli.hooks import (
     _emit_additional_context,
     run_pretooluse,
+    run_sessionstart,
     run_subagentstart,
 )
 
@@ -176,11 +162,205 @@ class TestSubagentBriefingReachesSubagent:
 
         rc, out, _ = _run(run_subagentstart, '{"hook_event_name": "SubagentStart"}')
         assert rc == 0
-        if out:  # no-op when nothing is indexed in the ambient environment
-            payload = json.loads(out)
-            assert "systemMessage" not in payload, (
-                "a briefing the subagent cannot read is pointless"
-            )
-            hso = payload["hookSpecificOutput"]
-            assert hso["hookEventName"] == "SubagentStart"
-            assert "search_symbols" in hso["additionalContext"]
+        # Unconditional: the mock store guarantees a repo, so silence here means
+        # the patch stopped taking effect, not an unindexed environment. This also
+        # pins the coupling — run_subagentstart does `from ..storage import
+        # IndexStore` at call time, so patching the module attribute is what
+        # works; rebinding it to a from-import at module scope would break this.
+        assert out, "mocked store should have produced a briefing"
+        payload = json.loads(out)
+        assert "systemMessage" not in payload, (
+            "a briefing the subagent cannot read is pointless"
+        )
+        hso = payload["hookSpecificOutput"]
+        assert hso["hookEventName"] == "SubagentStart"
+        assert "search_symbols" in hso["additionalContext"]
+
+
+class TestSessionStartRestoresSnapshot:
+    """SessionStart restores snapshots for continuing sessions."""
+
+    @pytest.fixture
+    def _snapshot(self, monkeypatch):
+        monkeypatch.setattr(
+            "jcodemunch_mcp.cli.hooks._build_session_snapshot",
+            lambda: ("## Session Snapshot (jCodemunch)\n- src/auth.py (9 reads)", False),
+        )
+
+    def _start(self, source: str) -> tuple[int, str, str]:
+        return _run(run_sessionstart, json.dumps({
+            "hook_event_name": "SessionStart", "source": source,
+        }))
+
+    @pytest.mark.parametrize("source,label", [
+        ("compact", "restored after compaction"),
+        ("resume", "restored on resume"),
+        ("fork", "carried into this fork"),
+    ])
+    def test_injects_on_continuing_sources(self, source, label, _snapshot):
+        """A journal from a continuing session still describes this session."""
+        rc, out, err = self._start(source)
+        assert rc == 0
+        assert err == ""
+        hso = json.loads(out)["hookSpecificOutput"]
+        assert hso["hookEventName"] == "SessionStart"
+        assert label in hso["additionalContext"]
+        assert "src/auth.py" in hso["additionalContext"]
+
+    @pytest.mark.parametrize("source", ["startup", "clear", "", "unknown"])
+    def test_silent_on_fresh_sessions(self, source, _snapshot):
+        """Restoring an unrelated session's state would misdirect the model."""
+        assert self._start(source) == (0, "", "")
+
+    def test_silent_when_no_journal(self, monkeypatch):
+        """The no-journal fallback is user-facing text; the model gains nothing
+        from being told no session data was found."""
+        monkeypatch.setattr(
+            "jcodemunch_mcp.cli.hooks._build_session_snapshot",
+            lambda: ("No live session journal was found.", True),
+        )
+        assert self._start("compact") == (0, "", "")
+
+    def test_silent_on_blank_snapshot(self, monkeypatch):
+        monkeypatch.setattr(
+            "jcodemunch_mcp.cli.hooks._build_session_snapshot",
+            lambda: ("   \n  ", False),
+        )
+        assert self._start("compact") == (0, "", "")
+
+    def test_never_blocks_startup_on_error(self, monkeypatch):
+        """A snapshot failure must not take the session down with it."""
+        def boom():
+            raise RuntimeError("journal unreadable")
+        monkeypatch.setattr(
+            "jcodemunch_mcp.cli.hooks._build_session_snapshot", boom
+        )
+        assert self._start("compact") == (0, "", "")
+
+    def test_invalid_json_is_tolerated(self):
+        assert _run(run_sessionstart, "not json") == (0, "", "")
+
+    def test_shares_snapshot_builder_with_precompact(self, monkeypatch):
+        """Both hooks must describe the same session identically — one builder."""
+        from jcodemunch_mcp.cli.hooks import run_precompact
+
+        calls = []
+
+        def fake():
+            calls.append(1)
+            return ("## Session Snapshot (jCodemunch)\n- a.py", False)
+
+        monkeypatch.setattr(
+            "jcodemunch_mcp.cli.hooks._build_session_snapshot", fake
+        )
+        _, pre_out, _ = _run(run_precompact, '{"hook_event_name": "PreCompact"}')
+        _, ss_out, _ = _run(run_sessionstart, json.dumps(
+            {"hook_event_name": "SessionStart", "source": "compact"}
+        ))
+
+        assert len(calls) == 2
+        # PreCompact reports to the user; SessionStart steers the model. Same body.
+        body = "## Session Snapshot (jCodemunch)\n- a.py"
+        assert body in json.loads(pre_out)["systemMessage"]
+        assert body in json.loads(ss_out)["hookSpecificOutput"]["additionalContext"]
+
+
+class TestSessionStartRegistersTranscriptRoot:
+    """SessionStart is the earliest hook on a resumed session, so it is the
+    earliest point a custom-profile transcript root can be learned (#421)."""
+
+    @pytest.fixture
+    def _seen(self, monkeypatch):
+        seen: list = []
+        monkeypatch.setattr(
+            "jcodemunch_mcp.cli.hooks._note_transcript_root", seen.append
+        )
+        return seen
+
+    def _start(self, source: str) -> None:
+        _run(run_sessionstart, json.dumps({
+            "hook_event_name": "SessionStart",
+            "source": source,
+            "transcript_path": "/tmp/p/projects/repo/abc.jsonl",
+        }))
+
+    @pytest.mark.parametrize("source", ["compact", "resume", "fork"])
+    def test_registers_on_continuing_sources(self, source, _seen):
+        self._start(source)
+        assert [d["transcript_path"] for d in _seen] == [
+            "/tmp/p/projects/repo/abc.jsonl"
+        ]
+
+    @pytest.mark.parametrize("source", ["startup", "clear"])
+    def test_registers_even_when_no_snapshot_is_injected(self, source, _seen):
+        """The root is a property of the session, not of whether we inject.
+
+        A fresh session must stay silent on every output channel, but its
+        transcripts still belong to a profile `receipt` needs to know about —
+        so registration happens BEFORE the source gate.
+        """
+        self._start(source)
+        assert len(_seen) == 1
+
+    def test_invalid_json_registers_nothing(self, _seen):
+        _run(run_sessionstart, "not json")
+        assert _seen == []
+
+
+class TestSessionStartIsRegistered:
+    """A correct handler nobody invokes is still a no-op — assert `init` wires it."""
+
+    def _install(self, tmp_path, initial="{}"):
+        from jcodemunch_mcp.cli.init import install_enforcement_hooks
+
+        settings = tmp_path / "settings.json"
+        settings.write_text(initial, encoding="utf-8")
+        with mock.patch(
+            "jcodemunch_mcp.cli.init._settings_json_path", return_value=settings
+        ):
+            install_enforcement_hooks(dry_run=False, backup=False)
+        return json.loads(settings.read_text(encoding="utf-8"))["hooks"]
+
+    def test_sessionstart_hook_installed(self, tmp_path):
+        hooks = self._install(tmp_path)
+        assert "SessionStart" in hooks
+        cmd = hooks["SessionStart"][0]["hooks"][0]["command"]
+        assert cmd.endswith("hook-sessionstart")
+
+    def test_matcher_excludes_fresh_sessions(self, tmp_path):
+        """startup/clear must not match — restoring unrelated state misleads."""
+        hooks = self._install(tmp_path)
+        matcher = hooks["SessionStart"][0]["matcher"]
+        assert matcher == "compact|resume|fork"
+        assert "startup" not in matcher
+        assert "clear" not in matcher
+
+    def test_added_to_existing_install_on_rerun(self, tmp_path):
+        """Upgraders already have the other hooks; SessionStart must still land.
+
+        Duplicate detection is per-subcommand, so an existing PreToolUse entry
+        must not cause the whole merge to skip the new event.
+        """
+        existing = json.dumps({"hooks": {
+            "PreToolUse": [{
+                "matcher": "Read|Grep",
+                "hooks": [{"type": "command",
+                           "command": "jcodemunch-mcp hook-pretooluse"}],
+            }],
+        }})
+        hooks = self._install(tmp_path, existing)
+        assert "SessionStart" in hooks
+        assert len(hooks["PreToolUse"]) == 1  # not duplicated
+
+    def test_idempotent(self, tmp_path):
+        from jcodemunch_mcp.cli.init import install_enforcement_hooks
+
+        settings = tmp_path / "settings.json"
+        settings.write_text("{}", encoding="utf-8")
+        with mock.patch(
+            "jcodemunch_mcp.cli.init._settings_json_path", return_value=settings
+        ):
+            install_enforcement_hooks(dry_run=False, backup=False)
+            install_enforcement_hooks(dry_run=False, backup=False)
+        hooks = json.loads(settings.read_text(encoding="utf-8"))["hooks"]
+        assert len(hooks["SessionStart"]) == 1

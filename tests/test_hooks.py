@@ -61,13 +61,7 @@ def _run_with_stdin(func, stdin_text: str) -> tuple[int, str, str]:
 
 
 def _additional_context(stdout: str, event: str = "PreToolUse") -> str:
-    """Extract the model-facing additionalContext from hook stdout.
-
-    Asserts the nudge went out on the ONE channel a hook exiting 0 can use to
-    reach the model. stderr-on-exit-0 and top-level systemMessage both surface to
-    the user instead, so a nudge on either is inert — that was the bug these
-    tests previously locked in.
-    """
+    """Extract and validate model-facing additionalContext from hook stdout."""
     assert stdout, "hook produced no stdout — nudge cannot reach the model"
     payload = json.loads(stdout)
     hso = payload.get("hookSpecificOutput", {})
@@ -303,8 +297,6 @@ class TestGrepNudge:
             run_pretooluse, _make_grep_input("foo", cwd=str(tmp_path))
         )
         assert rc == 0
-        # _additional_context asserts no permissionDecision is present, which is
-        # what "never blocks" means now that the nudge does use stdout.
         assert _additional_context(out)
 
 
@@ -782,8 +774,6 @@ class TestSubagentStart:
         rc, out, _ = _run_with_stdin(run_subagentstart, '{"hook_event_name": "SubagentStart"}')
         assert rc == 0
         if out:
-            # The briefing must reach the subagent, so it rides additionalContext
-            # rather than systemMessage (which only the user would see).
             msg = _additional_context(out, event="SubagentStart")
             assert "test/repo" in msg
             assert "search_symbols" in msg  # Tool catalog
