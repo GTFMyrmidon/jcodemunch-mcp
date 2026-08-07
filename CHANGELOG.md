@@ -2,6 +2,37 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.256] - 2026-08-07 - The registry entry advertised a claim the README had already retired
+
+`server.json` is the payload the MCP registry publishes, and it is what
+mcp.so, MCPFind, mcprepository and PulseMCP display. Its `description` read:
+
+```
+70+ languages, 95%+ token savings.
+```
+
+That number predates v1.108.233. When the benchmark harness was re-measured
+against pinned upstream commits, the headline moved **against us on purpose**:
+237.3x fell to 27.9x and 99.6% fell to 96.4%. The README was corrected then to
+`86-99% (96% average)`, because per-query results span 86% to 99% and quoting
+only the aggregate overstates the low end by omission. `server.json` was not,
+so the retired claim stayed live on every aggregator that mirrors the registry.
+
+The description now reads `70+ languages, 86-99% token savings.` (98
+characters; the registry caps this field at 100 and validates it *before*
+authenticating, so an overlong string fails after the login round-trip rather
+than before it).
+
+`TOKEN_SAVINGS.md` carried the same retired figure, in the document the README
+cites as its methodology link. It now states the range, the baseline it is
+measured against, and why the larger 99.6% / 237.3x number exists but is not
+the one to lead with.
+
+No behavior change. Shipped as a release rather than a bare commit so the
+registry entry, PyPI, the GitHub release and the plugin manifest all name one
+version, which is the property that makes a stale registry entry detectable at
+a glance in the first place.
+
 ## [1.108.255] - 2026-08-07 - Hook output on channels the model never sees
 
 Contributed by [@georgebashi](https://github.com/jgravelle/jcodemunch-mcp/pull/420).
