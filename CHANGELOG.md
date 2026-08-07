@@ -2,6 +2,65 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.255] - 2026-08-07 - Hook output on channels the model never sees
+
+Contributed by [@georgebashi](https://github.com/jgravelle/jcodemunch-mcp/pull/420).
+
+### Cause
+
+For a Claude Code hook that exits 0, `hookSpecificOutput.additionalContext` is
+the only channel that reaches the model. Both stderr and top-level
+`systemMessage` surface to the *user* instead. (Exit 2 does feed stderr to the
+model, but it also blocks the call, which is not what an advisory nudge wants.)
+
+The advisory Read and Grep nudges and the SubagentStart repo briefing were all
+written to a user-facing channel. The hooks fired, gated correctly, computed the
+right text, and none of it landed. The Read nudge had been in this state since
+v1.22.5, which correctly replaced a hard `Read` deny with an exit-0 stderr
+warning to unbreak Read-before-Edit (#241), and in moving off the deny channel it
+moved off the only channel that reached the model. The comment it left behind
+read `# Stderr text is surfaced to the agent as guidance.`
+
+Nine tests in `test_hooks.py` asserted `"search_text" in err`. **They passed
+because the message went nowhere.**
+
+### Fixed
+
+- Read and Grep nudges and the SubagentStart briefing now emit
+  `additionalContext`. No `permissionDecision` accompanies them, so calls still
+  proceed and Read-before-Edit keeps working.
+- **New `hook-sessionstart` subcommand.** PreCompact can report its snapshot to
+  the user but has no channel to inject it into model context, so the snapshot
+  was computed at the exact moment that state was about to be lost and then
+  discarded. SessionStart restores it afterwards; both hooks share one builder,
+  so they can never describe the same session differently. Registered with
+  matcher `compact|resume|fork` and silent on `startup|clear`, because an unrelated
+  session's journal would present stale files as current focus.
+- TaskCompleted diagnostics stay on `systemMessage` deliberately: that event has
+  no non-blocking model channel, and its only alternative, exit 2, would refuse
+  task completion over advisory findings.
+
+### `config --check` reported a healthy machine as unconfigured
+
+Found while reviewing the above. The hook section of `config --check` kept its
+own hand-written list of expected hooks and tested presence with the substring
+`jcodemunch-mcp <subcommand>`. Two consequences:
+
+- `_hook_invocation()` resolves to an **absolute path** whenever `shutil.which`
+  finds the executable, so the installed command reads
+  `C:/Python314/Scripts/jcodemunch-mcp.EXE hook-pretooluse`. The substring is not
+  in it. On any such machine (most of them) the check reported **every hook
+  not installed** while every hook was installed and working.
+- The list omitted `hook-sessionstart` the day it shipped, and displayed
+  `PreToolUse(Read)` when the installer has written `Read|Grep` since the Grep
+  nudge landed.
+
+Both now derive from `_enforcement_hooks()`, the installer itself, and presence
+is tested with `_extract_jcm_subcommand`, the helper written for exactly these
+path shapes. New `tests/test_config_check_hooks.py` (9; **8 fail pre-fix**, one
+control passes both sides) asserts against the CLI's real stdout, because the
+defect was invisible from every layer beneath it.
+
 ## [1.108.254] - 2026-08-07 - Python package-relative imports built no graph edge at all
 
 Reported by [@faxik](https://github.com/jgravelle/jcodemunch-mcp/issues/423) as an

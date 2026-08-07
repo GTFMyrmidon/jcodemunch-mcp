@@ -8170,13 +8170,18 @@ def _run_config(check: bool = False, init: bool = False, upgrade: bool = False) 
         # ── Hook check ─────────────────────────────────────────────────────────
         section("Hooks check")
         _settings_path = Path.home() / ".claude" / "settings.json"
-        _expected_hooks = {
-            "hook-pretooluse": ("PreToolUse", "Read"),
-            "hook-posttooluse": ("PostToolUse", "Edit|Write"),
-            "hook-precompact": ("PreCompact", ""),
-            "hook-taskcomplete": ("TaskCompleted", ""),
-            "hook-subagent-start": ("SubagentStart", ""),
-        }
+        # DERIVED from the installer, never hand-listed. A hand-maintained copy
+        # reports a hook `init` really installs as "not installed", i.e. the
+        # diagnostic disagreeing with the runtime; `hook-sessionstart` was
+        # omitted from the copy the day it shipped.
+        from .cli.init import _enforcement_hooks, _extract_jcm_subcommand
+        _expected_hooks = {}
+        for _event, _rules in _enforcement_hooks().items():
+            for _rule in _rules:
+                for _h in _rule.get("hooks", []):
+                    _sub = _extract_jcm_subcommand(_h.get("command", ""))
+                    if _sub:
+                        _expected_hooks[_sub] = (_event, _rule.get("matcher", ""))
         if _settings_path.exists():
             try:
                 _settings = json.loads(_settings_path.read_text(encoding="utf-8"))
@@ -8185,11 +8190,15 @@ def _run_config(check: bool = False, init: bool = False, upgrade: bool = False) 
             _installed_hooks = _settings.get("hooks", {})
             _found_any = False
             for _hook_cmd, (_event, _matcher) in _expected_hooks.items():
-                _marker = f"jcodemunch-mcp {_hook_cmd}"
+                # Compare SUBCOMMANDS, not a `jcodemunch-mcp <sub>` substring.
+                # `_hook_invocation()` writes an absolute path whenever
+                # `shutil.which` resolves, so the substring never matched an
+                # `C:/.../jcodemunch-mcp.EXE hook-pretooluse` install and the
+                # check reported every hook missing on a correctly-installed box.
                 _present = False
                 for _rule in _installed_hooks.get(_event, []):
                     for _h in _rule.get("hooks", []):
-                        if _marker in _h.get("command", ""):
+                        if _extract_jcm_subcommand(_h.get("command", "")) == _hook_cmd:
                             _present = True
                             break
                 if _present:
