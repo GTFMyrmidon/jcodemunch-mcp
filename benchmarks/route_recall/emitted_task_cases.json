@@ -1,0 +1,435 @@
+{
+ "source": "rknighton/jcm-route-benchmark-corpus v0.1.0 (MIT-0), data/route_candidates_v0.1.csv sha256 25d09f6ae9e8e668d1a3b9a30755cf8dbd7d063ce08868529cc152fdfe84b86e",
+ "pool": "non-pilot rows only (pilot_runnable != True): 175 of 197, so this round does not overlap the corpus author's own pilot",
+ "seed": 421,
+ "n": 40,
+ "emitting_model": "Claude Opus 5 (session default), one fresh agent per request, no tools, counter front door only",
+ "cases": [
+  {
+   "case_id": "dba641dc-bf4b-5412-9df2-b32e21bce396",
+   "candidate_rank": 29,
+   "prompt_text": "no you had this running fine. you built a script already that was doing this just fine! Where is it? I dont know what it was called but it was all in 1 window and maintained all necessary servers and it did not open new browser windows which is stupid it juts kept the server connection open! YOU ALREADY BUILT IT BEFORE WE DONT NEED A NEW SCRIPT FOR THIS!",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "get_file_tree"
+   ],
+   "emitted_task": "find an existing script in this project that starts and keeps multiple MCP servers running in one persistent window without opening browser windows"
+  },
+  {
+   "case_id": "d8f60c84-ac88-5177-96e9-459e0d57596a",
+   "candidate_rank": 32,
+   "prompt_text": "explain what the dashboard is. Is that the doc_explorer index.html file?",
+   "gold_primary": "get_file_tree",
+   "gold_alts": [
+    "search_text"
+   ],
+   "emitted_task": "find where the dashboard is defined and whether it's the doc_explorer index.html file"
+  },
+  {
+   "case_id": "91175eac-6cf0-54f1-8daa-1fcdb38283bb",
+   "candidate_rank": 37,
+   "prompt_text": "look for other event exceptions like this that our mod might be overriding and causing it to not behave correctly.",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "get_ranked_context"
+   ],
+   "emitted_task": "find other event handlers or hooks in our mod that override or suppress base game event exceptions, so I can check which ones are causing incorrect behavior"
+  },
+  {
+   "case_id": "726164af-1ca5-5a49-b502-195c2f520062",
+   "candidate_rank": 48,
+   "prompt_text": "Is the Wolfram language in that report a language that's supported by JCodemunch?",
+   "gold_primary": "search_text",
+   "gold_alts": [],
+   "emitted_task": "Check whether Wolfram Language is one of the programming languages jcodemunch-mcp supports for indexing and parsing"
+  },
+  {
+   "case_id": "42a8fe3e-a244-5419-a1bc-d7984145fa79",
+   "candidate_rank": 58,
+   "prompt_text": "So you've objectively proven that there's still a gap? That the new line count guard only detects missing lines, and a cache truncated inside its final line preserves the new line count and still returns git_sha_match?",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_symbol_source"
+   ],
+   "emitted_task": "Verify whether the cache staleness guard detects a cache file truncated in the middle of its final line: check if the line-count comparison and git_sha_match validation can both pass on a partially truncated cache, and find the code that computes the line count and the git sha match"
+  },
+  {
+   "case_id": "77839e69-6c59-5dd3-88fb-38dcc0883e86",
+   "candidate_rank": 64,
+   "prompt_text": "im not sure I understand. if the ConstraintScorer doesnt work for creating schedules what is it for?? Again we can't algorithmically just build the perfect schedule in larger more complex environments. Or we could do that in a first \"rough\" pass and have a secondary optimization phase maybe that moves people around to better fit the forecast DEMAND shape after a baseline schedule is set maybe",
+   "gold_primary": "get_symbol_source",
+   "gold_alts": [
+    "search_symbols"
+   ],
+   "emitted_task": "find where ConstraintScorer is defined and used in the scheduling engine, and how it relates to schedule generation vs optimization"
+  },
+  {
+   "case_id": "69af8d15-7c38-5aff-9acb-a19c0986cd02",
+   "candidate_rank": 75,
+   "prompt_text": "Does our context bundle generator also collect our global environment skills and our automations running in our environment?",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_symbol_source"
+   ],
+   "emitted_task": "Determine whether the get_context_bundle context bundle generator in jcodemunch also collects global environment skills and running automations, or only repository code symbols and imports"
+  },
+  {
+   "case_id": "d77bd7e2-b7e4-5e91-8782-da1deeb159d0",
+   "candidate_rank": 78,
+   "prompt_text": "When I push the button now to capture, does it capture only the most recent answer from the AI, or does it capture the entire conversation?",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_call_hierarchy"
+   ],
+   "emitted_task": "find where the capture button handler collects its payload, to determine whether it captures only the latest AI response or the full conversation"
+  },
+  {
+   "case_id": "23126fd8-ccf3-5881-8474-fd035eb134a0",
+   "candidate_rank": 80,
+   "prompt_text": "I also want to know if the scale matters for the number of files, or if it matters only for the number of symbols. Is the effect the same with 10 files and 1,000 symbols? Is it the same as 100 files and 1,000 symbols?",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_symbol_source"
+   ],
+   "emitted_task": "Determine whether the context-assembly scale parameter is driven by file count or symbol count, comparing 10 files with 1,000 symbols versus 100 files with 1,000 symbols"
+  },
+  {
+   "case_id": "c7c72675-9bdc-59ef-b660-04ba5a6997da",
+   "candidate_rank": 83,
+   "prompt_text": "I guess I am now also wondering if provided intervals are normalized to the least common denominator for optimizer scoring or if larger intervals mixed with shorter ones would have difficult to understand scoring consequences?",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_symbol_source"
+   ],
+   "emitted_task": "How does the optimizer normalize or weight provided intervals when scoring, and does mixing long and short intervals distort the score?"
+  },
+  {
+   "case_id": "1565e1bf-089e-5e5f-9e1f-f4b68453dd5d",
+   "candidate_rank": 96,
+   "prompt_text": "Can you check our project to determine if we have any kind of load balancing for the database so that data can be ingested without interrupting things like memory capture and other MCP tools running at the same time? Essentially, I just want to ensure that we don't overload the capacity of the VPS or the database such that it prevents some services from operating or causes other problems. Do we currently have any checks for this in the system? Any kind of load balancing or intelligent processing throttles? I think there's some work in place to ensure that everything keeps running even if it runs at a slightly reduced speed, especially things like bulk imports. If I drop a couple of GB of files in for ingestion, that can take a while, and I wouldn't want that to prevent the system from being used. If there's a priority stack on it, I would say the MCP tools would be tier 1, top importance, and then bulk ingest of files would be secondary.",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "search_text"
+   ],
+   "emitted_task": "find existing load balancing, throttling, queue prioritization, backpressure, or rate limiting for database ingestion and bulk file imports so MCP tool requests stay responsive under load"
+  },
+  {
+   "case_id": "539874af-acd6-5d7c-90e8-1efee16f6c29",
+   "candidate_rank": 97,
+   "prompt_text": "when the game updates and we have the old decompiled code, and we run decompiler again for new code, will they allow us to generate diffs to quickly identify changes?",
+   "gold_primary": "get_symbol_diff",
+   "gold_alts": [
+    "search_symbols"
+   ],
+   "emitted_task": "compare two decompiled versions of the game code and generate a diff of what changed between the old and new builds"
+  },
+  {
+   "case_id": "4143abdd-a492-5fda-b53e-827ee600ebc3",
+   "candidate_rank": 98,
+   "prompt_text": "where are we keeping track of task management time stamps method? I think we discussed using the interval between git commits with a 2h default threshold to call it a non-work period. we don't need truly perfect tracking but having something in place to be a little more accurate than estimates would be very helpful.",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols"
+   ],
+   "emitted_task": "find where task management time tracking is documented, including any design using git commit interval gaps with a 2 hour idle threshold"
+  },
+  {
+   "case_id": "4c6c4654-219d-515e-b753-a7b12d23f1e0",
+   "candidate_rank": 104,
+   "prompt_text": "All right, now we need to understand how those build plans work. I don't understand how they work because not every building is accessible on the first year of the game. A lot of buildings have to be researched, and we will want to use them once they're available, but before they're available, what do we use? Will those build plans allow the old buildings to be upgraded with new buildings, or allow old buildings that are not able to be upgraded to be torn down so that we can build a more efficient new building in their place? I need to know how these work. I need to know what it actually looks like.",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "get_file_content"
+   ],
+   "emitted_task": "find where build plans are defined and executed in this game codebase, including how they handle buildings that are locked behind research/tech unlocks, and whether a plan can upgrade an existing building, replace it, or demolish and rebuild it"
+  },
+  {
+   "case_id": "d13ad3b5-fce2-51f3-92ba-1e44b50a31a7",
+   "candidate_rank": 105,
+   "prompt_text": "how exhaustive is the CLI for the documentation database? Allow you to 1-command add a paralel task like Documentation Explorer?",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_file_outline",
+    "search_text"
+   ],
+   "emitted_task": "assess how complete the jdocmunch-mcp documentation-database CLI is, and whether it supports adding a parallel task/agent like a Documentation Explorer in one command"
+  },
+  {
+   "case_id": "12731df3-7ffc-5471-865a-1a0116e2d76c",
+   "candidate_rank": 109,
+   "prompt_text": "is it using version numbers for up to date checks?? It needs to use last changed file checks. I dont necessarily change the file version for every micro-change while developing the mods",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "search_text",
+    "get_symbol_source"
+   ],
+   "emitted_task": "Find where the up-to-date/staleness check is implemented and whether it compares version numbers instead of file modification times or content hashes"
+  },
+  {
+   "case_id": "0ea5182a-4b80-5663-9ebb-81ce63c261d7",
+   "candidate_rank": 111,
+   "prompt_text": "\"Your own - just drop a file in Sounds/ folder\" thats oversimplified.. dont they also have to add the name of the file to a config or something? it will not auto recognize and choose a file to use and cant even if we wanted to. we cant know which they prefer if there is more than 1",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "get_file_tree",
+    "search_symbols"
+   ],
+   "emitted_task": "Find where custom sound files are configured and how a sound file is selected at runtime, to check whether dropping a file into the Sounds/ folder is enough or if the filename must also be registered in a config setting"
+  },
+  {
+   "case_id": "9a2708c4-87eb-5106-a69e-0bfb494d3013",
+   "candidate_rank": 113,
+   "prompt_text": "as a sanity check how safe is this connection? How parralel is it? For read-only operations can multiple clients read data at the same time?",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_symbol_source",
+    "search_text"
+   ],
+   "emitted_task": "Assess concurrency and safety of this MCP connection: is it read-only, can multiple clients query the index in parallel at the same time, and what locking or isolation model does it use?"
+  },
+  {
+   "case_id": "34ef5712-7450-515b-9d00-4938c9208488",
+   "candidate_rank": 114,
+   "prompt_text": "in this test, other than not crashing, what does it actually do with those invalid patterns? \"Constraint Violations - Handle invalid buckets without crash (PASS)\"",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "get_symbol_source",
+    "get_file_content"
+   ],
+   "emitted_task": "find the test named \"Handle invalid buckets without crash\" and show its source and assertions"
+  },
+  {
+   "case_id": "334ad0d3-459e-5506-ac5d-62896d4fb875",
+   "candidate_rank": 116,
+   "prompt_text": "What if it gets interrupted part-way through from any random cause that causes the process to stop? Maybe the VPS goes down, for example. Is the process resumable without having to start over?",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "search_text",
+    "get_symbol_source"
+   ],
+   "emitted_task": "Determine whether a long-running indexing or embedding process can resume from where it stopped after an interruption such as a crashed or restarted VPS, rather than starting over from scratch - find checkpoint, resume, and partial-state handling in the code"
+  },
+  {
+   "case_id": "0faaff13-ac4a-509f-94b2-62f8a8492d14",
+   "candidate_rank": 130,
+   "prompt_text": "is there not at least one transpiler in there? I think maybe for refueling actions? None listed",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "get_file_outline"
+   ],
+   "emitted_task": "find transpiler or code-translation symbols in the codebase, especially anything related to refueling actions"
+  },
+  {
+   "case_id": "01533f57-dd07-53b7-9a2a-e99f6df46fad",
+   "candidate_rank": 138,
+   "prompt_text": "If I've got a 100,000-token document and it has one tiny secret-looking string in it, it will block the ingestion of that entire document for that one tiny string, is that correct?",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_symbol_source",
+    "search_text"
+   ],
+   "emitted_task": "Find where secret detection blocks or skips a document during ingestion and whether it rejects the whole file or only redacts the matching span"
+  },
+  {
+   "case_id": "465d026a-5bb5-50c0-861d-2a9ba73a337a",
+   "candidate_rank": 139,
+   "prompt_text": "go to depth 25 after the first stagnated full iteration. There is no reason to spin wheels at 15 making no improvements. Can you confirm which adjustments the optimizer has access to?",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_related_symbols",
+    "get_symbol_source"
+   ],
+   "emitted_task": "Find where the optimizer's search depth and stagnation/early-stopping logic are configured, and list the full set of tunable parameters the optimizer can adjust"
+  },
+  {
+   "case_id": "0117a398-6fb0-5c7c-9f98-e9be6ad90716",
+   "candidate_rank": 145,
+   "prompt_text": "You didn't even look at the files. We're not using HTML to tackle the expansion state, are we? I'm pretty sure it's just pure CSS, so you're literally making claims based on our past conversation and not on the new files I gave you.",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "get_file_tree",
+    "get_file_content"
+   ],
+   "emitted_task": "find where the expand/collapse state is implemented in the newly added files - is it CSS-only or does it use HTML attributes or JS"
+  },
+  {
+   "case_id": "cb6bfb24-5f2d-5d0e-9f8a-f4bd9fccf25f",
+   "candidate_rank": 147,
+   "prompt_text": "ok i see \"Weave Bonus Weight\" setting. The reccomendation of keeping it small.. can you explain that? How is this distinct from the default weight setting \"Shift Weaving Strength\" Also we now have type bonus in the plugin settings but also the general advanced settings. Shift weaving and type weight should apply to ALL scoring regardless of pluggin so the proper place for these settings in in the regular advanced scoring section not inside individual plugins",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "find_references"
+   ],
+   "emitted_task": "Find where scoring weight settings are defined - \"Weave Bonus Weight\", \"Shift Weaving Strength\", and type bonus weight - in both the plugin settings and the general advanced scoring settings, so I can explain how they differ and move the shared ones out of individual plugins into the global advanced scoring section"
+  },
+  {
+   "case_id": "10d4d696-9f59-5fc7-a3a9-08c3a34e846a",
+   "candidate_rank": 148,
+   "prompt_text": "I see your example forecast has windows of time that are multiple hours but what if our demand forecasts give us the forecast demand for every 30 minute interval? Is that also supported? Is this taking the larger windows of time and breaking them down into smaller intervals for calculation? I guess I'm asking a question a manager wouldn't even consider but I would like to know from a technical standpoint whether this larger time block is expected or if that was just easier for demonstration?",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_symbol_source",
+    "search_text"
+   ],
+   "emitted_task": "Find where demand forecast time windows and interval granularity are defined and handled in the scheduling/forecast code - is the interval length configurable (e.g. 30-minute buckets) or are larger multi-hour blocks assumed, and does the calculation subdivide windows into smaller intervals?"
+  },
+  {
+   "case_id": "d4fdde18-66c9-5466-871b-21ca6cd08f8e",
+   "candidate_rank": 162,
+   "prompt_text": "Verify that the SQLite database for the ledger is compatible with parallel writes and simultaneous writing agents. We could have up to two, three, or four agents trying to send updates to the database at the same time through the CLI. Make sure that the SQLite database is set up with WAL and other configurations to make this as safe as possible.",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "get_file_content"
+   ],
+   "emitted_task": "Verify the ledger's SQLite database is safe for concurrent writes from multiple CLI agents - find where the ledger DB connection is opened and configured, and check for WAL journal mode, busy_timeout, synchronous setting, transaction/locking handling, and connection reuse across processes"
+  },
+  {
+   "case_id": "2cf2de96-fe0f-5823-8af2-fa1189d1ccd9",
+   "candidate_rank": 163,
+   "prompt_text": "great lets review our scoring methods. Is the scoring modular? Not just the yaml file for settings but also the code itself and methods used for scoring on workers and wherever else? I ask because I would like to test out different approaches to scoring. But to do that safely it is easiest if we can just make different scoring components and change between them in a simple way without breaking other code or introducing bugs outside of the new scoring modules themselves. How practical is this? How feasibile is it in this project?",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_related_symbols",
+    "get_dependency_graph"
+   ],
+   "emitted_task": "Assess how modular the scoring system is across config, worker code, and any other scoring call sites, to evaluate swapping in alternative scoring implementations"
+  },
+  {
+   "case_id": "b8941648-039a-5aff-9fb9-8cba25e8d51a",
+   "candidate_rank": 164,
+   "prompt_text": "Does that hook make it impossible for you to start a top-level thread which would fail to close the associated munch tool?",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_call_hierarchy",
+    "search_text"
+   ],
+   "emitted_task": "Determine whether the configured hook makes it impossible to spawn a top-level thread that fails to close its associated munch tool"
+  },
+  {
+   "case_id": "895a33dc-06c8-5930-bcd2-fb87b6344ff1",
+   "candidate_rank": 166,
+   "prompt_text": "we have our 7d2d codebase directory but does that include all the XML files and other supporting files in teh game or is it ONLY the code? Can we also pull in the xml files and things so we dont have to search the install directory? We can keep things organized logically and avoid breaking our decompiler script.",
+   "gold_primary": "get_file_tree",
+   "gold_alts": [
+    "get_repo_outline",
+    "search_text"
+   ],
+   "emitted_task": "index the 7 days to die game XML files and config assets into the existing 7d2d repo index so they're searchable without going to the install directory"
+  },
+  {
+   "case_id": "06ccae02-66a2-5920-946e-a32af24fb501",
+   "candidate_rank": 172,
+   "prompt_text": "It's trying to go to context builder. This is supposed to be reset so we can start at task 1, not go to context builder. What the fuck is stuck in the database that's making it want to keep going backwards?",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "get_file_content"
+   ],
+   "emitted_task": "find why the workflow keeps routing to context builder instead of starting at task 1 after a reset, and what stale session/task state is persisted in the database causing it"
+  },
+  {
+   "case_id": "92619faf-5e7f-54bf-8270-c519c61818e4",
+   "candidate_rank": 173,
+   "prompt_text": "Are these accounting for percentage increases in research? Are these accounting for buildings that increase research by a percentage? Are these accounting for technologies that increase research percentage or research efficiency, if that matters?",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "get_symbol_source"
+   ],
+   "emitted_task": "Find where research point output is calculated, including percentage modifiers from buildings and technologies that boost research rate or efficiency"
+  },
+  {
+   "case_id": "67b54c14-a4e5-5ed0-be87-483bc075f5d4",
+   "candidate_rank": 174,
+   "prompt_text": "on the right side of the shift patterns is a small clear link which I assume would be to clear any filters applied to the nice set of filters we have there. However clicking that does not seem to do anything. Could you look into that and clarify expected function?",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "find_references"
+   ],
+   "emitted_task": "find the \"clear\" link next to the shift patterns filters UI and trace its click handler to see why it doesn't reset the applied filters"
+  },
+  {
+   "case_id": "3e5ebe2b-f70b-5da7-9473-abdbf6390059",
+   "candidate_rank": 181,
+   "prompt_text": "I think maybe the arrows on the bottom for the feedback loop got a little bit confused. We end up with two different color arrows, and I'm not entirely clear why there are two color arrows. I suppose Adjust Alias Thresholds and Graph Policy is different from Add Annotations, Corrected Metadata, Relationship Records. Okay, I think I kind of get it, but it's a little bit less clear than I would like. Adding annotations, corrected metadata, and relationship records are database work, and adjusting alias thresholds in graph policy are configuration and YAML policy work, right? That's why there are two colors, two arrows. They both come up and point to the database.",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "get_file_content",
+    "search_symbols"
+   ],
+   "emitted_task": "Update the feedback loop arrows in the architecture diagram so the two arrow colors are clearly distinguished and labeled: one for database work (add annotations, corrected metadata, relationship records) and one for configuration/YAML policy work (adjust alias thresholds, graph policy), both flowing back into the database"
+  },
+  {
+   "case_id": "56c970e4-3700-525c-9e74-874ca2f579a7",
+   "candidate_rank": 186,
+   "prompt_text": "I hope this doesnt mean if 1 item is listed it disables the detection system... It should be redundant/supplemental not exclusive \"Config items are loaded first and take precedence over dynamic detection.\"",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "get_symbol_source"
+   ],
+   "emitted_task": "Find where config-provided items and dynamic detection are combined, and check whether configured items suppress or disable dynamic detection when non-empty"
+  },
+  {
+   "case_id": "654d4709-f887-5be8-ad22-552c7b58ea1a",
+   "candidate_rank": 192,
+   "prompt_text": "wait why isnt Cornbread listed in the foods?",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "find_references",
+    "get_file_content"
+   ],
+   "emitted_task": "find where the list of foods is defined and why the entry Cornbread is missing from it"
+  },
+  {
+   "case_id": "f80b5caa-5389-525f-a14b-78f15d2d9720",
+   "candidate_rank": 197,
+   "prompt_text": "can the scan itself be chunked if necessary? Can we just let it scan as much as it can scan within, say, 10 milliseconds per frame?",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_symbol_source",
+    "get_call_hierarchy"
+   ],
+   "emitted_task": "Find where the repo scan loop is implemented so it can be chunked into incremental time-budgeted slices (e.g. ~10ms per frame) instead of running to completion in one pass"
+  },
+  {
+   "case_id": "0f46a015-e88a-5e3b-bd72-1de5b2e36a8c",
+   "candidate_rank": 198,
+   "prompt_text": "this is what allows the creation of the schedule \"buckets\" or empty fillable schedules for employees to bid on? Short answer is fine",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_ranked_context",
+    "search_text"
+   ],
+   "emitted_task": "find the code that generates empty shift schedule buckets/slots that employees bid on"
+  },
+  {
+   "case_id": "1967c6f1-c155-5c52-a158-82165b3eb5c2",
+   "candidate_rank": 210,
+   "prompt_text": "I don't even know what J-Munch MCP or Munch Studio Server are. The only tools I know about are JCodemunch, JDocMunch, and JDataMunch. Everything else is supporting tooling or documentation or examples, not actual tools meant to be installed.",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "get_file_tree",
+    "search_symbols"
+   ],
+   "emitted_task": "Correct the tool inventory: remove J-Munch MCP and Munch Studio Server as installable tools, keeping only JCodemunch, JDocMunch, and JDataMunch, and reclassify the rest as supporting tooling, docs, or examples"
+  },
+  {
+   "case_id": "ca746920-bfbf-5125-900d-a95a00805bcd",
+   "candidate_rank": 215,
+   "prompt_text": "the weights in the experimental version of MCTS which we ported over worked perfectly. We should not be reinventing the wheel. If something is broken its because we failed to properly migrate that process. You should start there for working settings. If the settings match the experimental version then that is NOT the problem.",
+   "gold_primary": "get_parity_map",
+   "gold_alts": [
+    "search_text",
+    "get_symbol_diff"
+   ],
+   "emitted_task": "find where MCTS weights and tuning settings are defined and compare them against the experimental MCTS version we ported from, to find migration differences"
+  }
+ ]
+}

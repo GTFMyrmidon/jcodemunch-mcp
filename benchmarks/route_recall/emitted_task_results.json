@@ -1,0 +1,713 @@
+{
+ "summary": {
+  "cases": 40,
+  "catalog_actions": 91,
+  "sample": {
+   "source": "rknighton/jcm-route-benchmark-corpus v0.1.0 (MIT-0), data/route_candidates_v0.1.csv sha256 25d09f6ae9e8e668d1a3b9a30755cf8dbd7d063ce08868529cc152fdfe84b86e",
+   "seed": 421,
+   "pool": "non-pilot rows only (pilot_runnable != True): 175 of 197, so this round does not overlap the corpus author's own pilot",
+   "emitting_model": "Claude Opus 5 (session default), one fresh agent per request, no tools, counter front door only"
+  },
+  "blind_floor": {
+   "strict": {
+    "action": "search_text",
+    "pct": 45.0
+   },
+   "exact": {
+    "action": "search_symbols",
+    "pct": 80.0
+   },
+   "family": {
+    "action": "search_text",
+    "pct": 95.0
+   },
+   "note": "best single constant answer, per metric. A result at or below its own floor is not routing. The floors differ sharply, so no number may be quoted against another metric's bar."
+  },
+  "vs_floor_pts": {
+   "strict@1": -20.0,
+   "exact@1": -27.5,
+   "family@1": -35.0
+  },
+  "route_recall_strict": {
+   "@1": 25.0,
+   "@3": 25.0
+  },
+  "why": {
+   "curated_rule_fired": 31,
+   "catalog_fallback": 9,
+   "recommendations_returned": {
+    "1": 28,
+    "2": 3,
+    "3": 9
+   },
+   "rank1_picks": {
+    "search_symbols": 26,
+    "assemble_task_context": 2,
+    "check_rename_safe": 1,
+    "get_context_bundle": 1,
+    "get_symbol_complexity": 1,
+    "tune_weights": 1,
+    "get_changed_symbols": 1,
+    "announce_model": 1,
+    "get_file_outline": 1,
+    "get_call_hierarchy": 1,
+    "set_tool_tier": 1,
+    "index_repo": 1,
+    "check_edit_safe": 1,
+    "jcodemunch_guide": 1
+   },
+   "note": "A curated rule returns ONE action, so @3 cannot recover from a wrong @1 on those cases -- which is why @3 barely moves. The single dominant rule is /find|locate|where is|look up|search for|definition of/ -> search_symbols, and agent-emitted task strings almost all open with 'find'. Human wording varies far more, so this collapse is specific to the emitted distribution and invisible in the human-phrased corpora."
+  },
+  "label_concentration": {
+   "search_family_share_pct": 87.5,
+   "distinct_primary_actions": 6
+  },
+  "route_recall_exact": {
+   "@1": 52.5,
+   "@3": 55.0
+  },
+  "route_recall_family": {
+   "@1": 60.0,
+   "@3": 65.0
+  },
+  "within_family": {
+   "n": 23,
+   "correct": 10,
+   "pct": 43.5,
+   "note": "of cases routed into the search family at rank 1, how often the exact labeled member was picked"
+  },
+  "leakage": {
+   "mean_name_overlap": 0.129,
+   "emitted_containing_target_name_token": 12
+  },
+  "misses": [
+   "dba641dc-bf4b-5412-9df2-b32e21bce396",
+   "d8f60c84-ac88-5177-96e9-459e0d57596a",
+   "726164af-1ca5-5a49-b502-195c2f520062",
+   "69af8d15-7c38-5aff-9acb-a19c0986cd02",
+   "23126fd8-ccf3-5881-8474-fd035eb134a0",
+   "c7c72675-9bdc-59ef-b660-04ba5a6997da",
+   "539874af-acd6-5d7c-90e8-1efee16f6c29",
+   "d13ad3b5-fce2-51f3-92ba-1e44b50a31a7",
+   "9a2708c4-87eb-5106-a69e-0bfb494d3013",
+   "34ef5712-7450-515b-9d00-4938c9208488",
+   "0117a398-6fb0-5c7c-9f98-e9be6ad90716",
+   "2cf2de96-fe0f-5823-8af2-fa1189d1ccd9",
+   "b8941648-039a-5aff-9fb9-8cba25e8d51a",
+   "895a33dc-06c8-5930-bcd2-fb87b6344ff1",
+   "3e5ebe2b-f70b-5da7-9473-abdbf6390059",
+   "654d4709-f887-5be8-ad22-552c7b58ea1a",
+   "1967c6f1-c155-5c52-a158-82165b3eb5c2",
+   "ca746920-bfbf-5125-900d-a95a00805bcd"
+  ]
+ },
+ "per_case": [
+  {
+   "case_id": "dba641dc-bf4b-5412-9df2-b32e21bce396",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "get_file_tree"
+   ],
+   "emitted_task": "find an existing script in this project that starts and keeps multiple MCP servers running in one persistent window without opening browser windows",
+   "route_actions": [
+    "search_symbols"
+   ],
+   "rank": null,
+   "leak_name": 0.0,
+   "leak_desc": 0.045
+  },
+  {
+   "case_id": "d8f60c84-ac88-5177-96e9-459e0d57596a",
+   "gold_primary": "get_file_tree",
+   "gold_alts": [
+    "search_text"
+   ],
+   "emitted_task": "find where the dashboard is defined and whether it's the doc_explorer index.html file",
+   "route_actions": [
+    "search_symbols"
+   ],
+   "rank": null,
+   "leak_name": 0.333,
+   "leak_desc": 0.133
+  },
+  {
+   "case_id": "91175eac-6cf0-54f1-8daa-1fcdb38283bb",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "get_ranked_context"
+   ],
+   "emitted_task": "find other event handlers or hooks in our mod that override or suppress base game event exceptions, so I can check which ones are causing incorrect behavior",
+   "route_actions": [
+    "search_symbols"
+   ],
+   "rank": 1,
+   "leak_name": 0.0,
+   "leak_desc": 0.0
+  },
+  {
+   "case_id": "726164af-1ca5-5a49-b502-195c2f520062",
+   "gold_primary": "search_text",
+   "gold_alts": [],
+   "emitted_task": "Check whether Wolfram Language is one of the programming languages jcodemunch-mcp supports for indexing and parsing",
+   "route_actions": [
+    "check_rename_safe",
+    "jcodemunch_guide",
+    "check_delete_safe"
+   ],
+   "rank": null,
+   "leak_name": 0.0,
+   "leak_desc": 0.0
+  },
+  {
+   "case_id": "42a8fe3e-a244-5419-a1bc-d7984145fa79",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_symbol_source"
+   ],
+   "emitted_task": "Verify whether the cache staleness guard detects a cache file truncated in the middle of its final line: check if the line-count comparison and git_sha_match validation can both pass on a partially truncated cache, and find the code that computes the line count and the git sha match",
+   "route_actions": [
+    "search_symbols"
+   ],
+   "rank": 1,
+   "leak_name": 0.0,
+   "leak_desc": 0.059
+  },
+  {
+   "case_id": "77839e69-6c59-5dd3-88fb-38dcc0883e86",
+   "gold_primary": "get_symbol_source",
+   "gold_alts": [
+    "search_symbols"
+   ],
+   "emitted_task": "find where ConstraintScorer is defined and used in the scheduling engine, and how it relates to schedule generation vs optimization",
+   "route_actions": [
+    "search_symbols"
+   ],
+   "rank": 1,
+   "leak_name": 0.0,
+   "leak_desc": 0.053
+  },
+  {
+   "case_id": "69af8d15-7c38-5aff-9acb-a19c0986cd02",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_symbol_source"
+   ],
+   "emitted_task": "Determine whether the get_context_bundle context bundle generator in jcodemunch also collects global environment skills and running automations, or only repository code symbols and imports",
+   "route_actions": [
+    "get_context_bundle",
+    "get_ranked_context",
+    "get_session_context"
+   ],
+   "rank": null,
+   "leak_name": 0.5,
+   "leak_desc": 0.13
+  },
+  {
+   "case_id": "d77bd7e2-b7e4-5e91-8782-da1deeb159d0",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_call_hierarchy"
+   ],
+   "emitted_task": "find where the capture button handler collects its payload, to determine whether it captures only the latest AI response or the full conversation",
+   "route_actions": [
+    "search_symbols"
+   ],
+   "rank": 1,
+   "leak_name": 0.0,
+   "leak_desc": 0.048
+  },
+  {
+   "case_id": "23126fd8-ccf3-5881-8474-fd035eb134a0",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_symbol_source"
+   ],
+   "emitted_task": "Determine whether the context-assembly scale parameter is driven by file count or symbol count, comparing 10 files with 1,000 symbols versus 100 files with 1,000 symbols",
+   "route_actions": [
+    "get_symbol_complexity",
+    "get_related_symbols",
+    "get_file_risk"
+   ],
+   "rank": null,
+   "leak_name": 0.5,
+   "leak_desc": 0.13
+  },
+  {
+   "case_id": "c7c72675-9bdc-59ef-b660-04ba5a6997da",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_symbol_source"
+   ],
+   "emitted_task": "How does the optimizer normalize or weight provided intervals when scoring, and does mixing long and short intervals distort the score?",
+   "route_actions": [
+    "tune_weights",
+    "announce_model",
+    "find_implementations"
+   ],
+   "rank": null,
+   "leak_name": 0.0,
+   "leak_desc": 0.059
+  },
+  {
+   "case_id": "1565e1bf-089e-5e5f-9e1f-f4b68453dd5d",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "search_text"
+   ],
+   "emitted_task": "find existing load balancing, throttling, queue prioritization, backpressure, or rate limiting for database ingestion and bulk file imports so MCP tool requests stay responsive under load",
+   "route_actions": [
+    "search_symbols"
+   ],
+   "rank": 1,
+   "leak_name": 0.0,
+   "leak_desc": 0.04
+  },
+  {
+   "case_id": "539874af-acd6-5d7c-90e8-1efee16f6c29",
+   "gold_primary": "get_symbol_diff",
+   "gold_alts": [
+    "search_symbols"
+   ],
+   "emitted_task": "compare two decompiled versions of the game code and generate a diff of what changed between the old and new builds",
+   "route_actions": [
+    "get_changed_symbols"
+   ],
+   "rank": null,
+   "leak_name": 0.333,
+   "leak_desc": 0.167
+  },
+  {
+   "case_id": "4143abdd-a492-5fda-b53e-827ee600ebc3",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols"
+   ],
+   "emitted_task": "find where task management time tracking is documented, including any design using git commit interval gaps with a 2 hour idle threshold",
+   "route_actions": [
+    "search_symbols"
+   ],
+   "rank": 1,
+   "leak_name": 0.0,
+   "leak_desc": 0.045
+  },
+  {
+   "case_id": "4c6c4654-219d-515e-b753-a7b12d23f1e0",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "get_file_content"
+   ],
+   "emitted_task": "find where build plans are defined and executed in this game codebase, including how they handle buildings that are locked behind research/tech unlocks, and whether a plan can upgrade an existing building, replace it, or demolish and rebuild it",
+   "route_actions": [
+    "assemble_task_context",
+    "search_symbols"
+   ],
+   "rank": 2,
+   "leak_name": 0.0,
+   "leak_desc": 0.028
+  },
+  {
+   "case_id": "d13ad3b5-fce2-51f3-92ba-1e44b50a31a7",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_file_outline",
+    "search_text"
+   ],
+   "emitted_task": "assess how complete the jdocmunch-mcp documentation-database CLI is, and whether it supports adding a parallel task/agent like a Documentation Explorer in one command",
+   "route_actions": [
+    "assemble_task_context",
+    "audit_agent_config",
+    "get_signal_chains"
+   ],
+   "rank": null,
+   "leak_name": 0.0,
+   "leak_desc": 0.125
+  },
+  {
+   "case_id": "12731df3-7ffc-5471-865a-1a0116e2d76c",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "search_text",
+    "get_symbol_source"
+   ],
+   "emitted_task": "Find where the up-to-date/staleness check is implemented and whether it compares version numbers instead of file modification times or content hashes",
+   "route_actions": [
+    "search_symbols"
+   ],
+   "rank": 1,
+   "leak_name": 0.0,
+   "leak_desc": 0.083
+  },
+  {
+   "case_id": "0ea5182a-4b80-5663-9ebb-81ce63c261d7",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "get_file_tree",
+    "search_symbols"
+   ],
+   "emitted_task": "Find where custom sound files are configured and how a sound file is selected at runtime, to check whether dropping a file into the Sounds/ folder is enough or if the filename must also be registered in a config setting",
+   "route_actions": [
+    "search_symbols"
+   ],
+   "rank": 1,
+   "leak_name": 0.333,
+   "leak_desc": 0.059
+  },
+  {
+   "case_id": "9a2708c4-87eb-5106-a69e-0bfb494d3013",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_symbol_source",
+    "search_text"
+   ],
+   "emitted_task": "Assess concurrency and safety of this MCP connection: is it read-only, can multiple clients query the index in parallel at the same time, and what locking or isolation model does it use?",
+   "route_actions": [
+    "announce_model",
+    "index_dependency",
+    "index_repo"
+   ],
+   "rank": null,
+   "leak_name": 0.0,
+   "leak_desc": 0.067
+  },
+  {
+   "case_id": "34ef5712-7450-515b-9d00-4938c9208488",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "get_symbol_source",
+    "get_file_content"
+   ],
+   "emitted_task": "find the test named \"Handle invalid buckets without crash\" and show its source and assertions",
+   "route_actions": [
+    "search_symbols"
+   ],
+   "rank": null,
+   "leak_name": 0.333,
+   "leak_desc": 0.071
+  },
+  {
+   "case_id": "334ad0d3-459e-5506-ac5d-62896d4fb875",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "search_text",
+    "get_symbol_source"
+   ],
+   "emitted_task": "Determine whether a long-running indexing or embedding process can resume from where it stopped after an interruption such as a crashed or restarted VPS, rather than starting over from scratch - find checkpoint, resume, and partial-state handling in the code",
+   "route_actions": [
+    "search_symbols"
+   ],
+   "rank": 1,
+   "leak_name": 0.0,
+   "leak_desc": 0.054
+  },
+  {
+   "case_id": "0faaff13-ac4a-509f-94b2-62f8a8492d14",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "get_file_outline"
+   ],
+   "emitted_task": "find transpiler or code-translation symbols in the codebase, especially anything related to refueling actions",
+   "route_actions": [
+    "get_file_outline",
+    "search_symbols"
+   ],
+   "rank": 1,
+   "leak_name": 0.5,
+   "leak_desc": 0.133
+  },
+  {
+   "case_id": "01533f57-dd07-53b7-9a2a-e99f6df46fad",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_symbol_source",
+    "search_text"
+   ],
+   "emitted_task": "Find where secret detection blocks or skips a document during ingestion and whether it rejects the whole file or only redacts the matching span",
+   "route_actions": [
+    "search_symbols"
+   ],
+   "rank": 1,
+   "leak_name": 0.0,
+   "leak_desc": 0.136
+  },
+  {
+   "case_id": "465d026a-5bb5-50c0-861d-2a9ba73a337a",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_related_symbols",
+    "get_symbol_source"
+   ],
+   "emitted_task": "Find where the optimizer's search depth and stagnation/early-stopping logic are configured, and list the full set of tunable parameters the optimizer can adjust",
+   "route_actions": [
+    "search_symbols"
+   ],
+   "rank": 1,
+   "leak_name": 0.5,
+   "leak_desc": 0.091
+  },
+  {
+   "case_id": "0117a398-6fb0-5c7c-9f98-e9be6ad90716",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "get_file_tree",
+    "get_file_content"
+   ],
+   "emitted_task": "find where the expand/collapse state is implemented in the newly added files - is it CSS-only or does it use HTML attributes or JS",
+   "route_actions": [
+    "search_symbols"
+   ],
+   "rank": null,
+   "leak_name": 0.0,
+   "leak_desc": 0.048
+  },
+  {
+   "case_id": "cb6bfb24-5f2d-5d0e-9f8a-f4bd9fccf25f",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "find_references"
+   ],
+   "emitted_task": "Find where scoring weight settings are defined - \"Weave Bonus Weight\", \"Shift Weaving Strength\", and type bonus weight - in both the plugin settings and the general advanced scoring settings, so I can explain how they differ and move the shared ones out of individual plugins into the global advanced scoring section",
+   "route_actions": [
+    "search_symbols"
+   ],
+   "rank": 1,
+   "leak_name": 0.5,
+   "leak_desc": 0.054
+  },
+  {
+   "case_id": "10d4d696-9f59-5fc7-a3a9-08c3a34e846a",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_symbol_source",
+    "search_text"
+   ],
+   "emitted_task": "Find where demand forecast time windows and interval granularity are defined and handled in the scheduling/forecast code - is the interval length configurable (e.g. 30-minute buckets) or are larger multi-hour blocks assumed, and does the calculation subdivide windows into smaller intervals?",
+   "route_actions": [
+    "search_symbols"
+   ],
+   "rank": 1,
+   "leak_name": 0.0,
+   "leak_desc": 0.028
+  },
+  {
+   "case_id": "d4fdde18-66c9-5466-871b-21ca6cd08f8e",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "get_file_content"
+   ],
+   "emitted_task": "Verify the ledger's SQLite database is safe for concurrent writes from multiple CLI agents - find where the ledger DB connection is opened and configured, and check for WAL journal mode, busy_timeout, synchronous setting, transaction/locking handling, and connection reuse across processes",
+   "route_actions": [
+    "search_symbols"
+   ],
+   "rank": 1,
+   "leak_name": 0.0,
+   "leak_desc": 0.083
+  },
+  {
+   "case_id": "2cf2de96-fe0f-5823-8af2-fa1189d1ccd9",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_related_symbols",
+    "get_dependency_graph"
+   ],
+   "emitted_task": "Assess how modular the scoring system is across config, worker code, and any other scoring call sites, to evaluate swapping in alternative scoring implementations",
+   "route_actions": [
+    "get_call_hierarchy"
+   ],
+   "rank": null,
+   "leak_name": 0.0,
+   "leak_desc": 0.091
+  },
+  {
+   "case_id": "b8941648-039a-5aff-9fb9-8cba25e8d51a",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_call_hierarchy",
+    "search_text"
+   ],
+   "emitted_task": "Determine whether the configured hook makes it impossible to spawn a top-level thread that fails to close its associated munch tool",
+   "route_actions": [
+    "set_tool_tier",
+    "jcodemunch_guide",
+    "summarize_repo"
+   ],
+   "rank": null,
+   "leak_name": 0.0,
+   "leak_desc": 0.095
+  },
+  {
+   "case_id": "895a33dc-06c8-5930-bcd2-fb87b6344ff1",
+   "gold_primary": "get_file_tree",
+   "gold_alts": [
+    "get_repo_outline",
+    "search_text"
+   ],
+   "emitted_task": "index the 7 days to die game XML files and config assets into the existing 7d2d repo index so they're searchable without going to the install directory",
+   "route_actions": [
+    "index_repo",
+    "index_file",
+    "index_folder"
+   ],
+   "rank": null,
+   "leak_name": 0.333,
+   "leak_desc": 0.042
+  },
+  {
+   "case_id": "06ccae02-66a2-5920-946e-a32af24fb501",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "get_file_content"
+   ],
+   "emitted_task": "find why the workflow keeps routing to context builder instead of starting at task 1 after a reset, and what stale session/task state is persisted in the database causing it",
+   "route_actions": [
+    "search_symbols"
+   ],
+   "rank": 1,
+   "leak_name": 0.0,
+   "leak_desc": 0.069
+  },
+  {
+   "case_id": "92619faf-5e7f-54bf-8270-c519c61818e4",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "get_symbol_source"
+   ],
+   "emitted_task": "Find where research point output is calculated, including percentage modifiers from buildings and technologies that boost research rate or efficiency",
+   "route_actions": [
+    "search_symbols"
+   ],
+   "rank": 1,
+   "leak_name": 0.0,
+   "leak_desc": 0.053
+  },
+  {
+   "case_id": "67b54c14-a4e5-5ed0-be87-483bc075f5d4",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "find_references"
+   ],
+   "emitted_task": "find the \"clear\" link next to the shift patterns filters UI and trace its click handler to see why it doesn't reset the applied filters",
+   "route_actions": [
+    "search_symbols"
+   ],
+   "rank": 1,
+   "leak_name": 0.5,
+   "leak_desc": 0.091
+  },
+  {
+   "case_id": "3e5ebe2b-f70b-5da7-9473-abdbf6390059",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "get_file_content",
+    "search_symbols"
+   ],
+   "emitted_task": "Update the feedback loop arrows in the architecture diagram so the two arrow colors are clearly distinguished and labeled: one for database work (add annotations, corrected metadata, relationship records) and one for configuration/YAML policy work (adjust alias thresholds, graph policy), both flowing back into the database",
+   "route_actions": [
+    "check_edit_safe",
+    "render_diagram"
+   ],
+   "rank": null,
+   "leak_name": 0.0,
+   "leak_desc": 0.053
+  },
+  {
+   "case_id": "56c970e4-3700-525c-9e74-874ca2f579a7",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "get_symbol_source"
+   ],
+   "emitted_task": "Find where config-provided items and dynamic detection are combined, and check whether configured items suppress or disable dynamic detection when non-empty",
+   "route_actions": [
+    "search_symbols"
+   ],
+   "rank": 1,
+   "leak_name": 0.0,
+   "leak_desc": 0.053
+  },
+  {
+   "case_id": "654d4709-f887-5be8-ad22-552c7b58ea1a",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "find_references",
+    "get_file_content"
+   ],
+   "emitted_task": "find where the list of foods is defined and why the entry Cornbread is missing from it",
+   "route_actions": [
+    "search_symbols"
+   ],
+   "rank": null,
+   "leak_name": 0.5,
+   "leak_desc": 0.133
+  },
+  {
+   "case_id": "f80b5caa-5389-525f-a14b-78f15d2d9720",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_symbol_source",
+    "get_call_hierarchy"
+   ],
+   "emitted_task": "Find where the repo scan loop is implemented so it can be chunked into incremental time-budgeted slices (e.g. ~10ms per frame) instead of running to completion in one pass",
+   "route_actions": [
+    "search_symbols"
+   ],
+   "rank": 1,
+   "leak_name": 0.0,
+   "leak_desc": 0.065
+  },
+  {
+   "case_id": "0f46a015-e88a-5e3b-bd72-1de5b2e36a8c",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_ranked_context",
+    "search_text"
+   ],
+   "emitted_task": "find the code that generates empty shift schedule buckets/slots that employees bid on",
+   "route_actions": [
+    "search_symbols"
+   ],
+   "rank": 1,
+   "leak_name": 0.0,
+   "leak_desc": 0.077
+  },
+  {
+   "case_id": "1967c6f1-c155-5c52-a158-82165b3eb5c2",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "get_file_tree",
+    "search_symbols"
+   ],
+   "emitted_task": "Correct the tool inventory: remove J-Munch MCP and Munch Studio Server as installable tools, keeping only JCodemunch, JDocMunch, and JDataMunch, and reclassify the rest as supporting tooling, docs, or examples",
+   "route_actions": [
+    "jcodemunch_guide",
+    "finalize_handoff",
+    "set_tool_tier"
+   ],
+   "rank": null,
+   "leak_name": 0.0,
+   "leak_desc": 0.038
+  },
+  {
+   "case_id": "ca746920-bfbf-5125-900d-a95a00805bcd",
+   "gold_primary": "get_parity_map",
+   "gold_alts": [
+    "search_text",
+    "get_symbol_diff"
+   ],
+   "emitted_task": "find where MCTS weights and tuning settings are defined and compare them against the experimental MCTS version we ported from, to find migration differences",
+   "route_actions": [
+    "search_symbols"
+   ],
+   "rank": null,
+   "leak_name": 0.0,
+   "leak_desc": 0.143
+  }
+ ]
+}
