@@ -8,6 +8,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 import httpx
 
@@ -80,6 +81,31 @@ except (UnicodeEncodeError, LookupError):
     _CHECK = "+"
     _CROSS = "x"
     _DOT = " - "
+
+
+def _catalog_version(pack_id: str) -> Optional[str]:
+    """Current published version of `pack_id`, or None if it can't be resolved.
+
+    Used only to pin the download URL's CDN cache key. Never raises: every
+    failure mode (network, non-200, malformed JSON, pack absent) returns None
+    and the caller falls back to the unversioned URL.
+    """
+    try:
+        resp = httpx.get(
+            f"{STARTER_PACK_API}?action=catalog",
+            headers=_pack_api_headers(),
+            timeout=15.0,
+            follow_redirects=True,
+        )
+        if resp.status_code != 200:
+            return None
+        for pack in (resp.json() or {}).get("packs", []):
+            if pack.get("id") == pack_id:
+                v = pack.get("version")
+                return str(v) if v else None
+    except Exception:
+        return None
+    return None
 
 
 def _clear_builder_paths(db_path: Path) -> None:
@@ -263,7 +289,21 @@ def _install_pack(
     # Build download URL. The license key travels in the X-JCM-License header,
     # NEVER the URL query string, so it can't land in server/proxy access logs
     # (audit finding V12).
+    #
+    # `v` pins the CDN cache key to a specific build. The unversioned URL never
+    # changed between releases, so hcdn served the PREVIOUS pack for a full day
+    # after each deploy -- on 2026-08-07 that handed out the pack whose indexes
+    # delete themselves on the next server start (#419), hours after the fix
+    # was live. A version-scoped URL cannot be shadowed by a stale entry.
+    #
+    # ⚠ Best-effort by design. If the catalog is unreachable we fetch the
+    # unversioned URL, which still works and now carries a 5-minute server-side
+    # cache instead of 24 hours. Failing the install because a cache hint could
+    # not be resolved would trade a rare staleness window for a hard outage.
+    pack_version = _catalog_version(pack_id)
     url = f"{STARTER_PACK_API}?action=download&pack={pack_id}"
+    if pack_version:
+        url += f"&v={quote(str(pack_version), safe='')}"
     headers = _pack_api_headers(
         {"X-JCM-License": license_key} if license_key else None
     )
