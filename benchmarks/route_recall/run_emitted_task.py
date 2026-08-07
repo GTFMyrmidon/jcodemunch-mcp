@@ -225,10 +225,18 @@ def main() -> int:
                     "floor is not routing. The floors differ sharply, so no number may be "
                     "quoted against another metric's bar.",
         },
+        # The floor is RANK-INVARIANT: a constant answer emits exactly one action,
+        # so it scores the same at @1 and @3. That makes route@3-vs-floor a fair
+        # comparison and the one that matters -- route's job is to hand the caller
+        # a usable shortlist, not to win a single guess on a corpus where 87.5%
+        # of labels sit in one family.
         "vs_floor_pts": {
             "strict@1": round(strict[1] / n * 100 - floor_strict, 1),
+            "strict@3": round(strict[3] / n * 100 - floor_strict, 1),
             "exact@1": round(exact[1] / n * 100 - floor, 1),
+            "exact@3": round(exact[3] / n * 100 - floor, 1),
             "family@1": round(family[1] / n * 100 - floor_family, 1),
+            "family@3": round(family[3] / n * 100 - floor_family, 1),
         },
         "route_recall_strict": {f"@{k}": round(strict[k] / n * 100, 1) for k in ROUTE_KS},
         "why": {

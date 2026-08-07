@@ -24,25 +24,29 @@
    "note": "best single constant answer, per metric. A result at or below its own floor is not routing. The floors differ sharply, so no number may be quoted against another metric's bar."
   },
   "vs_floor_pts": {
-   "strict@1": -20.0,
-   "exact@1": -27.5,
-   "family@1": -35.0
+   "strict@1": -15.0,
+   "strict@3": 17.5,
+   "exact@1": -25.0,
+   "exact@3": -10.0,
+   "family@1": -35.0,
+   "family@3": -25.0
   },
   "route_recall_strict": {
-   "@1": 25.0,
-   "@3": 25.0
+   "@1": 30.0,
+   "@3": 62.5
   },
   "why": {
    "curated_rule_fired": 31,
    "catalog_fallback": 9,
    "recommendations_returned": {
-    "1": 28,
-    "2": 3,
-    "3": 9
+    "1": 2,
+    "2": 27,
+    "3": 11
    },
    "rank1_picks": {
-    "search_symbols": 26,
+    "search_symbols": 24,
     "assemble_task_context": 2,
+    "search_text": 2,
     "check_rename_safe": 1,
     "get_context_bundle": 1,
     "get_symbol_complexity": 1,
@@ -63,17 +67,17 @@
    "distinct_primary_actions": 6
   },
   "route_recall_exact": {
-   "@1": 52.5,
-   "@3": 55.0
+   "@1": 55.0,
+   "@3": 70.0
   },
   "route_recall_family": {
    "@1": 60.0,
-   "@3": 65.0
+   "@3": 70.0
   },
   "within_family": {
    "n": 23,
-   "correct": 10,
-   "pct": 43.5,
+   "correct": 12,
+   "pct": 52.2,
    "note": "of cases routed into the search family at rank 1, how often the exact labeled member was picked"
   },
   "leakage": {
@@ -81,8 +85,6 @@
    "emitted_containing_target_name_token": 12
   },
   "misses": [
-   "dba641dc-bf4b-5412-9df2-b32e21bce396",
-   "d8f60c84-ac88-5177-96e9-459e0d57596a",
    "726164af-1ca5-5a49-b502-195c2f520062",
    "69af8d15-7c38-5aff-9acb-a19c0986cd02",
    "23126fd8-ccf3-5881-8474-fd035eb134a0",
@@ -90,15 +92,11 @@
    "539874af-acd6-5d7c-90e8-1efee16f6c29",
    "d13ad3b5-fce2-51f3-92ba-1e44b50a31a7",
    "9a2708c4-87eb-5106-a69e-0bfb494d3013",
-   "34ef5712-7450-515b-9d00-4938c9208488",
-   "0117a398-6fb0-5c7c-9f98-e9be6ad90716",
    "2cf2de96-fe0f-5823-8af2-fa1189d1ccd9",
    "b8941648-039a-5aff-9fb9-8cba25e8d51a",
    "895a33dc-06c8-5930-bcd2-fb87b6344ff1",
    "3e5ebe2b-f70b-5da7-9473-abdbf6390059",
-   "654d4709-f887-5be8-ad22-552c7b58ea1a",
-   "1967c6f1-c155-5c52-a158-82165b3eb5c2",
-   "ca746920-bfbf-5125-900d-a95a00805bcd"
+   "1967c6f1-c155-5c52-a158-82165b3eb5c2"
   ]
  },
  "per_case": [
@@ -110,9 +108,10 @@
    ],
    "emitted_task": "find an existing script in this project that starts and keeps multiple MCP servers running in one persistent window without opening browser windows",
    "route_actions": [
-    "search_symbols"
+    "search_symbols",
+    "search_text"
    ],
-   "rank": null,
+   "rank": 2,
    "leak_name": 0.0,
    "leak_desc": 0.045
   },
@@ -124,9 +123,10 @@
    ],
    "emitted_task": "find where the dashboard is defined and whether it's the doc_explorer index.html file",
    "route_actions": [
-    "search_symbols"
+    "search_symbols",
+    "search_text"
    ],
-   "rank": null,
+   "rank": 2,
    "leak_name": 0.333,
    "leak_desc": 0.133
   },
@@ -139,7 +139,8 @@
    ],
    "emitted_task": "find other event handlers or hooks in our mod that override or suppress base game event exceptions, so I can check which ones are causing incorrect behavior",
    "route_actions": [
-    "search_symbols"
+    "search_symbols",
+    "search_text"
    ],
    "rank": 1,
    "leak_name": 0.0,
@@ -167,7 +168,8 @@
    ],
    "emitted_task": "Verify whether the cache staleness guard detects a cache file truncated in the middle of its final line: check if the line-count comparison and git_sha_match validation can both pass on a partially truncated cache, and find the code that computes the line count and the git sha match",
    "route_actions": [
-    "search_symbols"
+    "search_symbols",
+    "search_text"
    ],
    "rank": 1,
    "leak_name": 0.0,
@@ -181,7 +183,8 @@
    ],
    "emitted_task": "find where ConstraintScorer is defined and used in the scheduling engine, and how it relates to schedule generation vs optimization",
    "route_actions": [
-    "search_symbols"
+    "search_symbols",
+    "search_text"
    ],
    "rank": 1,
    "leak_name": 0.0,
@@ -211,7 +214,8 @@
    ],
    "emitted_task": "find where the capture button handler collects its payload, to determine whether it captures only the latest AI response or the full conversation",
    "route_actions": [
-    "search_symbols"
+    "search_symbols",
+    "search_text"
    ],
    "rank": 1,
    "leak_name": 0.0,
@@ -257,7 +261,8 @@
    ],
    "emitted_task": "find existing load balancing, throttling, queue prioritization, backpressure, or rate limiting for database ingestion and bulk file imports so MCP tool requests stay responsive under load",
    "route_actions": [
-    "search_symbols"
+    "search_symbols",
+    "search_text"
    ],
    "rank": 1,
    "leak_name": 0.0,
@@ -285,7 +290,8 @@
    ],
    "emitted_task": "find where task management time tracking is documented, including any design using git commit interval gaps with a 2 hour idle threshold",
    "route_actions": [
-    "search_symbols"
+    "search_symbols",
+    "search_text"
    ],
    "rank": 1,
    "leak_name": 0.0,
@@ -301,7 +307,8 @@
    "emitted_task": "find where build plans are defined and executed in this game codebase, including how they handle buildings that are locked behind research/tech unlocks, and whether a plan can upgrade an existing building, replace it, or demolish and rebuild it",
    "route_actions": [
     "assemble_task_context",
-    "search_symbols"
+    "search_symbols",
+    "search_text"
    ],
    "rank": 2,
    "leak_name": 0.0,
@@ -333,7 +340,8 @@
    ],
    "emitted_task": "Find where the up-to-date/staleness check is implemented and whether it compares version numbers instead of file modification times or content hashes",
    "route_actions": [
-    "search_symbols"
+    "search_symbols",
+    "search_text"
    ],
    "rank": 1,
    "leak_name": 0.0,
@@ -348,7 +356,8 @@
    ],
    "emitted_task": "Find where custom sound files are configured and how a sound file is selected at runtime, to check whether dropping a file into the Sounds/ folder is enough or if the filename must also be registered in a config setting",
    "route_actions": [
-    "search_symbols"
+    "search_symbols",
+    "search_text"
    ],
    "rank": 1,
    "leak_name": 0.333,
@@ -380,9 +389,10 @@
    ],
    "emitted_task": "find the test named \"Handle invalid buckets without crash\" and show its source and assertions",
    "route_actions": [
+    "search_text",
     "search_symbols"
    ],
-   "rank": null,
+   "rank": 1,
    "leak_name": 0.333,
    "leak_desc": 0.071
   },
@@ -395,7 +405,8 @@
    ],
    "emitted_task": "Determine whether a long-running indexing or embedding process can resume from where it stopped after an interruption such as a crashed or restarted VPS, rather than starting over from scratch - find checkpoint, resume, and partial-state handling in the code",
    "route_actions": [
-    "search_symbols"
+    "search_symbols",
+    "search_text"
    ],
    "rank": 1,
    "leak_name": 0.0,
@@ -411,7 +422,8 @@
    "emitted_task": "find transpiler or code-translation symbols in the codebase, especially anything related to refueling actions",
    "route_actions": [
     "get_file_outline",
-    "search_symbols"
+    "search_symbols",
+    "search_text"
    ],
    "rank": 1,
    "leak_name": 0.5,
@@ -426,7 +438,8 @@
    ],
    "emitted_task": "Find where secret detection blocks or skips a document during ingestion and whether it rejects the whole file or only redacts the matching span",
    "route_actions": [
-    "search_symbols"
+    "search_symbols",
+    "search_text"
    ],
    "rank": 1,
    "leak_name": 0.0,
@@ -441,7 +454,8 @@
    ],
    "emitted_task": "Find where the optimizer's search depth and stagnation/early-stopping logic are configured, and list the full set of tunable parameters the optimizer can adjust",
    "route_actions": [
-    "search_symbols"
+    "search_symbols",
+    "search_text"
    ],
    "rank": 1,
    "leak_name": 0.5,
@@ -456,9 +470,10 @@
    ],
    "emitted_task": "find where the expand/collapse state is implemented in the newly added files - is it CSS-only or does it use HTML attributes or JS",
    "route_actions": [
-    "search_symbols"
+    "search_symbols",
+    "search_text"
    ],
-   "rank": null,
+   "rank": 2,
    "leak_name": 0.0,
    "leak_desc": 0.048
   },
@@ -471,7 +486,8 @@
    ],
    "emitted_task": "Find where scoring weight settings are defined - \"Weave Bonus Weight\", \"Shift Weaving Strength\", and type bonus weight - in both the plugin settings and the general advanced scoring settings, so I can explain how they differ and move the shared ones out of individual plugins into the global advanced scoring section",
    "route_actions": [
-    "search_symbols"
+    "search_symbols",
+    "search_text"
    ],
    "rank": 1,
    "leak_name": 0.5,
@@ -486,7 +502,8 @@
    ],
    "emitted_task": "Find where demand forecast time windows and interval granularity are defined and handled in the scheduling/forecast code - is the interval length configurable (e.g. 30-minute buckets) or are larger multi-hour blocks assumed, and does the calculation subdivide windows into smaller intervals?",
    "route_actions": [
-    "search_symbols"
+    "search_symbols",
+    "search_text"
    ],
    "rank": 1,
    "leak_name": 0.0,
@@ -501,7 +518,8 @@
    ],
    "emitted_task": "Verify the ledger's SQLite database is safe for concurrent writes from multiple CLI agents - find where the ledger DB connection is opened and configured, and check for WAL journal mode, busy_timeout, synchronous setting, transaction/locking handling, and connection reuse across processes",
    "route_actions": [
-    "search_symbols"
+    "search_symbols",
+    "search_text"
    ],
    "rank": 1,
    "leak_name": 0.0,
@@ -565,7 +583,8 @@
    ],
    "emitted_task": "find why the workflow keeps routing to context builder instead of starting at task 1 after a reset, and what stale session/task state is persisted in the database causing it",
    "route_actions": [
-    "search_symbols"
+    "search_symbols",
+    "search_text"
    ],
    "rank": 1,
    "leak_name": 0.0,
@@ -580,7 +599,8 @@
    ],
    "emitted_task": "Find where research point output is calculated, including percentage modifiers from buildings and technologies that boost research rate or efficiency",
    "route_actions": [
-    "search_symbols"
+    "search_symbols",
+    "search_text"
    ],
    "rank": 1,
    "leak_name": 0.0,
@@ -595,6 +615,7 @@
    ],
    "emitted_task": "find the \"clear\" link next to the shift patterns filters UI and trace its click handler to see why it doesn't reset the applied filters",
    "route_actions": [
+    "search_text",
     "search_symbols"
    ],
    "rank": 1,
@@ -626,7 +647,8 @@
    ],
    "emitted_task": "Find where config-provided items and dynamic detection are combined, and check whether configured items suppress or disable dynamic detection when non-empty",
    "route_actions": [
-    "search_symbols"
+    "search_symbols",
+    "search_text"
    ],
    "rank": 1,
    "leak_name": 0.0,
@@ -641,9 +663,10 @@
    ],
    "emitted_task": "find where the list of foods is defined and why the entry Cornbread is missing from it",
    "route_actions": [
-    "search_symbols"
+    "search_symbols",
+    "search_text"
    ],
-   "rank": null,
+   "rank": 2,
    "leak_name": 0.5,
    "leak_desc": 0.133
   },
@@ -656,7 +679,8 @@
    ],
    "emitted_task": "Find where the repo scan loop is implemented so it can be chunked into incremental time-budgeted slices (e.g. ~10ms per frame) instead of running to completion in one pass",
    "route_actions": [
-    "search_symbols"
+    "search_symbols",
+    "search_text"
    ],
    "rank": 1,
    "leak_name": 0.0,
@@ -671,7 +695,8 @@
    ],
    "emitted_task": "find the code that generates empty shift schedule buckets/slots that employees bid on",
    "route_actions": [
-    "search_symbols"
+    "search_symbols",
+    "search_text"
    ],
    "rank": 1,
    "leak_name": 0.0,
@@ -703,9 +728,10 @@
    ],
    "emitted_task": "find where MCTS weights and tuning settings are defined and compare them against the experimental MCTS version we ported from, to find migration differences",
    "route_actions": [
-    "search_symbols"
+    "search_symbols",
+    "search_text"
    ],
-   "rank": null,
+   "rank": 2,
    "leak_name": 0.0,
    "leak_desc": 0.143
   }

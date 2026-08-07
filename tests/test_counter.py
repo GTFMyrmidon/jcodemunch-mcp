@@ -335,3 +335,62 @@ def test_route_template_falls_back_to_curated_example():
     for rec in out["recommended"]:
         if rec["action"] in counter.EXAMPLES and "_hint" in rec.get("args_template", {}):
             pytest.fail(f"{rec['action']} had a curated example but route used a bare hint")
+
+
+# --------------------------------------------------------------------------- #
+# v1.108.253: "find X" is ambiguous, so route must stop answering it with one
+# confident action. Measured on agent-EMITTED task strings (jcm#422): the broad
+# /find|locate|.../ rule fired on 26 of 40 and returned search_symbols ALONE,
+# while gold split 18 search_text / 17 search_symbols.
+# --------------------------------------------------------------------------- #
+
+_NAMES = {"search_symbols", "search_text", "search_ast", "get_file_outline"}
+
+
+@pytest.mark.parametrize("task", [
+    "find where the dashboard is defined",
+    "locate the pause logic",
+    "where is ConstraintScorer",
+    "look up the retry handler",
+    "search for the config loader",
+])
+def test_ambiguous_find_offers_both_search_actions(task):
+    """The caller must be able to SEE the other side of the coin flip.
+
+    Before this, a curated rule returned exactly one action, so @3 could not
+    recover from a wrong @1 -- 28 of 40 emitted cases had no rank 2 at all.
+    """
+    actions = [r["action"] for r in counter.classify_intent(task, _NAMES)]
+    assert "search_symbols" in actions, task
+    assert "search_text" in actions, task
+    assert len(actions) >= 2, task
+
+
+@pytest.mark.parametrize("task,expected_first", [
+    ("find the string connection refused in the logs", "search_text"),
+    ("locate the error message about a failed handshake", "search_text"),
+    ("find every place we retry a request", "search_text"),
+    ("find all occurrences of the deprecated flag", "search_text"),
+    ('search for "TODO" comments', "search_text"),
+])
+def test_content_signals_rank_search_text_first(task, expected_first):
+    """A symbol-name index cannot match a log line or a quoted literal."""
+    actions = [r["action"] for r in counter.classify_intent(task, _NAMES)]
+    assert actions[0] == expected_first, (task, actions)
+
+
+def test_ambiguous_default_still_leads_with_symbols():
+    """Deliberately NOT flipped. The emitted-corpus split was 18/17, which is
+    not a signal, and reordering to chase one case fits the sample rather than
+    the intent. Pinned so a future edit has to argue with this, not drift past it."""
+    actions = [r["action"] for r in counter.classify_intent("find the dashboard", _NAMES)]
+    assert actions[0] == "search_symbols"
+
+
+def test_narrower_rules_still_outrank_the_content_rule():
+    """`every place` appears in the new content rule AND in the anti-pattern
+    rule that must keep winning. Precedence, not narrowing -- the same argument
+    the specificity block above it was built on."""
+    actions = [r["action"] for r in counter.classify_intent(
+        "find every place we swallow an exception without logging", _NAMES)]
+    assert actions[0] == "search_ast", actions

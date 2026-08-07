@@ -509,8 +509,48 @@ _INTENT_RULES: list[tuple[re.Pattern, str, str]] = [
                 r"\bset me up\b|\beverything i need\b|\bup to speed\b|\bget me (started|going)\b|"
                 r"\bhelp me (debug|fix|track down|get)\b", re.I),
      "assemble_task_context", "Single-call task-scoped context assembly."),
+    # v1.108.253. CONTENT search, not NAME search. `search_symbols`' broad
+    # `\b(find|locate|...)\b` below answered every one of these, because "find"
+    # is the verb for both intents -- but a symbol-name index cannot match a log
+    # message, a quoted literal, or "every place we do X".
+    #
+    # Measured, not assumed: on 40 agent-EMITTED task strings (the wording route
+    # actually receives -- see benchmarks/route_recall/run_emitted_task.py) that
+    # broad rule fired on 26 and returned search_symbols alone, while the gold
+    # split 18 search_text / 17 search_symbols. It was a coin flip by
+    # construction on the majority case.
+    #
+    # ⚠ Placed here, below the whole specificity block, so every narrower rule
+    # still wins: "find every place we swallow an exception" must stay
+    # search_ast, and this rule's `every place` would otherwise steal it.
+    (re.compile(r"\b(string|literal|message|text|phrase|log line|error message|"
+                r"comment|todo|fixme|regex|substring|hard[- ]?coded)\b|"
+                r"\b(occurrences?|every place|all the places|any place|anywhere|"
+                r"spots? where|places? where|everywhere)\b|"
+                r"\b(find|locate|search for|grep)\b[^.]{0,40}"
+                r"[\"'`][^\"'`]{3,}[\"'`]", re.I),
+     "search_text", "Content search: the target is a string or phrase, not a symbol name."),
+
     (re.compile(r"\b(find|locate|where is|look up|search for|definition of)\b", re.I),
      "search_symbols", "Find a symbol by name."),
+
+    # The ambiguous residue, and the reason this rule is LAST in the table.
+    #
+    # "find X" is genuinely undecidable between a name search and a content
+    # search without more signal, and the emitted-string measurement put the
+    # gold split at 18/17 -- so there is no honest rank-1 answer. What was
+    # indefensible was returning ONE action and calling it confident: a curated
+    # rule that matches emits a single recommendation, so 28 of those 40 cases
+    # had no rank 2 at all and @3 was identical to @1 (25.0%). The caller was
+    # given a coin flip with no way to see the other side.
+    #
+    # Appending here cannot displace anything -- every earlier rule has already
+    # claimed its rank -- so this only ever ADDS the alternate that was missing.
+    # It deliberately does not reorder the ambiguous case: 18 vs 17 is not a
+    # signal, and flipping the default to chase one case would be fitting the
+    # sample rather than the intent.
+    (re.compile(r"\b(find|locate|where is|look up|search for)\b", re.I),
+     "search_text", "Same phrasing also fits a content search; offered as the alternate."),
 ]
 
 # Repo-scoped actions whose primary query arg is named differently. Used by

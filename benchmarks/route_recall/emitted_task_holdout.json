@@ -1,0 +1,223 @@
+{
+ "source": "rknighton/jcm-route-benchmark-corpus v0.1.0 (MIT-0)",
+ "pool": "HELD OUT: 20 drawn from the 135 non-pilot rows unused by the seed-421 set, disjoint by construction",
+ "seed": 4211,
+ "n": 20,
+ "emitting_model": "Claude Opus 5 (session default), one fresh agent per request, no tools, counter front door only",
+ "cases": [
+  {
+   "case_id": "785c9d25-2e64-5dcc-90f9-1c21e5b18f15",
+   "candidate_rank": 33,
+   "prompt_text": "what is ModProfiler? why is this there it sounds like it is either outdated or should be a tool inside of the Decompiler script project",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_repo_outline"
+   ],
+   "emitted_task": "Find where ModProfiler is defined and everywhere it's referenced, so I can explain what it does and whether it's dead/outdated code or belongs inside the Decompiler script project"
+  },
+  {
+   "case_id": "1bd6d4e7-9143-5b6c-8450-d2032134498e",
+   "candidate_rank": 40,
+   "prompt_text": "can you explain the Pre-computed range squared change? is this identifying all entity ranges in a single scan? or explain what this does why its better and why it wont break anything",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols"
+   ],
+   "emitted_task": "explain the \"Pre-computed range squared\" change: find where entity ranges are pre-computed in a single scan, how the squared range lookup works, and why it's faster than the previous approach"
+  },
+  {
+   "case_id": "2356d165-f393-5913-b262-c4670e78a6ce",
+   "candidate_rank": 42,
+   "prompt_text": "explain how the attribute keys work. I gave a generic example of locker_number or seat_assignment and there are specific examples of those. Are these just examples of a flexible table that could have any attributes? Can you explain the mechanism behind here?",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "search_text"
+   ],
+   "emitted_task": "find where attribute keys are defined and validated - are locker_number and seat_assignment predefined in an enum/constant list or freeform user-supplied strings"
+  },
+  {
+   "case_id": "cd48f271-fb15-55a2-a789-ea19747d08ad",
+   "candidate_rank": 57,
+   "prompt_text": "\"Changed main.py to use relative imports (best practice)\" But is that what we have been doing with other modules and functions? Or have we used the __init__.py?",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "find_importers"
+   ],
+   "emitted_task": "Audit the import style convention across this codebase: find whether modules use relative imports or absolute/__init__-based imports, including what __init__.py files re-export"
+  },
+  {
+   "case_id": "15a38e91-9821-56c4-8fa6-27567fb420b4",
+   "candidate_rank": 62,
+   "prompt_text": "For the route fix, how do you handle status changes? If they go to war, those boundaries no longer apply. Just as an example, would it also have an automatic trigger to cancel them for that status?",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_call_hierarchy"
+   ],
+   "emitted_task": "find where routing recalculates when a status or state change invalidates existing boundary constraints, and whether recalculation is triggered automatically"
+  },
+  {
+   "case_id": "5680ef92-8097-56d3-b42c-4b634c69eb27",
+   "candidate_rank": 68,
+   "prompt_text": "ok next the magazine has an ugly default blank cover I need to make an image for that (I'll make the art) What I need to know is what dimensions to use for the image. Is it a 160x160 square like other inventory item images? Check vanilla magazines",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "get_file_tree"
+   ],
+   "emitted_task": "find where the magazine cover image is generated or referenced, including the default blank cover placeholder, to determine required image dimensions"
+  },
+  {
+   "case_id": "3844ccd0-fbb9-582e-aff5-400fc80e19f0",
+   "candidate_rank": 101,
+   "prompt_text": "yes. and we also need to see if any other code references the wrong schema or is that all fixed? Thinking things like CLI or API code as well that may now need to support working with the new fields",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "check_references"
+   ],
+   "emitted_task": "find all remaining references to the old/wrong schema across the codebase, including CLI and API code, to verify every usage was updated"
+  },
+  {
+   "case_id": "93d8c912-d538-53ef-9712-8366f546556f",
+   "candidate_rank": 107,
+   "prompt_text": "I'm going to test our automation's flow. Can you tell me how the task selection process works exactly? How does the agent choose what the next task is going to be?",
+   "gold_primary": "get_signal_chains",
+   "gold_alts": [
+    "search_symbols",
+    "get_call_hierarchy"
+   ],
+   "emitted_task": "explain how the agent's task selection logic works - where the next task is chosen and what ranking or priority rules decide it"
+  },
+  {
+   "case_id": "b9273826-bd8f-57b3-8d4b-eaa29d946501",
+   "candidate_rank": 126,
+   "prompt_text": "\"Concentration penalty: Concentrated gaps penalized more than spread-out gaps\" Did we have a couple different kinds of gap penalties? Sorry the multifaceted nature of the scoring is hard to follow even when written but i think i recall us having 2 similar but different methods both used with configurable weight between them?",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "get_related_symbols"
+   ],
+   "emitted_task": "find where the concentration penalty is defined and list all the different gap penalty types in the scoring code"
+  },
+  {
+   "case_id": "5835266b-50be-5608-819e-3938de7e81ec",
+   "candidate_rank": 135,
+   "prompt_text": "save you some time the break windows are probably only created locally in the web app I dont think we put them anywhere on the back end?",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "find_references"
+   ],
+   "emitted_task": "find where break windows are defined and persisted - check whether they exist only in web app client-side code or also in backend API, models, or database schema"
+  },
+  {
+   "case_id": "0ecf892a-06c1-5bf3-911e-48c78a8a1471",
+   "candidate_rank": 140,
+   "prompt_text": "forget the locked patterns. Confirm that all changes in the UI settings are stored LOCAL ONLY. NOTHING here should affect server side back end files EVER. Everything happens front end only",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "find_references"
+   ],
+   "emitted_task": "Verify that all UI settings changes are persisted local-only (localStorage/client-side config) and never write to or mutate any server-side backend files or APIs"
+  },
+  {
+   "case_id": "6f7da907-c0a2-5554-8ec0-0cef18407d73",
+   "candidate_rank": 144,
+   "prompt_text": "ugh what a pain. ok so you're telling me that even WITHOUT our mod if I have jar return from food this is going to happen? Our mod only hooks the event and plays a sound right? We cant CAUSE them to get jars back?",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "get_call_hierarchy"
+   ],
+   "emitted_task": "find where the mod hooks the jar-return-from-food event and check whether the underlying jar-return behavior is vanilla or added by our mod"
+  },
+  {
+   "case_id": "50f4d91c-6540-5804-b381-c7c552757bac",
+   "candidate_rank": 146,
+   "prompt_text": "are the scores tuned on a per person or per hour basis or are they percentage based? The reason I ask is because being 1 person short on a team of 100 is far less problematic than being 1 person short on a team of 5. The overage costs the same but the cost of being short is very different based on the size of the total demand.",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_symbol_source",
+    "search_text"
+   ],
+   "emitted_task": "find where the health/staffing score is computed and whether it normalizes by team size (percentage) or uses absolute per-person or per-hour counts"
+  },
+  {
+   "case_id": "6979e11f-7281-5123-b5fb-61833c713bb4",
+   "candidate_rank": 167,
+   "prompt_text": "stop stop stop... what database are we using... it should be the latest schema version... v4 I think?",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "get_file_content"
+   ],
+   "emitted_task": "identify which database and schema version this project uses, including current migration/schema version definitions"
+  },
+  {
+   "case_id": "9d067e30-1ad1-55ba-8f9e-650f0da28b49",
+   "candidate_rank": 191,
+   "prompt_text": "Great, now is there adaptive precision? For example, if I give you an item that has fire resistance and cold resistance on it, adaptive means that it's going to be able to calculate based on equivalent resistance rather than absolute resistance types as an option. Now there is a case where I might need specifically those particular resistances, but much more often equivalent resistances are fine. This is just one example. There are many other examples like this where I don't care how we get to a particular DPS number. There might be more than one combination of physical damage increase and flat damage, etc., that can get to a particular DPS. Maybe I care more about attack speed and I want to focus on attack speed, or maybe I care more about crit and I want to make sure it has an adequate crit level. Are there options built in for prioritizing particular vectors of an item as the priority for a replacement craft?",
+   "gold_primary": "search_symbols",
+   "gold_alts": [
+    "get_related_symbols",
+    "search_text"
+   ],
+   "emitted_task": "Does the ranking support adaptive per-attribute weighting, where the same item's attributes like fire resistance and cold resistance are scored differently depending on query context?"
+  },
+  {
+   "case_id": "d860af68-c0f0-5258-b2a7-9e07303c78d8",
+   "candidate_rank": 199,
+   "prompt_text": "I see the employee csv is still using timezone format like \"America/New_York\" instead of Eastern Time GMT +5 or whatever it is. Is that intended?",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "get_file_content",
+    "search_symbols"
+   ],
+   "emitted_task": "Find where employee CSV timezone values like \"America/New_York\" are written or formatted, to check if IANA timezone identifiers are intentional"
+  },
+  {
+   "case_id": "a2acb9a9-dca8-593e-9375-5ddff9e8efad",
+   "candidate_rank": 206,
+   "prompt_text": "can you clarify, when you say logging i need to know which logging you're talking about. we have console logs and also our mod log files for networking and others... need to clarify which things are logging where.",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "get_file_tree"
+   ],
+   "emitted_task": "find where logging is implemented in this repo: console/stdout logging versus the networking mod log files written to disk"
+  },
+  {
+   "case_id": "a9af1504-97bb-570d-8bd6-80368eebcabc",
+   "candidate_rank": 207,
+   "prompt_text": "i dont know where the stupid log goes you set it up! Maybe the logging isnt working properly all I know is it is turned on but where it goes... you'd know more than me. The game folder somewhere? appdata? I have no clue",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "get_file_content"
+   ],
+   "emitted_task": "find where the application writes its log files and how logging is configured"
+  },
+  {
+   "case_id": "a443de85-4173-54e8-9d1c-b0f7d0774366",
+   "candidate_rank": 212,
+   "prompt_text": "I see the plugin settings now. Where did you hise the settings for custom day off patterns? I told you to put it right inside the same card with the schedule type card but it is not there. One more missing: the shift weaving weight what happened to that?",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "get_file_tree"
+   ],
+   "emitted_task": "find where the plugin settings UI renders the shift patterns card, so I can add custom day-off pattern settings inside that same card"
+  },
+  {
+   "case_id": "7e673767-bd5f-5226-9ac0-4fa242a1b123",
+   "candidate_rank": 218,
+   "prompt_text": "Where is the part that is causing the game to pause?",
+   "gold_primary": "search_text",
+   "gold_alts": [
+    "search_symbols",
+    "get_call_hierarchy"
+   ],
+   "emitted_task": "find the code that pauses the game - locate the pause logic, pause state flag, and what triggers it"
+  }
+ ]
+}

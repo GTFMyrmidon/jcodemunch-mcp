@@ -9,15 +9,14 @@
       "@10": 78.0
     },
     "route_recall": {
-      "@1": 67.8,
-      "@3": 86.4
+      "@1": 69.5,
+      "@3": 88.1
     },
     "route_path_split": {
-      "rule": 22,
-      "fallback": 37
+      "rule": 24,
+      "fallback": 35
     },
     "route_misses": [
-      "which file contains the message connection refused",
       "list functions longer than 50 lines with deep nesting in the parser",
       "I need this function plus everything it imports",
       "is this name used anywhere at all or can I drop it",
@@ -72,7 +71,8 @@
         "get_session_stats"
       ],
       "route_proposed": [
-        "search_symbols"
+        "search_symbols",
+        "search_text"
       ],
       "leak_name": 0.0,
       "leak_desc": 0.125
@@ -84,17 +84,15 @@
         "search_text"
       ],
       "menu_rank": null,
-      "route_rank": null,
-      "route_path": "fallback",
+      "route_rank": 1,
+      "route_path": "rule",
       "menu_top3": [
         "get_file_content",
         "get_file_outline",
         "get_file_risk"
       ],
       "route_proposed": [
-        "get_file_content",
-        "get_file_outline",
-        "get_file_risk"
+        "search_text"
       ],
       "leak_name": 0.0,
       "leak_desc": 0.143
@@ -115,6 +113,7 @@
       ],
       "route_proposed": [
         "search_ast",
+        "search_text",
         "search_symbols"
       ],
       "leak_name": 0.0,
@@ -443,16 +442,14 @@
       ],
       "menu_rank": 5,
       "route_rank": null,
-      "route_path": "fallback",
+      "route_path": "rule",
       "menu_top3": [
         "find_unused_paths",
         "get_group_contracts",
         "get_parity_map"
       ],
       "route_proposed": [
-        "find_unused_paths",
-        "get_group_contracts",
-        "get_parity_map"
+        "search_text"
       ],
       "leak_name": 0.0,
       "leak_desc": 0.333
@@ -690,7 +687,8 @@
       ],
       "route_proposed": [
         "get_decorator_census",
-        "search_symbols"
+        "search_symbols",
+        "search_text"
       ],
       "leak_name": 0.0,
       "leak_desc": 0.75
@@ -1209,7 +1207,8 @@
       ],
       "route_proposed": [
         "embed_repo",
-        "search_symbols"
+        "search_symbols",
+        "search_text"
       ],
       "leak_name": 0.0,
       "leak_desc": 0.571

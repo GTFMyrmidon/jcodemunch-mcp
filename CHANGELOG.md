@@ -2,6 +2,69 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.253] - 2026-08-07 - route answered an ambiguous question with one confident action
+
+Follow-on to the emitted-task measurement in
+[#422](https://github.com/jgravelle/jcodemunch-mcp/issues/422). That run scored
+`route` on the wording it actually receives -- the `task` strings agents emit,
+not the words users type -- and found it landing below a constant answer.
+
+**Cause.** The broad rule
+`/find|locate|where is|look up|search for|definition of/ -> search_symbols`
+fired on 26 of 40 emitted strings, because agent-phrased tasks almost all open
+with "find". The gold labels split 18 `search_text` / 17 `search_symbols`, so on
+the majority case that rule was a coin flip by construction. Worse, a curated
+rule emits a single recommendation: 28 of 40 cases came back with exactly one
+action, so `@3` could not recover from a wrong `@1` and was identical to it.
+
+**Fix, in two parts.**
+
+- A **content-search rule** above the broad one, for targets that are a string
+  rather than a name: quoted literals, log lines, error messages, comments,
+  TODO/FIXME, regexes, and occurrence phrasing ("every place", "all the
+  places", "occurrences of"). A symbol-name index cannot match any of those.
+- The broad `find` trigger now **also offers `search_text` as an alternate**,
+  appended last so it can never displace an earlier rule's rank. "find X" is
+  genuinely undecidable without more signal; what was indefensible was
+  returning one action and presenting it as confident.
+
+Both follow the precedence convention the specificity block was built on:
+narrower rules added *above*, the broad rule left intact, so no phrasing silently
+loses its route.
+
+### Measured
+
+Held-out set of 20 emitted strings, drawn from rows the fix was never developed
+against:
+
+| | before | after | floor |
+| --- | ---: | ---: | ---: |
+| strict @1 | 15.0% | 10.0% | 70.0% |
+| strict @3 | 20.0% | **80.0%** | 70.0% |
+
+`@3` crosses from 50 points below a constant answer to 10 above it. Single
+recommendations went from 12 of 20 to zero.
+
+Human-phrased corpora do not regress: `queries.json` improves (route@1
+67.8% -> 69.5%, @3 86.4% -> 88.1%, one fewer miss) and `holdout.json` is
+unchanged at 65.9% / 75.0%.
+
+### What this does NOT fix, stated plainly
+
+**`@1` did not improve.** It remains far below the floor, because "find X" still
+leads with `search_symbols` while emitted traffic skews toward `search_text`.
+That ordering was deliberately left alone: the split is inside the labeling
+uncertainty the corpus author flagged himself, and reordering to chase it would
+fit the sample rather than the intent. A rank-1 discriminator -- most likely
+"does the task name an identifier-shaped token" -- needs its own fresh data, not
+another pass over the set already used to verify this change.
+
+Tests: `test_counter.py` +9 (**9 fail pre-fix**; 2 controls pass on both sides,
+including one asserting the narrower anti-pattern rule still outranks the new
+content rule). `benchmarks/route_recall/results.json` regenerated -- a rules
+change makes a committed measurement artifact stale, and
+`test_retrieval_counterfactual.py` catches exactly that.
+
 ## [1.108.252] - 2026-08-07 - `receipt` counted 12 of 348 calls, because it only ever looked in one profile
 
 Reported by [@MotoMato85](https://github.com/jgravelle/jcodemunch-mcp/issues/421)
