@@ -2,6 +2,71 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.262] - 2026-08-07 - CLI output is UTF-8 even when piped
+
+`jcodemunch-mcp receipt --explain` crashed on Windows whenever stdout was a pipe
+or a redirect:
+
+```
+UnicodeEncodeError: 'charmap' codec can't encode character '−'
+```
+
+No output, a traceback out of a shipped command.
+
+### Why it survived
+
+On Windows `sys.stdout` is the **console** stream, which is already UTF-8, when
+attached to a terminal, and the **locale** stream, cp1252, when piped or
+redirected. So the command works when a human runs it and dies the moment
+anything consumes it: a script, a CI job, `| more`, or another tool.
+
+Two characters are live in output today: U+2212 MINUS SIGN in
+`receipt --explain`, and U+2713 CHECK MARK in `render_diagram`.
+
+The crash is the loud half. The quiet half is worse: everything else was being
+emitted as **cp1252 bytes**, so `delivery` wrote its em-dash as byte `0x97` and
+`--help` produced output that is not valid UTF-8 at all. Any consumer decoding as
+UTF-8 got mojibake or an error, with nothing raised on our side.
+
+### The fix
+
+`_force_utf8_stdio()` runs at the top of `main()`, before any subcommand can
+write. Fixed at the entry point rather than per string, because the next
+non-ASCII character someone adds must not reintroduce it.
+
+- `PYTHONIOENCODING` is honoured as an explicit opt-out. An operator who named an
+  encoding made a decision.
+- `errors="replace"` is deliberate: filesystem paths can carry surrogates from a
+  `surrogateescape` decode, and those raise even under UTF-8. Mangling one
+  display character beats killing the command.
+- A stream that is already UTF-8 is left alone, and one that refuses
+  reconfiguration is survivable rather than fatal.
+
+### Relationship to the v1.108.230 sweep
+
+This is the sibling of the cp1252 **decode** class swept then. That sweep
+hardened subprocess **input** and left our own **output** alone, which is the
+shape a fix leaves when it is scoped to the symptom that was reported rather than
+to the hazard. The subprocess ratchet is still empty and still passing; this adds
+the other half.
+
+⚠ The MCP stdio transport is unaffected and this is asserted, not remembered: it
+wraps `sys.stdout.buffer` in its own TextIOWrapper, so it never reads the text
+layer reconfigured here. A test fails if that stops being true.
+
+Tests: `tests/test_cli_output_encoding.py` (15, of which 9 fail before the fix).
+They run the CLI in a subprocess with a pipe, because that is the only
+configuration that reproduces it -- in-process the pytest capture layer accepts
+any string and nothing can fail.
+
+### Still open
+
+45 text-mode `open()` / `read_text()` call sites in `src/` have no explicit
+`encoding=`, so they decode as cp1252 on Windows. That is the read-side sibling
+of the same hazard and is NOT fixed here; it needs its own scoped pass. None of
+them is on the `delivery` path that prompted this work, verified by tracing a
+real run.
+
 ## [1.108.261] - 2026-08-07 - A disclosure sentence that names every field
 
 #424 is decided and closed: **the anonymous savings record does not carry a
