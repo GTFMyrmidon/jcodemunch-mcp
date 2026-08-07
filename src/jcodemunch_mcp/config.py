@@ -13,6 +13,12 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _GLOBAL_CONFIG: dict[str, Any] = {}
+# True once `load_config()` has run in this process. Read by `get()`, which
+# lazily loads rather than answering from `default` for a config it never read
+# (#426). A separate flag rather than truth-testing `_GLOBAL_CONFIG` because
+# "loaded" and "non-empty" are different questions, and the emptiness test alone
+# would re-load on every read for any state that legitimately produced `{}`.
+_CONFIG_LOADED = False
 _PROJECT_CONFIGS: dict[str, dict[str, Any]] = {}
 _PROJECT_CONFIG_HASHES: dict[str, str] = {}
 # Repo keys whose _PROJECT_CONFIGS entry is a MIRROR of global that WE wrote
@@ -703,9 +709,16 @@ def _validate_type(key: str, value: Any, expected_type: type | tuple) -> bool:
     return isinstance(value, expected_type)
 
 
-def load_config(storage_path: str | None = None) -> None:
-    """Load global config.jsonc. Called once from main()."""
-    global _GLOBAL_CONFIG
+def load_config(storage_path: str | None = None, create_missing: bool = True) -> None:
+    """Load global config.jsonc. Called once from main().
+
+    `create_missing=False` suppresses the auto-creation of a default config file
+    below. Used by the lazy load in `get()` (#426): a READ must never be the
+    thing that writes a file into the user's storage directory. Value resolution
+    is otherwise identical, because the created file is the template and the
+    template is `DEFAULTS`.
+    """
+    global _GLOBAL_CONFIG, _CONFIG_LOADED
 
     # Determine config path
     if storage_path:
@@ -717,7 +730,7 @@ def load_config(storage_path: str | None = None) -> None:
     # defaults to the token-lean "counter" front door; an existing install that
     # merely lacks a config file keeps the historical "full" surface, so a
     # package update never silently collapses a user's tool surface.
-    if not config_path.exists():
+    if not config_path.exists() and create_missing:
         config_path.parent.mkdir(parents=True, exist_ok=True)
         content = _fresh_config_content(config_path.parent)
         config_path.write_text(content, encoding="utf-8")
@@ -797,6 +810,8 @@ def load_config(storage_path: str | None = None) -> None:
 
     # Apply env var fallback for keys not explicitly set in config
     _apply_env_var_fallback(_explicit_keys)
+
+    _CONFIG_LOADED = True
 
 
 def _parse_env_value(value: str, expected_type: type | tuple, key: str | None = None) -> Any:
@@ -939,6 +954,37 @@ def _resolve_repo_key(repo: str) -> str | None:
     return None
 
 
+def _ensure_loaded() -> None:
+    """Load the global config if this process never has (#426).
+
+    Deliberately narrow. It fires ONLY for the state that means "nothing was
+    ever read": not loaded AND empty. Both halves are load-bearing:
+
+    - The flag alone would fire for a caller that populated `_GLOBAL_CONFIG`
+      directly (every test that stuffs a dict in does exactly this) and would
+      CLOBBER it on the next read.
+    - Emptiness alone would re-load on every read for any state that
+      legitimately resolves to `{}`, turning one file read into a per-key one.
+
+    ⚠ It does NOT displace the explicit `load_config()` calls. `main()` re-runs
+    it after `_setup_logging()` on purpose, so config warnings reach the
+    configured log destination; that call is unconditional and still emits them.
+    This only removes the ability to LOSE, it does not decide the ordering.
+
+    ⚠ Never raises. A read that starts failing is a worse defect than the silent
+    default this replaces, so a load failure falls through to `DEFAULTS`
+    behaviour exactly as before.
+    """
+    if _CONFIG_LOADED or _GLOBAL_CONFIG:
+        return
+    try:
+        # create_missing=False: a config READ must not write a file into the
+        # user's storage directory as a side effect.
+        load_config(create_missing=False)
+    except Exception:
+        logger.debug("Lazy config load failed; answering from defaults", exc_info=True)
+
+
 def get(key: str, default: Any = None, repo: str | None = None) -> Any:
     """Get config value, resolving project -> global -> default.
 
@@ -962,7 +1008,16 @@ def get(key: str, default: Any = None, repo: str | None = None) -> Any:
 
     Resolving at read time kills both: there is no snapshot to be taken early or
     to go stale. Do NOT reintroduce a merge at load time to "save a lookup".
+
+    ⚠ v1.108.258 (#426): loads lazily when nothing has been loaded yet. Before,
+    a read in an unloaded process answered from `default` for EVERY env-mapped
+    key -- `JCODEMUNCH_MAX_FILE_SIZE=20000000` resolved as 512000 -- and the
+    caller could not tell "the value is 512000" from "I never read the config".
+    That silence had already produced three one-subcommand-at-a-time
+    `load_config()` patches in `server.py`; every subcommand dispatched above the
+    shared call was one edit from a fourth, and nothing failed loudly.
     """
+    _ensure_loaded()
     if repo:
         resolved = _resolve_repo_key(repo)
         if resolved:
@@ -1269,6 +1324,7 @@ def is_language_enabled(language: str, repo: str | None = None) -> bool:
 
 def get_descriptions() -> dict:
     """Get the nested descriptions dict."""
+    _ensure_loaded()  # sibling reader of get(); same #426 hazard
     return _GLOBAL_CONFIG.get("descriptions", {})
 
 

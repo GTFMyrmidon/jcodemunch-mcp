@@ -35,12 +35,25 @@ def _reset_global_config():
     _PROJECT_CONFIGS at module level.  Without cleanup, subsequent tests
     see config values left by earlier tests (e.g. 'watch': true from the
     user's disk config bleeds into tests that expect the default).
+
+    ⚠ The reset runs BEFORE the test as well as after (v1.108.258, #426).
+    Teardown alone leaves exactly one hole: `_GLOBAL_CONFIG` is `{}` until the
+    first test's teardown fires, and `config.get()` now lazily loads out of that
+    state -- which would pull the DEVELOPER's real `~/.code-index/config.jsonc`
+    into whichever test happened to read config first. Same family as #411,
+    where a test broke on any box that had the key it was testing actually set.
     """
+    _reset_config_state()
     yield
+    _reset_config_state()
+
+
+def _reset_config_state():
     try:
         from jcodemunch_mcp import config as cfg
         from copy import deepcopy
         cfg._GLOBAL_CONFIG = deepcopy(cfg.DEFAULTS)
+        cfg._CONFIG_LOADED = True  # DEFAULTS is a deliberate load, not an absence
         cfg._PROJECT_CONFIGS.clear()
         cfg._PROJECT_CONFIG_HASHES.clear()
         cfg._REPO_PATH_CACHE.clear()

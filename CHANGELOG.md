@@ -2,6 +2,79 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.258] - 2026-08-07 - A config read that reads the config
+
+Closes #426. `config.get()` returned the hardcoded default for every env-mapped
+key until `load_config()` had run, with no signal that config was never loaded.
+A caller could not tell "the value is 512000" from "I have no idea what the
+value is".
+
+```
+JCODEMUNCH_MAX_FILE_SIZE=20000000 python -c "..."
+   before: 512000     # env ignored, silently
+   after:  20000000
+```
+
+Not specific to that key. `max_folder_files`, `max_index_files` and
+`staleness_days` behaved identically; the env mapping was correct all along, it
+was only applied by `load_config()`, and `get()` read `_GLOBAL_CONFIG`, which
+was `{}` until then.
+
+### Why this was filed and fixed even though nothing was broken in production
+
+`index`, `index-file` and `serve` all dispatch after the shared `load_config()`
+in `main()`, so no shipped path resolved a limit unloaded. This is a sharp edge,
+not an outage, and it is worth saying plainly: the "not verified" note in #425
+resolves as a harness artifact.
+
+The reason it still needed fixing is that `server.py` already carried three
+comments of the same shape, on three different subcommands, each a real bug
+found separately and fixed by adding one `load_config()` call to one handler.
+Every subcommand dispatched above the shared call was one edit from being the
+fourth, and nothing failed loudly when it happened. The failure mode is a
+plausible-looking default, which is the hardest kind to notice. Fixing rows one
+at a time is precisely why there is always a next row.
+
+### The fix
+
+`get()` now loads lazily when nothing has been loaded yet, so the ordering
+question stops existing rather than being answered correctly one handler at a
+time. Two things constrain it, both raised in the issue before any code was
+written:
+
+- **It does not displace the explicit calls.** `main()` re-runs `load_config()`
+  after `_setup_logging()` on purpose, so config warnings reach the configured
+  log destination. Only the lazy path is conditional; every explicit call is
+  unconditional and still emits.
+- **It fires on not-loaded AND empty, tracked by a separate `_CONFIG_LOADED`
+  flag rather than by truth-testing the dict.** Emptiness alone would re-read
+  the file on every key for any state that legitimately resolves to `{}`. The
+  flag alone would clobber a caller that populated `_GLOBAL_CONFIG` directly.
+
+One new side effect had to be refused rather than accepted: `load_config()`
+auto-creates a default `config.jsonc` when none exists, and a **read** that
+writes a file into the user's storage directory would be a worse surprise than
+the defect being fixed. The lazy path passes `create_missing=False`. Value
+resolution is unchanged either way, because the file it declines to write is the
+template and the template is `DEFAULTS`.
+
+The lazy load also never raises. A read that starts failing is worse than the
+silent default it replaces, so a load failure falls through to previous
+behaviour and leaves the flag unset so the next read retries.
+
+### Test isolation
+
+`tests/conftest.py` now resets config state **before** each test as well as
+after. Teardown alone left one hole: `_GLOBAL_CONFIG` is `{}` until the first
+test's teardown fires, and a lazy load out of that state would pull the
+developer's real `~/.code-index/config.jsonc` into whichever test read config
+first. Same family as #411, where a test broke on any box that had the key it
+was testing actually set.
+
+`tests/test_config_lazy_load.py` (18 tests, 13 fail before the fix, 5 controls
+pass on both sides). The reproductions run in subprocesses, because a fresh
+interpreter is the only honest way to reach "nothing has been loaded yet".
+
 ## [1.108.257] - 2026-08-07 - A response limit that is a response limit
 
 Closes #425. Nothing bounded the size of a single MCP tool response. What
