@@ -22,7 +22,10 @@ The two assertions that carry this file:
 """
 
 import json
+import os
 import sqlite3
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -340,6 +343,70 @@ class TestStatusAndRefusals:
         f = tmp_path / "a.txt"
         f.write_text("x", encoding="utf-8")
         assert refresh.run(str(f), storage_path=str(tmp_path))["success"] is False
+
+
+class TestTheCliSurface:
+    """⚠⚠ `refresh --json` shipped BROKEN in v1.108.259 and stayed broken for
+    four releases.
+
+    The handler called `_json.dumps(...)`, copying a name other branches use.
+    Several handlers further down do `import json as _json`, which makes `_json`
+    a LOCAL for the whole of `main()`, so a branch dispatched ABOVE those imports
+    raises `UnboundLocalError` -- not `NameError`, and not anything the reader
+    notices while copying the line.
+
+    Two independent things missed it: ruff reported F821 on every one of those
+    four releases and nobody read the check, and nothing in this file touched the
+    CLI at all. The tests exercised `run()` and `status()` directly, which is the
+    layer BELOW the defect. Testing the function you wrote instead of the command
+    the user types is how a whole flag ships dead.
+    """
+
+    def _cli(self, args, storage):
+        env = dict(os.environ)
+        env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+        env["PYTHONIOENCODING"] = "utf-8"
+        return subprocess.run(
+            [sys.executable, "-m", "jcodemunch_mcp.server", "refresh", *args,
+             "--storage-path", storage],
+            capture_output=True, text=True, encoding="utf-8", env=env, timeout=300,
+        )
+
+    def test_status_json_is_parseable(self, repo):
+        out = self._cli([repo["root"], "--status", "--json"], repo["store"])
+        assert out.returncode == 0, out.stderr[-2000:]
+        body = json.loads(out.stdout)
+        assert body["success"] is True
+        assert body["repo"] == repo["repo_id"]
+
+    def test_run_json_is_parseable(self, repo):
+        out = self._cli([repo["root"], "--max-files", "2", "--json"], repo["store"])
+        assert out.returncode == 0, out.stderr[-2000:]
+        body = json.loads(out.stdout)
+        assert body["success"] is True
+        assert body["files_this_run"] <= 2
+
+    def test_no_unbound_local_anywhere_in_the_json_path(self, repo):
+        """The exact failure mode, named so a regression is unambiguous."""
+        for args in ([repo["root"], "--status", "--json"],
+                     [repo["root"], "--max-files", "1", "--json"]):
+            out = self._cli(args, repo["store"])
+            assert "UnboundLocalError" not in out.stderr, out.stderr[-1500:]
+            assert "NameError" not in out.stderr, out.stderr[-1500:]
+
+    def test_text_output_still_works(self, repo):
+        """Control: the path that was always fine stays fine."""
+        out = self._cli([repo["root"], "--status"], repo["store"])
+        assert out.returncode == 0
+        assert "repo:" in out.stdout
+
+    def test_a_refusal_exits_nonzero_in_json_mode(self, repo, tmp_path):
+        """An error must be machine-detectable, not just readable."""
+        unindexed = tmp_path / "nope"
+        (unindexed / "pkg").mkdir(parents=True)
+        out = self._cli([str(unindexed), "--json"], repo["store"])
+        assert out.returncode == 1
+        assert json.loads(out.stdout)["success"] is False
 
 
 class TestOperationalSafety:

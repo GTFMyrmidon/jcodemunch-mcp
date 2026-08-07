@@ -10023,7 +10023,13 @@ def main(argv: Optional[list[str]] = None):
                 use_ai_summaries=args.ai_summaries,
             )
         if args.json:
-            print(_json.dumps(_out, indent=2))
+            # Module-level `json` (line 9), NOT the `_json` alias other branches
+            # use. Several handlers further down do `import json as _json`, which
+            # makes `_json` a LOCAL for the whole of main() -- so referencing it
+            # from a branch that runs BEFORE those imports raises
+            # UnboundLocalError, not NameError. Shipped broken in v1.108.259 and
+            # caught by ruff F821, which nobody read for four releases.
+            print(json.dumps(_out, indent=2))
         else:
             print(_format_refresh(_out))
         sys.exit(0 if _out.get("success") else 1)

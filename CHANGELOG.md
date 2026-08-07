@@ -2,6 +2,45 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.263] - 2026-08-07 - refresh --json was dead on arrival
+
+`jcodemunch-mcp refresh --json` raised `UnboundLocalError` and printed nothing.
+It has been broken since the flag shipped in v1.108.259.
+
+```python
+print(_json.dumps(_out, indent=2))     # _json is not bound at this point
+```
+
+Other handlers in `main()` do `import json as _json` further down the function.
+That makes `_json` a **local for the whole of `main()`**, so a branch dispatched
+above those imports fails with `UnboundLocalError` rather than `NameError` --
+which is also why copying the line from a neighbouring handler looked right.
+
+Fixed by using the module-level `json` import.
+
+### The part worth writing down
+
+Ruff reported this as F821 on **every one of the four releases** that carried it.
+The lint job was red on v1.108.259, .260, .261 and .262, all of which were
+committed, tagged, uploaded to PyPI and announced anyway.
+
+Two independent gaps let that happen:
+
+- **Nothing in the test suite touched the CLI.** `tests/test_refresh_campaign.py`
+  exercised `run()` and `status()` directly, one layer below the defect. Testing
+  the function you wrote instead of the command a user types is how an entire
+  flag ships dead with 32 tests passing over it.
+- **The local suite is not the build.** `pytest` does not run `ruff`, the 8-job
+  test matrix passed the whole time, and the release flow never read the check
+  after pushing. Every signal that was being watched was green.
+
+Both are now closed rather than noted. The release checklist gains an explicit
+`uv run ruff check src/` step and an explicit "read the CI run for the pushed
+SHA" step, and this file's tests now drive the real CLI in a subprocess:
+five new cases covering `--status --json`, `--json`, the text control, a
+non-zero exit on refusal, and the `UnboundLocalError` signature by name. Four of
+the five fail before the fix.
+
 ## [1.108.262] - 2026-08-07 - CLI output is UTF-8 even when piped
 
 `jcodemunch-mcp receipt --explain` crashed on Windows whenever stdout was a pipe
