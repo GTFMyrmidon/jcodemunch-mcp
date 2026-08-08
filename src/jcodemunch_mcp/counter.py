@@ -36,7 +36,7 @@ from typing import Iterable, Optional
 
 # The front-door tool names. These are never themselves dispatchable via
 # ``order`` (no front-door recursion).
-FRONT_DOOR: frozenset[str] = frozenset({"order", "menu", "route"})
+FRONT_DOOR: frozenset[str] = frozenset({"order", "menu", "route", "get_tool_details"})
 
 # Actions that change persistent index / embedding / session / config state.
 # These are charter-safe (none write the user's source files or execute code),
@@ -229,18 +229,48 @@ def example_for(name: str) -> Optional[dict]:
     return dict(ex) if ex is not None else None
 
 
+from .schema_minifier import (
+    json_schema_to_typescript_signature,
+    minify_description,
+    minify_json_schema,
+)
+
+
 def catalog_entry(name: str, description: str, schema: dict) -> dict:
-    """Compact, dense menu row for one action."""
+    """Compact, dense menu row for one action (~10-15 tokens)."""
+    min_desc = minify_description(description)
     row = {
+        "name": name,
         "action": name,
-        "summary": _first_sentence(description),
-        "required": _required_args(schema),
+        "summary": _first_sentence(min_desc),
         "state_changing": is_state_changing(name),
     }
     ex = EXAMPLES.get(name)
     if ex:
         row["example"] = ex
     return row
+
+
+def get_tool_details(name: str, description: str, schema: dict) -> dict:
+    """Full tool details: TypeScript signature, minified parameters, docstrings, required args, and examples."""
+    min_desc = minify_description(description)
+    min_schema = minify_json_schema(schema) if isinstance(schema, dict) else {}
+    sig = json_schema_to_typescript_signature(name, min_schema)
+    res = {
+        "name": name,
+        "action": name,
+        "signature": sig,
+        "summary": _first_sentence(min_desc),
+        "description": min_desc,
+        "parameters": min_schema,
+        "required": _required_args(min_schema),
+        "state_changing": is_state_changing(name),
+    }
+    ex = EXAMPLES.get(name)
+    if ex is not None:
+        res["example"] = ex
+    return res
+
 
 
 def score_action(

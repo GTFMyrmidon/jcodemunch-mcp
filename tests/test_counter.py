@@ -142,6 +142,64 @@ def test_menu_rows_flag_state_changing():
         assert by_name["index_repo"]["state_changing"] is True
 
 
+def test_menu_rows_are_compact():
+    out = _call("menu", {"limit": 5})
+    for action in out["actions"]:
+        assert "name" in action
+        assert "summary" in action
+        assert "state_changing" in action
+
+
+def test_get_tool_details_returns_full_schema():
+    out = _call("get_tool_details", {"name": "search_symbols"})
+    assert out["name"] == "search_symbols"
+    assert "signature" in out
+    assert out["signature"].startswith("search_symbols(repo: string, query: string")
+    assert "summary" in out
+    assert "description" in out
+    assert "parameters" in out
+    assert "required" in out
+    assert "state_changing" in out
+
+
+def test_schema_minification_and_ts_signature():
+    from jcodemunch_mcp.schema_minifier import (
+        json_schema_to_typescript_signature,
+        minify_description,
+        minify_json_schema,
+    )
+    desc = "  Perform symbol search. (v1.108.253)\n @example search_symbols('repo', 'foo')\n @param repo The repo"
+    min_desc = minify_description(desc)
+    assert "@example" not in min_desc
+    assert "@param" not in min_desc
+    assert "(v1.108.253)" not in min_desc
+    assert min_desc == "Perform symbol search."
+
+    schema = {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "SearchSymbols",
+        "type": "object",
+        "properties": {
+            "repo": {"type": "string", "description": "Repo handle"},
+            "query": {"type": "string"},
+            "kind": {"type": "string", "enum": ["function", "class"]}
+        },
+        "required": ["repo", "query"]
+    }
+    min_schema = minify_json_schema(schema)
+    assert "$schema" not in min_schema
+    assert "title" not in min_schema
+    
+    sig = json_schema_to_typescript_signature("search_symbols", schema)
+    assert sig == 'search_symbols(repo: string, query: string, kind?: "function" | "class"): any'
+
+
+def test_get_tool_details_handles_unknown_action():
+    out = _call("get_tool_details", {"name": "nonexistent_action_xyz"})
+    assert "error" in out
+
+
+
 # --- 5. route: intent -> action -------------------------------------------- #
 
 def test_route_recommends_for_intent():

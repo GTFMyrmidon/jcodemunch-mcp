@@ -99,6 +99,25 @@ class TestNormalizeOrderArgs:
         assert out["symbol_ids"] == ["c.py::h#function"]
         assert out["symbol_id"] == ["a.py::f#function", "b.py::g#function"]
 
+    def test_symbol_maps_to_identifier_for_find_references(self):
+        out = server._normalize_order_args(
+            "find_references", {"repo": "r", "symbol": "parse_config"}
+        )
+        assert out == {"repo": "r", "identifier": "parse_config"}
+
+    def test_class_maps_to_class_name(self):
+        out = server._normalize_order_args(
+            "get_class_hierarchy", {"repo": "r", "class": "BaseModel"}
+        )
+        assert out == {"repo": "r", "class_name": "BaseModel"}
+
+    def test_name_maps_to_class_name_for_get_class_hierarchy(self):
+        out = server._normalize_order_args(
+            "get_class_hierarchy", {"repo": "r", "name": "BaseModel"}
+        )
+        assert out == {"repo": "r", "class_name": "BaseModel"}
+
+
 
 class TestHandleOrderNormalizes:
     @pytest.mark.asyncio
