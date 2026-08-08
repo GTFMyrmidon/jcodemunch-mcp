@@ -848,10 +848,15 @@ def _get_ranked_context_fusion(
     # confidence of every fusion search (measured: 0.742 -> 0.783 on one fixture).
     # That is a ranking-adjacent behaviour change, not "record the feature", so the
     # confidence call keeps the input it has always had.
+    # A WRR score tops out at sum(weights)/(k+1) — ~0.049 here, not the tens
+    # BM25 reaches. Grading it on the BM25 curve reported near-zero strength
+    # for a perfect fused hit; see retrieval/confidence.py.
+    from ..retrieval.signal_fusion import fused_score_ceiling as _fused_ceiling
     _attach_confidence(
         fusion_result,
         [{"score": item.get("fusion_score")} for item in context_items],
         is_stale=_probe.repo_is_stale,
+        score_ceiling=_fused_ceiling(channels, smoothing=smoothing, weights=weights),
     )
     from ..retrieval.confidence import extract_ledger_features as _ledger_feats
     _id_raw = getattr(id_ch, "raw_scores", None) or {}

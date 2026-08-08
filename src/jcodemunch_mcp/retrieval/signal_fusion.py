@@ -65,6 +65,50 @@ class FusedResult:
     channel_ranks: dict[str, int] = field(default_factory=dict)
 
 
+def _resolve_weights(weights: Optional[dict[str, float]]) -> dict[str, float]:
+    effective = dict(DEFAULT_WEIGHTS)
+    if weights:
+        effective.update(weights)
+    return effective
+
+
+def _channel_weight(ch: "ChannelResult", effective_weights: dict[str, float]) -> float:
+    """A channel's effective weight — an explicit ``weight`` (including 0.0)
+    wins, otherwise the named default, otherwise 1.0."""
+    return ch.weight if ch.weight is not None else effective_weights.get(ch.name, 1.0)
+
+
+def fused_score_ceiling(
+    channels: list[ChannelResult],
+    *,
+    smoothing: int = DEFAULT_SMOOTHING,
+    weights: Optional[dict[str, float]] = None,
+) -> float:
+    """Highest fused score reachable here: rank 1 in every channel.
+
+    ``sum(weights) / (k + 1)``. Needed because a WRR score means nothing on
+    its own scale — a top-ranked symbol scores ~0.049 with three unit-weight
+    channels and ~0.016 with one, while BM25 scores in the tens. Retrieval
+    confidence's `strength` term reads a RAW top-1 score, so without this it
+    grades every fused search against the BM25 curve and reports near-zero
+    for a perfect result.
+
+    ⚠⚠ **Weight resolution MUST stay identical to :func:`fuse`** — both go
+    through ``_channel_weight``, and a test fuses a perfect-consensus set and
+    asserts its top score equals this. A ceiling that drifts from the scorer
+    is worse than no ceiling: it silently rescales every confidence.
+
+    ⚠ Unlike jdocmunch's fusion, these weights are NOT normalized to sum to
+    1, so the ceiling genuinely depends on which channels ran. Do not
+    hardcode ``1/(k+1)`` here.
+    """
+    effective = _resolve_weights(weights)
+    total = sum(max(0.0, _channel_weight(ch, effective)) for ch in channels)
+    if total <= 0.0:
+        return 0.0
+    return total / (smoothing + 1)
+
+
 def fuse(
     channels: list[ChannelResult],
     *,
@@ -85,15 +129,13 @@ def fuse(
     Returns:
         List of ``FusedResult`` sorted by descending fused score.
     """
-    effective_weights = dict(DEFAULT_WEIGHTS)
-    if weights:
-        effective_weights.update(weights)
+    effective_weights = _resolve_weights(weights)
 
     # Build per-symbol accumulator
     accum: dict[str, FusedResult] = {}
 
     for ch in channels:
-        w = ch.weight if ch.weight is not None else effective_weights.get(ch.name, 1.0)
+        w = _channel_weight(ch, effective_weights)
 
         for rank_0, sid in enumerate(ch.ranked_ids):
             rank_1 = rank_0 + 1  # 1-based rank

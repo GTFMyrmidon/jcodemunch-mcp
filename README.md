@@ -145,9 +145,9 @@ That's the highlight reel. The complete tour of 90+ tools, the MUNCH compact wir
 <!-- WHATSNEW:START -->
 #### What's new
 
-- **[v1.108.241](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.241)** (2026-08-04) — offloadable-work annotation, off by default
-- **[v1.108.240](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.240)** (2026-08-04) — `fresh` stops meaning "we could not find out"
-- **[v1.108.239](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.239)** (2026-08-04) — a YAML key keeps its own name
+- **[v1.108.265](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.265)** (2026-08-08) — Retrieval confidence grades ranking quality, not units
+- **[v1.108.264](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.264)** (2026-08-07) — Text-mode file IO declares its encoding
+- **[v1.108.263](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.263)** (2026-08-07) — refresh --json was dead on arrival
 <!-- WHATSNEW:END -->
 
 ---

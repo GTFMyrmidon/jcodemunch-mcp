@@ -8,11 +8,48 @@ follow up with ``get_symbol_source`` (high confidence) or widen the search
 Inputs are deliberately schema-agnostic — caller passes a list of entries
 with at least a ``score`` field. We never reach into BM25/semantic
 internals so this stays cheap and decoupled from the ranking pipeline.
+
+⚠⚠ **Schema-agnostic is not SCALE-agnostic, and through v1.108.264 this
+module conflated the two.** The ``strength`` sub-signal squashes a RAW
+top-1 score, and the curve was hardcoded to the BM25 scale for every
+caller. BM25 scores in the tens; a WRR fused score tops out at
+``sum(weights)/(k+1)`` — about 0.049 for three unit-weight channels; a
+cosine tops out at 1.0. Measured on identical relative separation between
+top-1 and top-2:
+
+    BM25   top1=20.0    strength 0.9933   confidence 0.223
+    fused  top1=0.0492  strength 0.0122   confidence 0.048
+    cosine top1=0.82    strength 0.1854   confidence 0.356
+
+Same ranking quality, graded four to five times worse for its units.
+
+Two consumers made that expensive rather than cosmetic:
+
+  - ``verdict.STATE_LOW_CONFIDENCE`` gates whether a scan may assert an
+    answer, so fusion and semantic searches were being downgraded for
+    arithmetic rather than for evidence.
+  - ``retrieval.tuning.WeightTuner`` bumps ``semantic_weight`` by comparing
+    mean confidence between ``semantic_used`` groups. The scale gap dwarfs
+    the ±0.05 decision threshold, so the tuner read "semantic hurts" and
+    stepped the weight DOWN toward its floor on every mixed-mode ledger —
+    the same defect measured end to end in jdocmunch #106 before the port.
+
+Every caller now passes the ceiling of whichever scorer produced its
+scores. ⚠ The BM25 curve is UNCHANGED — ``1-exp(-3t/12)`` is algebraically
+identical to the old ``1-exp(-t/4)`` — so only the callers that were wrong
+move, and the default keeps an un-updated caller exactly where it was.
 """
 
 from __future__ import annotations
 
 from typing import Iterable, Optional
+
+#: Score at which `strength` reaches 1-exp(-3) ~= 0.95, per scorer.
+#: BM25 keeps its historical value. Cosine is bounded at 1.0 by definition.
+#: For WRR fusion, ask `signal_fusion.fused_score_ceiling(channels, ...)` —
+#: it depends on which channels ran and cannot be a constant here.
+BM25_CEILING = 12.0
+COSINE_CEILING = 1.0
 
 
 def compute_confidence(
@@ -21,14 +58,18 @@ def compute_confidence(
     is_stale: bool = False,
     has_identity_match: Optional[bool] = None,
     score_field: str = "score",
+    score_ceiling: float = BM25_CEILING,
 ) -> dict:
     """Return ``{"confidence": float, "components": {...}}``.
 
     The confidence number is the product of four 0-1 signals:
       * **gap**       — top-1 vs top-2 relative score gap (1.0 = top result
                         dominates; near 0 = many results tied at the top).
-      * **strength**  — soft squash of the top-1 absolute score; > a few
-                        units saturates at 1.0. A score of 0 yields 0.
+      * **strength**  — soft squash of the top-1 score against
+                        ``score_ceiling``, the scale of the scorer that
+                        produced it. A score of 0 yields 0. ⚠ Pass the
+                        right ceiling or this grades units, not quality;
+                        see the module docstring.
       * **identity**  — 1.0 if any of the top results was an exact-name
                         identity match; otherwise 0.7 (no penalty when
                         unknown).
@@ -65,8 +106,10 @@ def compute_confidence(
     else:
         components["gap"] = max(0.0, min(1.0, (top1 - top2) / top1))
 
-    # Strength: 1 - exp(-top1/k) for k≈4 saturates by ~12.
-    components["strength"] = 1.0 - _approx_exp(-top1 / 4.0)
+    # Strength: saturates at ~0.95 when top1 reaches the scorer's ceiling.
+    # ⚠ For BM25 (ceiling 12) this is EXACTLY the historical `1-exp(-t/4)`.
+    _ceiling = score_ceiling if score_ceiling > 0 else BM25_CEILING
+    components["strength"] = 1.0 - _approx_exp(-3.0 * top1 / _ceiling)
     components["strength"] = max(0.0, min(1.0, components["strength"]))
 
     # If caller didn't pass has_identity_match, sniff for it
@@ -123,6 +166,7 @@ def attach_confidence(
     is_stale: bool = False,
     has_identity_match: Optional[bool] = None,
     include_components: bool = False,
+    score_ceiling: float = BM25_CEILING,
 ) -> dict:
     """Mutate ``result`` to include ``_meta.confidence`` (and optionally
     ``_meta.confidence_components``). Returns ``result`` for convenience.
@@ -135,6 +179,7 @@ def attach_confidence(
         list(scored_results),
         is_stale=is_stale,
         has_identity_match=has_identity_match,
+        score_ceiling=score_ceiling,
     )
     meta = result.setdefault("_meta", {})
     meta["confidence"] = payload["confidence"]
