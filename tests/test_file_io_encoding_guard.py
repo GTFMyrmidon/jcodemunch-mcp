@@ -35,7 +35,63 @@ IO_FUNCS = {"open", "read_text", "write_text"}
 NO_ENCODING_PARAM = {
     "os": "os.open returns a file descriptor; encoding does not apply",
     "zipfile": "ZipFile.open is always binary",
+    "wave": "wave.open is binary only and takes no encoding",
+    "tarfile": "tarfile.open is binary",
+    "shelve": "shelve.open is a pickle store, not text",
+    "dbm": "dbm.open is a binary key-value store",
 }
+
+# A file mode is a short string drawn from this alphabet. Nothing else in an
+# open() call looks like one, which is what makes matching on the VALUE more
+# reliable than guessing its position.
+_MODE_CHARS = set("rwxab+t")
+
+
+def _has_positional_codec(node: ast.Call) -> bool:
+    """True when a positional argument names a real codec.
+
+    Symmetric with the mode rule: `open(p, "r", -1, "utf-8")` and
+    `path.open("r", -1, "utf-8")` put encoding in different slots, so match it
+    by VALUE too. `codecs.lookup` is the discriminator -- a filename is not a
+    registered codec name.
+    """
+    import codecs
+    # Skip args[0]: it is the FILE for `open`/`wave.open` and the MODE for
+    # `path.open`, never an encoding in any spelling. Without this, a file
+    # literally named "ascii" or "big5" reads as a codec and the call goes
+    # unflagged -- a false NEGATIVE, which is the direction that lets a real
+    # defect through.
+    for arg in node.args[1:]:
+        if not isinstance(arg, ast.Constant) or not isinstance(arg.value, str):
+            continue
+        v = arg.value
+        if v and len(v) <= 4 and set(v) <= _MODE_CHARS:
+            continue  # that is the mode, not a codec
+        try:
+            codecs.lookup(v)
+            return True
+        except (LookupError, TypeError, ValueError):
+            continue
+    return False
+
+
+def _mode_literal(node: ast.Call) -> "str | None":
+    """The file-mode string literal in a call, wherever it sits.
+
+    Returns None when no positional mode literal is present (which includes
+    `open(p)` defaulting to text, and a computed mode we cannot read).
+    """
+    for arg in node.args:
+        if not isinstance(arg, ast.Constant) or not isinstance(arg.value, str):
+            continue
+        v = arg.value
+        if v and len(v) <= 4 and set(v) <= _MODE_CHARS:
+            return v
+    for kw in node.keywords:
+        if kw.arg == "mode" and isinstance(kw.value, ast.Constant):
+            if isinstance(kw.value.value, str):
+                return kw.value.value
+    return None
 
 # Ratchet. Empty on purpose: an entry here is a KNOWN gap with a reason, not a
 # parking space. `test_known_gap_does_not_rot` deletes stale entries.
@@ -88,12 +144,25 @@ def offenders_in_source(source: str, label: str) -> list[str]:
                 continue
             if owner and owner.lower().startswith(("zf", "zip", "archive")):
                 continue
-            mode = None
-            if len(node.args) > 1 and isinstance(node.args[1], ast.Constant):
-                mode = node.args[1].value
-            if "mode" in kwargs and not mode:
-                continue  # computed mode; cannot prove text
-            if mode and "b" in str(mode):
+            # ⚠⚠ Do NOT locate `mode` by argument POSITION. It sits in a
+            # different slot for each spelling, and there are three:
+            #     open(file, mode, ...)        builtin      -> args[1]
+            #     path.open(mode, ...)         Path         -> args[0]
+            #     wave.open(file, mode)        module       -> args[1]
+            # Reading args[1] everywhere flagged `path.open("rb")`; "fixing" it
+            # by branching on Name-vs-Attribute then flagged `wave.open(f,"rb")`,
+            # because a module call is attribute-shaped but builtin-signatured.
+            # Two false-positive classes traded for each other, both of them the
+            # same positional guessing that produced the wrong "45".
+            #
+            # A file mode is recognisable BY VALUE, so match on that instead and
+            # stop caring where it sits.
+            mode = _mode_literal(node)
+            if "mode" in kwargs and mode is None:
+                continue  # computed mode; cannot prove it is text
+            if mode and "b" in mode:
+                continue
+            if _has_positional_codec(node):
                 continue
         out.append(f"{label}:{node.lineno}")
     return out
@@ -165,11 +234,55 @@ class TestTheScannerItself:
         'open(path, encoding="utf-8")',
         'open(path, "rb")',
         'open(path, "wb")',
+        'open(path, "r", -1, "utf-8")',
         'os.open(path, os.O_RDWR)',
         'zf.open(name)',
+        # Path.open takes mode FIRST; the builtin takes it second.
+        'path.open("rb")',
+        'path.open("wb")',
+        'path.open(encoding="utf-8")',
+        'path.open("r", -1, "utf-8")',
     ])
     def test_it_does_not_flag_correct_code(self, snippet):
         assert not offenders_in_source(snippet, "x"), f"false positive: {snippet}"
+
+    @pytest.mark.parametrize("snippet", ['path.open()', 'path.open("r")', 'path.open("w")'])
+    def test_it_still_flags_text_mode_path_open(self, snippet):
+        """The other direction: fixing the false positive must not blind it."""
+        assert offenders_in_source(snippet, "x"), f"missed: {snippet}"
+
+    @pytest.mark.parametrize("snippet", [
+        'open(path, "rb")',        # builtin: mode is args[1]
+        'path.open("rb")',         # Path:    mode is args[0]
+        'wave.open(path, "rb")',   # module:  attribute-shaped, builtin-signatured
+        'gzip.open(path, "rb")',
+        'open(path, mode="rb")',
+    ])
+    def test_binary_is_recognised_in_every_call_shape(self, snippet):
+        """⚠⚠ Three spellings, three different slots for `mode`.
+
+        Reading args[1] everywhere flagged `path.open("rb")`. Branching on
+        Name-vs-Attribute to fix that then flagged `wave.open(f, "rb")`, because
+        a module call is attribute-shaped but builtin-signatured. Both are the
+        same positional guessing that produced the wrong published "45".
+
+        The mode is matched BY VALUE now, so its position stops mattering.
+        """
+        assert not offenders_in_source(snippet, "x"), f"false positive: {snippet}"
+
+    @pytest.mark.parametrize("snippet", ['open("ascii")', 'open("big5")', 'open("utf8")'])
+    def test_a_filename_that_looks_like_a_codec_is_still_flagged(self, snippet):
+        """False NEGATIVES are the direction that lets a real defect through.
+        Matching a codec by value anywhere would excuse `open("ascii")`."""
+        assert offenders_in_source(snippet, "x"), f"missed: {snippet}"
+
+    def test_a_path_is_never_mistaken_for_a_mode(self):
+        """The risk the value-matching rule takes on: a short filename made of
+        mode characters. `_MODE_CHARS` excludes '.' and '/', so a real path
+        cannot match, and a bare stem that could is not a thing open() is given
+        without an extension."""
+        assert offenders_in_source('open("data.txt")', "x")
+        assert offenders_in_source('open(base / "war")', "x")
 
     def test_positional_encoding_is_recognized(self):
         """The exact bug that produced the wrong published figure. Pinned so a
