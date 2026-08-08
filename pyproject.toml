@@ -118,9 +118,22 @@ asyncio_mode = "auto"
 target-version = "py310"
 
 [tool.ruff.lint]
-# Default rule set is pycodestyle E4/E7/E9 + pyflakes F. We keep the
-# high-signal correctness rules (unused imports, undefined names, duplicate
-# keys, f-string/format bugs, redefinitions, comparison/syntax errors) and
+# ⚠⚠ EXPLICIT `select`, added 2026-08-07. These four are pycodestyle E4/E7/E9 +
+# pyflakes F -- the same set ruff applies by default TODAY, written down so it
+# stays the set tomorrow.
+#
+# Ruff's default selection is NOT stable across versions. This repo happened to
+# be insulated because it tracks `uv.lock`, which pins ruff; the exposure is one
+# `uv lock` away. Measured in jdatamunch-mcp, which gitignores its lock and so
+# resolves ruff freely: an `ignore`-only config under ruff 0.16.2 produced 446
+# findings (YTT/ASYNC/S/BLE/B/UP/I) where the intended set gives 10. That would
+# have arrived here as a re-lock, not as a config change anyone reviewed.
+#
+# Pin the tool where you can; pin the RULES regardless. Widening the set is now
+# a deliberate decision rather than a side effect of an upgrade.
+select = ["E4", "E7", "E9", "F"]
+# We keep the high-signal correctness rules (unused imports, undefined names,
+# duplicate keys, f-string/format bugs, redefinitions, comparison/syntax errors) and
 # ignore the codes that reflect deliberate, pervasive patterns in this
 # codebase rather than real defects.
 ignore = [
