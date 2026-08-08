@@ -74,7 +74,7 @@ def _append_manifest(event_type: str, resolved: str, manifest_path: Path) -> Non
         "ts": datetime.now(timezone.utc).isoformat(),
     }
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(manifest_path, "a") as f:
+    with open(manifest_path, "a", encoding="utf-8", errors="replace") as f:
         f.write(json.dumps(entry) + "\n")
         f.flush()
 
@@ -195,7 +195,7 @@ def read_manifest(manifest_path: Path | None = None) -> set[str]:
     if not manifest_path.is_file():
         return set()
 
-    with open(manifest_path) as f:
+    with open(manifest_path, encoding="utf-8", errors="replace") as f:
         for line in f:
             line = line.strip()
             if not line:

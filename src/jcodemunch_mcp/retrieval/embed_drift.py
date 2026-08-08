@@ -103,7 +103,7 @@ def capture_canary(base_path: Optional[str] = None, *, force: bool = False) -> d
     path = _canary_path(base_path)
     if path.exists() and not force:
         try:
-            existing = json.loads(path.read_text())
+            existing = json.loads(path.read_text(encoding="utf-8", errors="replace"))
             return {
                 "captured": False,
                 "reason": "canary_already_exists",
@@ -152,7 +152,7 @@ def capture_canary(base_path: Optional[str] = None, *, force: bool = False) -> d
         "strings": list(CANARY_STRINGS),
         "vectors": vectors,
     }
-    path.write_text(json.dumps(snapshot))
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
     return {
         "captured": True,
         "provider": provider,
@@ -187,7 +187,7 @@ def check_drift(
             ),
         }
     try:
-        snapshot = json.loads(path.read_text())
+        snapshot = json.loads(path.read_text(encoding="utf-8", errors="replace"))
     except Exception as exc:
         return {
             "has_canary": False,

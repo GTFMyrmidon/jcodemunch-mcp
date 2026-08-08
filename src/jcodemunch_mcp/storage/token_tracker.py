@@ -154,7 +154,7 @@ class _State:
         self._base_path = base_path
         path = _savings_path(base_path)
         try:
-            data = json.loads(path.read_text()) if path.exists() else {}
+            data = json.loads(path.read_text(encoding="utf-8", errors="replace")) if path.exists() else {}
         except Exception:
             logger.debug("Failed to load savings data from %s", path, exc_info=True)
             data = {}
@@ -834,7 +834,7 @@ class _State:
         path = _session_stats_path(self._base_path)
         try:
             payload = {**stats, "last_updated": datetime.now(timezone.utc).isoformat()}
-            path.write_text(json.dumps(payload, indent=2))
+            path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         except Exception:
             logger.debug("Failed to write session stats to %s", path, exc_info=True)
 
@@ -851,7 +851,7 @@ class _State:
             return
         path = _savings_path(self._base_path)
         try:
-            data = json.loads(path.read_text()) if path.exists() else {}
+            data = json.loads(path.read_text(encoding="utf-8", errors="replace")) if path.exists() else {}
         except Exception:
             logger.debug("Failed to read savings file for flush: %s", path, exc_info=True)
             data = {}
@@ -886,7 +886,7 @@ class _State:
             )
             self._encoding_unflushed = 0
         try:
-            path.write_text(json.dumps(data))
+            path.write_text(json.dumps(data), encoding="utf-8")
         except Exception:
             logger.debug("Failed to write savings data to %s", path, exc_info=True)
 

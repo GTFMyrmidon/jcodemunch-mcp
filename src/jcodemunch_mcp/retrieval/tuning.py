@@ -87,7 +87,7 @@ def _load(path: Path) -> dict:
     if not path.exists():
         return {"repos": {}}
     try:
-        raw = _strip_jsonc(path.read_text())
+        raw = _strip_jsonc(path.read_text(encoding="utf-8", errors="replace"))
         data = json.loads(raw) if raw.strip() else {"repos": {}}
         if "repos" not in data or not isinstance(data["repos"], dict):
             data["repos"] = {}
@@ -301,7 +301,7 @@ class WeightTuner:
             "// risk — `tune_weights` will overwrite per-repo entries on\n"
             "// the next run.\n"
         )
-        path.write_text(header + json.dumps(data, indent=2) + "\n")
+        path.write_text(header + json.dumps(data, indent=2) + "\n", encoding="utf-8")
         # Invalidate cache so the next get_overrides reads fresh data.
         with _cache_lock:
             global _cache_loaded_from

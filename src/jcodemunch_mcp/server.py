@@ -8208,7 +8208,7 @@ def _run_config(check: bool = False, init: bool = False, upgrade: bool = False) 
         try:
             storage.mkdir(parents=True, exist_ok=True)
             probe = storage / ".jcm_probe"
-            probe.write_text("ok")
+            probe.write_text("ok", encoding="utf-8")
             probe.unlink()
             print(f"  {green(CHECK)} index storage writable: {storage}")
         except PermissionError as e:

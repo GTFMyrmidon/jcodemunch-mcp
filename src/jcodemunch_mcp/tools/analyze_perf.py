@@ -226,7 +226,7 @@ def analyze_perf(
             }
         else:
             try:
-                baseline = json.loads(baseline_path.read_text())
+                baseline = json.loads(baseline_path.read_text(encoding="utf-8", errors="replace"))
                 breakdown = _tt.get_session_stats(base_path=storage_path).get(
                     "tool_breakdown", {}
                 )

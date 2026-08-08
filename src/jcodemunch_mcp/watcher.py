@@ -1388,7 +1388,7 @@ async def watch_claude_worktrees(
                 continue
 
             # Read only new lines
-            with open(manifest_path) as f:
+            with open(manifest_path, encoding="utf-8", errors="replace") as f:
                 f.seek(last_size)
                 new_lines = f.read()
             last_size = current_size

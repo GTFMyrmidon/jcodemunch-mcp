@@ -2,6 +2,62 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.264] - 2026-08-07 - Text-mode file IO declares its encoding
+
+Read side of the cp1252 hazard, and the third member of the family:
+
+| Release | Direction |
+|---------|-----------|
+| v1.108.230 | subprocess **input** |
+| v1.108.262 | our own **output** |
+| v1.108.264 | **file IO**, this one |
+
+`open()`, `Path.read_text()` and `Path.write_text()` use the platform default
+when no encoding is given, which is cp1252 on Windows. Reading a UTF-8 file then
+raises on the five bytes cp1252 leaves undefined (`81 8D 8F 90 9D`) and silently
+mangles everything else it can map. Writing produces a file the rest of the world
+cannot read.
+
+14 call sites fixed: the watcher and hook-event manifests, the embedding drift
+canary, the tuning sidecar, the session-stats and savings files, and the
+benchmark baseline reader.
+
+### ⚠ The published figure of "45" was wrong, and this corrects it
+
+v1.108.262's changelog, release notes and CLAUDE.md all said 45 sites were
+unencoded. **The real number is 14.**
+
+The scan behind that figure checked only the `encoding=` **keyword**.
+`Path.read_text(encoding=None, errors=None)` takes encoding as its **first
+positional parameter**, so `read_text("utf-8", errors="replace")` was already
+correct at 28 sites that the scan reported as broken. The remaining three were
+`os.open` and `zipfile.open`, which have no encoding parameter at all.
+
+The figure was published without being checked. Correcting it here rather than
+quietly shipping the smaller number, because a wrong count in a changelog is a
+claim like any other.
+
+### The guard
+
+`tests/test_file_io_encoding_guard.py` (23) with an empty ratchet, matching the
+subprocess guard: a new unencoded call fails, a listed exemption that gets fixed
+must be deleted, and exemptions are named individually with reasons rather than
+whole directories being skipped.
+
+The scanner is positional-aware and **that is tested in both directions**. Ten
+correct-code snippets must not be flagged and six broken ones must be, because a
+guard with false positives is one nobody believes, and a ratchet nobody believes
+collects exemptions. A separate test asserts `read_text`'s first caller-supplied
+parameter is still `encoding`, so the rule cannot rot silently.
+
+### Migration
+
+`tuning.jsonc`'s header comment carries an em-dash, so on Windows it was written
+as cp1252 and read back as cp1252 -- self-consistent, and wrong for every other
+reader. It is now written and read as UTF-8. An existing cp1252 file still parses:
+the one mangled character lands inside a comment `_strip_jsonc` removes, verified
+by a test rather than assumed.
+
 ## [1.108.263] - 2026-08-07 - refresh --json was dead on arrival
 
 `jcodemunch-mcp refresh --json` raised `UnboundLocalError` and printed nothing.
