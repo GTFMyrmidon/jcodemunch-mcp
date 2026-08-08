@@ -1149,6 +1149,7 @@ def search_symbols(
         "_meta": meta,
     }
     from ..retrieval.confidence import attach_confidence as _attach_confidence
+    from ..retrieval.confidence import BM25_CEILING as _BM25_CEILING
     from ..retrieval.confidence import extract_ledger_features as _ledger_feats
     from ..retrieval.freshness import FreshnessProbe as _FreshnessProbe
     from ..storage.token_tracker import record_ranking_event as _record_ranking_event
@@ -1170,7 +1171,19 @@ def search_symbols(
     if _runtime_summary:
         meta["runtime_freshness"] = _runtime_summary
     _conf_input = [{"score": s} for s in _conf_scores]
-    _attach_confidence(result, _conf_input, is_stale=_probe.repo_is_stale)
+    # `sort_by` decides the scale, and it is not always BM25. `centrality`
+    # ranks by PageRank, which sums to 1 across FILES — a top file lands
+    # near 0.05, so the BM25 curve graded the most central symbol in the
+    # repo at strength ~0.01. Its honest ceiling is the most central file
+    # there is. `combined` adds PageRank x100 to BM25 and stays BM25-scaled.
+    if sort_by == "centrality":
+        _conf_ceiling = max(pagerank.values(), default=0.0) or _BM25_CEILING
+    else:
+        _conf_ceiling = _BM25_CEILING
+    _attach_confidence(
+        result, _conf_input, is_stale=_probe.repo_is_stale,
+        score_ceiling=_conf_ceiling,
+    )
     _feat = _ledger_feats(_conf_input)
     _record_ranking_event(
         # v1.108.188: the store this call was told to use, not whichever one the
@@ -1572,7 +1585,15 @@ def _search_symbols_semantic(
     if _runtime_summary:
         meta["runtime_freshness"] = _runtime_summary
     _conf_input = [{"score": s} for s in _conf_scores]
-    _attach_confidence(result, _conf_input, is_stale=_probe.repo_is_stale)
+    # Bounded at 1.0: `semantic_only` scores are a raw cosine, and the hybrid
+    # score is `(1-w)*lexical_norm + w*cos` where BOTH terms are already
+    # normalized to [0,1]. On the BM25 curve a 0.82 cosine read as strength
+    # 0.185 — a strong hit graded as a weak one.
+    from ..retrieval.confidence import COSINE_CEILING as _COSINE_CEILING
+    _attach_confidence(
+        result, _conf_input, is_stale=_probe.repo_is_stale,
+        score_ceiling=_COSINE_CEILING,
+    )
     _feat = _ledger_feats(_conf_input)
     _record_ranking_event(
         # v1.108.188: the store this call was told to use, not whichever one the
@@ -1963,7 +1984,15 @@ def _search_symbols_fusion(
     # confidence of every fusion search. That is its own change with its own
     # justification, not a side effect of recording a column.
     _conf_input = [{"score": s} for s in _conf_scores]
-    _attach_confidence(result, _conf_input, is_stale=_probe.repo_is_stale)
+    # A WRR score tops out at sum(weights)/(k+1) — ~0.049 for three unit-weight
+    # channels, against BM25's tens. Grading it on the BM25 curve reported
+    # near-zero strength for a perfect fused hit, which then drove the weight
+    # tuner the wrong way; see retrieval/confidence.py.
+    from ..retrieval.signal_fusion import fused_score_ceiling as _fused_ceiling
+    _attach_confidence(
+        result, _conf_input, is_stale=_probe.repo_is_stale,
+        score_ceiling=_fused_ceiling(channels, smoothing=smoothing, weights=weights),
+    )
     _id_raw = getattr(id_ch, "raw_scores", None) or {}
     _feat = _ledger_feats([
         {"score": fr.score, "identity": _id_raw.get(fr.symbol_id, 0.0)}

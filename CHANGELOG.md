@@ -2,6 +2,78 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.265] - 2026-08-08 - Retrieval confidence grades ranking quality, not units
+
+Found while fixing the same defect in jdocmunch
+([#106](https://github.com/jgravelle/jdocmunch-mcp/issues/106)) and checking
+whether the siblings shared it. jcodemunch did. jdatamunch does not — it has no
+confidence surface and blends linearly, so this is a two-server defect rather
+than a suite-wide one.
+
+### The defect
+
+`compute_confidence`'s `strength` sub-signal squashes a raw top-1 score, and the
+curve was hardcoded to the BM25 scale for every caller. Measured on identical
+relative separation between the top two results:
+
+| scorer | top-1 | strength | confidence |
+|---|---|---|---|
+| BM25 | 20.0 | 0.9933 | 0.223 |
+| WRR fusion | 0.0492 | 0.0122 | 0.048 |
+| cosine | 0.82 | 0.1854 | 0.356 |
+
+Four scales reach that function, not two. Besides fusion and cosine,
+`sort_by="centrality"` ranks by PageRank, which sums to 1 across files — so the
+most central symbol in a repository was being graded at a strength near 0.01.
+
+Two consumers read the number, and the weight tuner is the smaller one:
+
+- `verdict.STATE_LOW_CONFIDENCE` gates whether a scan may assert an answer.
+  Fusion and semantic searches were being downgraded for arithmetic rather than
+  for evidence.
+- `WeightTuner` adjusts `semantic_weight` from the difference in mean confidence
+  between `semantic_used` groups. A scale gap of roughly 0.5 dwarfs its 0.05
+  decision threshold, so it reads "semantic hurts" and steps the weight down
+  toward its floor on any mixed-mode ledger. Measured end to end in the sibling
+  before this port: seven consecutive downward rounds, on data where the
+  semantic channel was answering the queries.
+
+### The fix
+
+Each caller now passes the ceiling of whichever scorer produced its scores.
+
+- New `signal_fusion.fused_score_ceiling(channels, smoothing, weights)` returns
+  `sum(weights) / (k + 1)`, the score a symbol ranked first in every channel
+  actually reaches. `fuse` and the ceiling now share one weight-resolution
+  helper, and a parametrized test fuses a perfect-consensus set and asserts the
+  top score equals the ceiling, so the two cannot drift apart.
+- The sibling's `1/(k+1)` constant would have been wrong here. Its fusion
+  weights are normalized to sum to 1; these are not, so with three unit-weight
+  channels the correct ceiling is three times that. A test asserts the sibling's
+  constant is not the answer.
+- `sort_by="centrality"` uses the most central file in the repository as its
+  ceiling. `combined` stays BM25-scaled, since PageRank enters it multiplied by
+  100.
+- **The BM25 path is unchanged.** `1 - exp(-3t/12)` is algebraically identical
+  to the old `1 - exp(-t/4)`, asserted at six score values, so only the callers
+  that were wrong move. An unknown or non-positive ceiling falls back to BM25,
+  so a caller that passes none is unchanged rather than newly wrong.
+
+**Upgrade note:** `_meta.confidence` moves upward for fusion, semantic and
+centrality searches, and some `low_confidence` verdicts move with it. If you
+gate anything on a confidence threshold, re-check it.
+
+### Also in this release
+
+Two commits made after the 1.108.264 tag ride along: ruff's rule `select` is now
+pinned explicitly rather than inherited from the installed version, and the
+file-IO encoding scanner locates a `mode` argument by value rather than by
+position.
+
+Tests: `test_confidence_score_scale.py` (17). Suite 7394 passed / 7 skipped, a
+delta of exactly the new file. No existing test pinned a fusion or semantic
+confidence value, which is why a five-fold mis-scaling shipped and survived.
+
 ## [1.108.264] - 2026-08-07 - Text-mode file IO declares its encoding
 
 Read side of the cp1252 hazard, and the third member of the family:
