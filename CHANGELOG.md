@@ -2,6 +2,69 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.267] - 2026-08-08 - Kotlin and Bash constants are extracted, and a declared pattern must now prove itself
+
+Reported by @mussonking (#428) against Rust, confirmed across six languages.
+
+### The defect
+
+A `LanguageSpec` can declare `constant_patterns`, the walker can dispatch on
+them, and `_extract_constant` can have no branch for any of them. It falls
+through to `return None`.
+
+**There is no signal, and that is the actual harm.** A declared-but-unimplemented
+pattern is indistinguishable from a language that genuinely has no constants:
+`search_symbols` returns nothing and the caller concludes the symbol does not
+exist, which is the one thing an index must never let you conclude wrongly. The
+reporter only caught it because he knew for a fact his file held 935 of them.
+
+Six languages declare a constant surface and extract nothing: Rust, Go, Java,
+PHP, Kotlin, Bash. Membership in `constant_patterns` predicts nothing in either
+direction, because Scala and Gleam also declare patterns with no branch and work
+anyway by routing through `symbol_node_types` instead.
+
+### Fixed here: Kotlin and Bash
+
+**Kotlin was a different and nastier failure than a missing branch.** There *is*
+a `property_declaration` branch, but it is written against Swift's grammar: it
+requires a `value_binding_pattern` child with `mutability == let`. Kotlin spells
+the same thing `binding_pattern_kind > val`, with the name under
+`variable_declaration > simple_identifier`, so the branch returned `None` on
+every possible Kotlin input while reading as coverage. It is now keyed on
+language as well as node type, because a branch keyed only on node type is how it
+went unreachable in the first place. `const val` is a constant by declaration; a
+bare `val` is merely immutable, so it takes the naming convention the other
+extractors use.
+
+**Bash settled the multi-symbol question.** `readonly FIRST="x" SECOND="y"` is one
+`declaration_command` carrying two `variable_assignment` children, and
+`Optional[Symbol]` cannot express that. A new plural `_extract_constants` handles
+multi-binding node types and delegates everything else to `_extract_constant`
+unchanged, so Go's `const ( ... )` and Java's multi-declarator `field_declaration`
+have their plumbing already in place. Only the read-only forms count: `local` and
+a bare `declare` declare a variable, so the declaration itself is the evidence and
+no naming heuristic is needed.
+
+### The part that outlives the instance
+
+`tests/test_constant_extraction_guard.py` walks every spec declaring
+`constant_patterns`, feeds it a minimal sample, and asserts at least one constant
+comes back. Rust, Go, Java and PHP are exempt **by name** with `#428` and a
+reason, never as a category, and a ratchet asserts each still extracts nothing, so
+a fix cannot land without deleting its own exemption. Those four are left for the
+PR @mussonking offered.
+
+⚠ **The guard isolates config, and it has to.** `parse_file` consults
+`is_language_enabled`, so an unisolated run reports the developer's
+`config.jsonc` rather than the parser. A first sweep here showed a seventh
+affected language, arduino, extracting zero symbols; it was disabled locally and
+the parser was fine. Same failure mode as #411, where a test read the real
+`~/.code-index/config.jsonc`.
+
+Guard proven non-vacuous against unmodified HEAD in an isolated worktree: **5 fail
+before the fix**, 19 pass, and the passing set includes the exemption ratchet and
+a control asserting the measurement can return empty.
+
 ## [1.108.266] - 2026-08-08 - A blank line inside a table cell no longer truncates it
 
 Silent data corruption in the MUNCH decoder. Found in-house.

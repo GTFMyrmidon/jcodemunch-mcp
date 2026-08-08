@@ -594,9 +594,7 @@ def _walk_tree(
 
     # Check for constant patterns (top-level assignments with UPPER_CASE names)
     if node.type in spec.constant_patterns and parent_symbol is None:
-        const_symbol = _extract_constant(node, spec, source_bytes, filename, language)
-        if const_symbol:
-            symbols.append(const_symbol)
+        symbols.extend(_extract_constants(node, spec, source_bytes, filename, language))
 
     # A JS/TS class field INITIALIZER is not the class body. Everything the
     # initializer contains is attributed to the field, never to the class.
@@ -1456,6 +1454,78 @@ def _extract_variable_function(
     )
 
 
+def _extract_constants(
+    node, spec: LanguageSpec, source_bytes: bytes, filename: str, language: str
+) -> list[Symbol]:
+    """Every constant declared by one node.
+
+    One declaration can bind several names -- `readonly A=1 B=2` in Bash, and the
+    same shape in Go's `const ( ... )` block and Java's multi-declarator fields
+    (#428). `_extract_constant` returns at most one symbol, so the languages that
+    can bind N names route here instead; everything else delegates to it.
+    """
+    if node.type == "declaration_command" and language == "bash":
+        return _extract_bash_constants(node, source_bytes, filename, language)
+
+    single = _extract_constant(node, spec, source_bytes, filename, language)
+    return [single] if single else []
+
+
+def _extract_bash_constants(
+    node, source_bytes: bytes, filename: str, language: str
+) -> list[Symbol]:
+    """Bash `readonly X=1` / `declare -r X=1`, which may bind several names at once.
+
+    Only the read-only forms count. `local` and a bare `declare` declare a
+    variable, not a constant, so the declaration itself is the evidence and no
+    naming heuristic is needed (#428).
+    """
+    children = list(node.children)
+    if not children:
+        return []
+
+    keyword = children[0].type
+    if keyword not in ("readonly", "declare", "typeset"):
+        return []
+    if keyword != "readonly":
+        # `declare`/`typeset` are only read-only with the -r flag.
+        flags = [
+            source_bytes[c.start_byte:c.end_byte].decode("utf-8", "replace")
+            for c in children
+            if c.type == "word"
+        ]
+        if not any(f.startswith("-") and "r" in f for f in flags):
+            return []
+
+    found: list[Symbol] = []
+    for child in children:
+        if child.type != "variable_assignment":
+            continue
+        name_node = child.child_by_field_name("name")
+        if not name_node:
+            continue
+        name = source_bytes[name_node.start_byte:name_node.end_byte].decode("utf-8")
+        sig = source_bytes[child.start_byte:child.end_byte].decode("utf-8").strip()
+        const_bytes = source_bytes[child.start_byte:child.end_byte]
+        found.append(
+            Symbol(
+                id=make_symbol_id(filename, name, "constant"),
+                file=filename,
+                name=name,
+                qualified_name=name,
+                kind="constant",
+                language=language,
+                signature=sig[:100],
+                line=child.start_point[0] + 1,
+                end_line=child.end_point[0] + 1,
+                byte_offset=child.start_byte,
+                byte_length=child.end_byte - child.start_byte,
+                content_hash=compute_content_hash(const_bytes),
+            )
+        )
+    return found
+
+
 def _extract_constant(
     node, spec: LanguageSpec, source_bytes: bytes, filename: str, language: str
 ) -> Optional[Symbol]:
@@ -1564,6 +1634,67 @@ def _extract_constant(
                                     byte_length=node.end_byte - node.start_byte,
                                     content_hash=c_hash,
                                 )
+
+    # Kotlin: `const val NAME = ...`, and `val NAME = ...` when the name reads as
+    # a constant.  KOTLIN_SPEC is the ONLY spec that routes property_declaration
+    # here -- SWIFT_SPEC sets constant_patterns=[] and reaches its own
+    # property_declaration through symbol_node_types instead.  The Swift-shaped
+    # branch below therefore never fired for Kotlin: it requires a
+    # `value_binding_pattern` child with a `mutability` field, and Kotlin's
+    # grammar spells the same thing `binding_pattern_kind > val` with the name
+    # under `variable_declaration > simple_identifier` (#428).  It is guarded by
+    # language rather than deleted, because a branch keyed only on node type is
+    # exactly how this went unreachable in the first place.
+    if node.type == "property_declaration" and language == "kotlin":
+        is_const = False
+        is_val = False
+        for child in node.children:
+            if child.type == "modifiers":
+                for mod in child.children:
+                    if source_bytes[mod.start_byte:mod.end_byte] == b"const":
+                        is_const = True
+            elif child.type == "binding_pattern_kind":
+                if source_bytes[child.start_byte:child.end_byte] == b"val":
+                    is_val = True
+        if not is_val:
+            return None
+
+        name_node = None
+        for child in node.children:
+            if child.type == "variable_declaration":
+                for sub in child.children:
+                    if sub.type == "simple_identifier":
+                        name_node = sub
+                        break
+                break
+        if not name_node:
+            return None
+
+        name = source_bytes[name_node.start_byte:name_node.end_byte].decode("utf-8")
+        # `const val` is a constant by declaration.  A plain `val` is merely
+        # immutable, and Kotlin uses it for ordinary properties, so fall back to
+        # the naming convention the other extractors use.
+        if not is_const and not (
+            name.isupper() or (len(name) > 1 and name[0].isupper() and "_" in name)
+        ):
+            return None
+
+        sig = source_bytes[node.start_byte:node.end_byte].decode("utf-8").strip()
+        const_bytes = source_bytes[node.start_byte:node.end_byte]
+        return Symbol(
+            id=make_symbol_id(filename, name, "constant"),
+            file=filename,
+            name=name,
+            qualified_name=name,
+            kind="constant",
+            language=language,
+            signature=sig[:100],
+            line=node.start_point[0] + 1,
+            end_line=node.end_point[0] + 1,
+            byte_offset=node.start_byte,
+            byte_length=node.end_byte - node.start_byte,
+            content_hash=compute_content_hash(const_bytes),
+        )
 
     # Swift: let MAX_SPEED = 100  (property_declaration with let binding)
     if node.type == "property_declaration":
