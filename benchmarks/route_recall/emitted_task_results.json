@@ -24,16 +24,16 @@
    "note": "best single constant answer, per metric. A result at or below its own floor is not routing. The floors differ sharply, so no number may be quoted against another metric's bar."
   },
   "vs_floor_pts": {
-   "strict@1": -15.0,
-   "strict@3": 17.5,
-   "exact@1": -25.0,
-   "exact@3": -10.0,
-   "family@1": -35.0,
-   "family@3": -25.0
+   "strict@1": -12.5,
+   "strict@3": 20.0,
+   "exact@1": -22.5,
+   "exact@3": -7.5,
+   "family@1": -32.5,
+   "family@3": -22.5
   },
   "route_recall_strict": {
-   "@1": 30.0,
-   "@3": 62.5
+   "@1": 32.5,
+   "@3": 65.0
   },
   "why": {
    "curated_rule_fired": 31,
@@ -44,12 +44,11 @@
     "3": 11
    },
    "rank1_picks": {
-    "search_symbols": 24,
+    "search_symbols": 25,
+    "jcodemunch_guide": 2,
     "assemble_task_context": 2,
     "search_text": 2,
-    "check_rename_safe": 1,
     "get_context_bundle": 1,
-    "get_symbol_complexity": 1,
     "tune_weights": 1,
     "get_changed_symbols": 1,
     "announce_model": 1,
@@ -57,8 +56,7 @@
     "get_call_hierarchy": 1,
     "set_tool_tier": 1,
     "index_repo": 1,
-    "check_edit_safe": 1,
-    "jcodemunch_guide": 1
+    "check_edit_safe": 1
    },
    "note": "A curated rule returns ONE action, so @3 cannot recover from a wrong @1 on those cases -- which is why @3 barely moves. The single dominant rule is /find|locate|where is|look up|search for|definition of/ -> search_symbols, and agent-emitted task strings almost all open with 'find'. Human wording varies far more, so this collapse is specific to the emitted distribution and invisible in the human-phrased corpora."
   },
@@ -67,17 +65,17 @@
    "distinct_primary_actions": 6
   },
   "route_recall_exact": {
-   "@1": 55.0,
-   "@3": 70.0
+   "@1": 57.5,
+   "@3": 72.5
   },
   "route_recall_family": {
-   "@1": 60.0,
-   "@3": 70.0
+   "@1": 62.5,
+   "@3": 72.5
   },
   "within_family": {
-   "n": 23,
-   "correct": 12,
-   "pct": 52.2,
+   "n": 24,
+   "correct": 13,
+   "pct": 54.2,
    "note": "of cases routed into the search family at rank 1, how often the exact labeled member was picked"
   },
   "leakage": {
@@ -87,7 +85,6 @@
   "misses": [
    "726164af-1ca5-5a49-b502-195c2f520062",
    "69af8d15-7c38-5aff-9acb-a19c0986cd02",
-   "23126fd8-ccf3-5881-8474-fd035eb134a0",
    "c7c72675-9bdc-59ef-b660-04ba5a6997da",
    "539874af-acd6-5d7c-90e8-1efee16f6c29",
    "d13ad3b5-fce2-51f3-92ba-1e44b50a31a7",
@@ -128,7 +125,7 @@
    ],
    "rank": 2,
    "leak_name": 0.333,
-   "leak_desc": 0.133
+   "leak_desc": 0.067
   },
   {
    "case_id": "91175eac-6cf0-54f1-8daa-1fcdb38283bb",
@@ -144,7 +141,7 @@
    ],
    "rank": 1,
    "leak_name": 0.0,
-   "leak_desc": 0.0
+   "leak_desc": 0.04
   },
   {
    "case_id": "726164af-1ca5-5a49-b502-195c2f520062",
@@ -152,9 +149,9 @@
    "gold_alts": [],
    "emitted_task": "Check whether Wolfram Language is one of the programming languages jcodemunch-mcp supports for indexing and parsing",
    "route_actions": [
-    "check_rename_safe",
     "jcodemunch_guide",
-    "check_delete_safe"
+    "check_delete_safe",
+    "check_edit_safe"
    ],
    "rank": null,
    "leak_name": 0.0,
@@ -188,7 +185,7 @@
    ],
    "rank": 1,
    "leak_name": 0.0,
-   "leak_desc": 0.053
+   "leak_desc": 0.0
   },
   {
    "case_id": "69af8d15-7c38-5aff-9acb-a19c0986cd02",
@@ -199,8 +196,8 @@
    "emitted_task": "Determine whether the get_context_bundle context bundle generator in jcodemunch also collects global environment skills and running automations, or only repository code symbols and imports",
    "route_actions": [
     "get_context_bundle",
-    "get_ranked_context",
-    "get_session_context"
+    "assemble_task_context",
+    "get_ranked_context"
    ],
    "rank": null,
    "leak_name": 0.5,
@@ -229,13 +226,13 @@
    ],
    "emitted_task": "Determine whether the context-assembly scale parameter is driven by file count or symbol count, comparing 10 files with 1,000 symbols versus 100 files with 1,000 symbols",
    "route_actions": [
-    "get_symbol_complexity",
-    "get_related_symbols",
-    "get_file_risk"
+    "search_symbols",
+    "get_context_bundle",
+    "get_changed_symbols"
    ],
-   "rank": null,
+   "rank": 1,
    "leak_name": 0.5,
-   "leak_desc": 0.13
+   "leak_desc": 0.174
   },
   {
    "case_id": "c7c72675-9bdc-59ef-b660-04ba5a6997da",
@@ -246,8 +243,8 @@
    "emitted_task": "How does the optimizer normalize or weight provided intervals when scoring, and does mixing long and short intervals distort the score?",
    "route_actions": [
     "tune_weights",
-    "announce_model",
-    "find_implementations"
+    "get_file_risk",
+    "get_repo_health"
    ],
    "rank": null,
    "leak_name": 0.0,
@@ -266,7 +263,7 @@
    ],
    "rank": 1,
    "leak_name": 0.0,
-   "leak_desc": 0.04
+   "leak_desc": 0.12
   },
   {
    "case_id": "539874af-acd6-5d7c-90e8-1efee16f6c29",
@@ -280,7 +277,7 @@
    ],
    "rank": null,
    "leak_name": 0.333,
-   "leak_desc": 0.167
+   "leak_desc": 0.222
   },
   {
    "case_id": "4143abdd-a492-5fda-b53e-827ee600ebc3",
@@ -295,7 +292,7 @@
    ],
    "rank": 1,
    "leak_name": 0.0,
-   "leak_desc": 0.045
+   "leak_desc": 0.0
   },
   {
    "case_id": "4c6c4654-219d-515e-b753-a7b12d23f1e0",
@@ -312,7 +309,7 @@
    ],
    "rank": 2,
    "leak_name": 0.0,
-   "leak_desc": 0.028
+   "leak_desc": 0.083
   },
   {
    "case_id": "d13ad3b5-fce2-51f3-92ba-1e44b50a31a7",
@@ -325,11 +322,11 @@
    "route_actions": [
     "assemble_task_context",
     "audit_agent_config",
-    "get_signal_chains"
+    "search_columns"
    ],
    "rank": null,
    "leak_name": 0.0,
-   "leak_desc": 0.125
+   "leak_desc": 0.083
   },
   {
    "case_id": "12731df3-7ffc-5471-865a-1a0116e2d76c",
@@ -361,7 +358,7 @@
    ],
    "rank": 1,
    "leak_name": 0.333,
-   "leak_desc": 0.059
+   "leak_desc": 0.088
   },
   {
    "case_id": "9a2708c4-87eb-5106-a69e-0bfb494d3013",
@@ -374,11 +371,11 @@
    "route_actions": [
     "announce_model",
     "index_dependency",
-    "index_repo"
+    "index_file"
    ],
    "rank": null,
    "leak_name": 0.0,
-   "leak_desc": 0.067
+   "leak_desc": 0.033
   },
   {
    "case_id": "34ef5712-7450-515b-9d00-4938c9208488",
@@ -443,7 +440,7 @@
    ],
    "rank": 1,
    "leak_name": 0.0,
-   "leak_desc": 0.136
+   "leak_desc": 0.091
   },
   {
    "case_id": "465d026a-5bb5-50c0-861d-2a9ba73a337a",
@@ -459,7 +456,7 @@
    ],
    "rank": 1,
    "leak_name": 0.5,
-   "leak_desc": 0.091
+   "leak_desc": 0.045
   },
   {
    "case_id": "0117a398-6fb0-5c7c-9f98-e9be6ad90716",
@@ -475,7 +472,7 @@
    ],
    "rank": 2,
    "leak_name": 0.0,
-   "leak_desc": 0.048
+   "leak_desc": 0.095
   },
   {
    "case_id": "cb6bfb24-5f2d-5d0e-9f8a-f4bd9fccf25f",
@@ -491,7 +488,7 @@
    ],
    "rank": 1,
    "leak_name": 0.5,
-   "leak_desc": 0.054
+   "leak_desc": 0.027
   },
   {
    "case_id": "10d4d696-9f59-5fc7-a3a9-08c3a34e846a",
@@ -523,7 +520,7 @@
    ],
    "rank": 1,
    "leak_name": 0.0,
-   "leak_desc": 0.083
+   "leak_desc": 0.028
   },
   {
    "case_id": "2cf2de96-fe0f-5823-8af2-fa1189d1ccd9",
@@ -538,7 +535,7 @@
    ],
    "rank": null,
    "leak_name": 0.0,
-   "leak_desc": 0.091
+   "leak_desc": 0.045
   },
   {
    "case_id": "b8941648-039a-5aff-9fb9-8cba25e8d51a",
@@ -550,12 +547,12 @@
    "emitted_task": "Determine whether the configured hook makes it impossible to spawn a top-level thread that fails to close its associated munch tool",
    "route_actions": [
     "set_tool_tier",
-    "jcodemunch_guide",
-    "summarize_repo"
+    "get_file_outline",
+    "jcodemunch_guide"
    ],
    "rank": null,
    "leak_name": 0.0,
-   "leak_desc": 0.095
+   "leak_desc": 0.048
   },
   {
    "case_id": "895a33dc-06c8-5930-bcd2-fb87b6344ff1",
@@ -567,8 +564,8 @@
    "emitted_task": "index the 7 days to die game XML files and config assets into the existing 7d2d repo index so they're searchable without going to the install directory",
    "route_actions": [
     "index_repo",
-    "index_file",
-    "index_folder"
+    "index_dependency",
+    "index_file"
    ],
    "rank": null,
    "leak_name": 0.333,
@@ -588,7 +585,7 @@
    ],
    "rank": 1,
    "leak_name": 0.0,
-   "leak_desc": 0.069
+   "leak_desc": 0.103
   },
   {
    "case_id": "92619faf-5e7f-54bf-8270-c519c61818e4",
@@ -620,7 +617,7 @@
    ],
    "rank": 1,
    "leak_name": 0.5,
-   "leak_desc": 0.091
+   "leak_desc": 0.045
   },
   {
    "case_id": "3e5ebe2b-f70b-5da7-9473-abdbf6390059",
@@ -636,7 +633,7 @@
    ],
    "rank": null,
    "leak_name": 0.0,
-   "leak_desc": 0.053
+   "leak_desc": 0.026
   },
   {
    "case_id": "56c970e4-3700-525c-9e74-874ca2f579a7",
@@ -668,7 +665,7 @@
    ],
    "rank": 2,
    "leak_name": 0.5,
-   "leak_desc": 0.133
+   "leak_desc": 0.067
   },
   {
    "case_id": "f80b5caa-5389-525f-a14b-78f15d2d9720",
@@ -684,7 +681,7 @@
    ],
    "rank": 1,
    "leak_name": 0.0,
-   "leak_desc": 0.065
+   "leak_desc": 0.0
   },
   {
    "case_id": "0f46a015-e88a-5e3b-bd72-1de5b2e36a8c",
@@ -712,8 +709,8 @@
    "emitted_task": "Correct the tool inventory: remove J-Munch MCP and Munch Studio Server as installable tools, keeping only JCodemunch, JDocMunch, and JDataMunch, and reclassify the rest as supporting tooling, docs, or examples",
    "route_actions": [
     "jcodemunch_guide",
-    "finalize_handoff",
-    "set_tool_tier"
+    "set_tool_tier",
+    "suggest_corrections"
    ],
    "rank": null,
    "leak_name": 0.0,
@@ -733,7 +730,7 @@
    ],
    "rank": 2,
    "leak_name": 0.0,
-   "leak_desc": 0.143
+   "leak_desc": 0.0
   }
  ]
 }
