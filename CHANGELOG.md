@@ -2,6 +2,73 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.266] - 2026-08-08 - A blank line inside a table cell no longer truncates it
+
+Silent data corruption in the MUNCH decoder. Found in-house.
+
+### The defect
+
+Two functions in `encoding/format.py` disagreed without saying so. `assemble`
+joins payload sections with a blank line and `split_sections` splits on one,
+while `write_table` uses `csv.writer`, which wraps a cell containing newlines in
+quotes but keeps the newlines real.
+
+So a cell whose value contains a **blank line** looks exactly like a section
+boundary, and the row gets cut in half.
+
+**It is worse than truncation, because the row count survives.** The orphaned
+second half becomes its own block; `read_table` filters by tag, so the fragment's
+first field is not the tag and it is dropped without comment. Reproduced against
+our own codec:
+
+```
+blocks: 2   rows in: 2   rows out: 2
+sym_a -> 'def f():'          # was 'def f():\n\n    return 1'
+sym_b -> 'def g(): pass'     # intact
+```
+
+Two rows in, two rows out, one cell quietly missing its middle. Nothing raises,
+nothing warns, and no arity check can catch it.
+
+The trigger is a blank line, not a newline. Multi-line cells already ship and
+round-trip correctly today. What supplies a blank line: a dict or list literal
+with a blank line between groups, a docstring with a paragraph break, or any
+span an outliner captures across one. It is latent rather than active only
+because current encoders mostly capture signatures and short spans — any future
+encoder that widens what goes in a cell trips it, and the symptom would be "the
+outline is subtly wrong sometimes", which is the worst kind to chase.
+
+### The fix
+
+`split_sections` stops treating a blank line as a boundary while the preceding
+block still has an open RFC 4180 quoted field, and re-joins instead. Detection is
+a quote-parity count: doubled quotes are the escape form and cancel, so an
+unterminated field is exactly an odd total.
+
+- **No wire-format change.** Encoders emit identical bytes; only the reader got
+  stricter about what a boundary is.
+- **Repairs payloads already written.** Anything that hit this decodes correctly
+  now.
+- **Finishes a job this file already started.** `_quote_if_needed` escapes
+  newlines for scalars, with a comment citing "audit finding F1" and naming this
+  exact `assemble` / `split_sections` collision. The scalar path was hardened;
+  the table path never was.
+- **Malformed input degrades instead of vanishing.** An unterminated quote
+  through end of payload keeps its text.
+
+Escaping newlines at write time was considered and rejected: unescaping on read
+would corrupt legitimate code content, since a source cell containing the two
+literal characters `\n` would come back as a real newline. That would need a
+header flag and a version gate. The reader-side repair has none of that exposure.
+
+Tests: `tests/encoding/test_format.py` 68 to 78. Ten new cases — the reported
+cell, multiple blank lines in one cell, a blank line at the very end of a cell, a
+cell of only blank lines, embedded quotes alongside a blank line, two cells each
+carrying one, a scalars block in front, and CRLF. **Seven fail before the fix.**
+Three pass on both sides deliberately, as controls: genuine boundaries near
+quoted values must still split, an unterminated quote must still degrade, and
+CRLF must keep working.
+
 ## [1.108.265] - 2026-08-08 - Retrieval confidence grades ranking quality, not units
 
 Found while fixing the same defect in jdocmunch
