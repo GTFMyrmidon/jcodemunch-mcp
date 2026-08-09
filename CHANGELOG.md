@@ -1,5 +1,40 @@
 # Changelog
 
+## [1.108.268] - 2026-08-09 - JSON-RPC gets a private stdout
+
+Suite parity with jdocmunch-mcp 1.129.0 ([jdoc#110](https://github.com/jgravelle/jdocmunch-mcp/issues/110)).
+Found by auditing the siblings after fixing it there, not by a report.
+
+The MCP stdio transport writes framed JSON to stdout, so any other write to
+that stream breaks a response. jcodemunch already carries scar tissue from
+this: the handshake watchdog in `run_stdio_server` exists because a paying
+client on Codex/rmcp waited 5h+ for a frame that never came, after `uvx`
+package-resolution chatter landed on stdout.
+
+⚠⚠ `contextlib.redirect_stdout` never closed this. It rebinds `sys.stdout` and
+nothing more, so it does not cover a C extension calling `write(1, ...)`
+(tqdm, tokenizers, torch), a subprocess that inherited fd 1, or another thread.
+`tools/embed_repo.py:128` builds a `SentenceTransformer` **inside a tool call**,
+so a first embed on a machine without the model cached downloads it mid-request
+and its native progress output goes straight at the JSON-RPC stream. There is
+no startup warmup here to pull that load off the request path.
+
+`stdio_guard.claim_stdout()` duplicates the real stdout, points fd 1 at stderr,
+and hands the duplicate to `stdio_server(stdout=...)`, which already accepts
+one. Afterwards fd 1 **is** stderr for the whole process and the framed stream
+is reachable only through the transport's handle.
+
+⚠ **The handshake watchdog stays, and this does not fix the uvx case.** Chatter
+written by a launcher *before* this process starts is already in the pipe and
+cannot be retracted after exec. This closes everything written from our own
+process onward — a different half of the same problem.
+
+⚠ Fails open under pythonw or a replaced `sys.stderr`: the swap is skipped, the
+server starts as before, and says so on stderr.
+
+`tests/test_stdio_guard.py`, 8 tests, driven through real subprocesses — an
+in-process test of a descriptor-level swap would be testing the mock.
+
 All notable changes to jcodemunch-mcp are documented here.
 
 ## [1.108.267] - 2026-08-08 - Kotlin and Bash constants are extracted, and a declared pattern must now prove itself
