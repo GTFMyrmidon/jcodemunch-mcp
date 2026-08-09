@@ -1,9 +1,10 @@
 """Next.js context provider — detects Next.js projects and enriches symbols with framework metadata.
 
 When a Next.js project is detected (via next.config.js/ts/mjs), this provider:
-1. Parses app/ for App Router file-based routing → enriches components with route metadata
-2. Parses app/api/ for API route handlers → enriches with endpoint metadata
-3. Detects middleware.ts at project root
+1. Parses the App Router directory (app/ or src/app/) for file-based routing
+   → enriches components with route metadata
+2. Parses <app dir>/api/ for API route handlers → enriches with endpoint metadata
+3. Detects middleware.ts at the project root (or src/ for src-layout projects)
 4. Exposes route metadata via get_metadata()
 """
 
@@ -75,10 +76,11 @@ def _next_api_methods_from_content(content: str) -> list[str]:
 class NextjsContextProvider(ContextProvider):
     """Context provider for Next.js projects (App Router).
 
-    Detects next.config.js/ts/mjs, then parses:
-    - app/**/page.tsx    → page routes with route metadata
-    - app/**/layout.tsx  → layout nesting
-    - app/api/**/route.ts → API handlers with HTTP methods
+    Detects next.config.js/ts/mjs, then parses (app/ or src/app/ — both
+    official layouts; root app/ wins when both exist, matching Next.js):
+    - <app>/**/page.tsx    → page routes with route metadata
+    - <app>/**/layout.tsx  → layout nesting
+    - <app>/api/**/route.ts → API handlers with HTTP methods
     """
 
     def __init__(self) -> None:
@@ -106,9 +108,15 @@ class NextjsContextProvider(ContextProvider):
         self._parse_middleware(folder_path)
 
     def _parse_app_router(self, folder_path: Path) -> None:
-        """Parse app/ directory for pages, layouts, and API routes."""
-        app_dir = folder_path / "app"
-        if not app_dir.is_dir():
+        """Parse the App Router directory (app/ or src/app/)."""
+        # Next.js supports both the root app/ layout and the src/ directory
+        # layout (create-next-app --src-dir). When both exist, Next.js itself
+        # uses root app/ and ignores src/app — probe in the same order.
+        for app_prefix in ("app", "src/app"):
+            app_dir = folder_path / app_prefix
+            if app_dir.is_dir():
+                break
+        else:
             return
 
         for src_file in sorted(app_dir.rglob("*")):
@@ -119,7 +127,7 @@ class NextjsContextProvider(ContextProvider):
                 continue
 
             rel_path = str(src_file.relative_to(folder_path)).replace("\\", "/")
-            route = _next_route_from_path(rel_path)
+            route = _next_route_from_path(rel_path, app_prefix)
 
             if stem == "route":
                 # API route handler
@@ -169,8 +177,8 @@ class NextjsContextProvider(ContextProvider):
         )
 
     def _parse_middleware(self, folder_path: Path) -> None:
-        """Detect middleware.ts at project root."""
-        for name in ("middleware.ts", "middleware.js"):
+        """Detect middleware.ts at the project root or under src/."""
+        for name in ("middleware.ts", "middleware.js", "src/middleware.ts", "src/middleware.js"):
             mw_path = folder_path / name
             if mw_path.exists():
                 try:
