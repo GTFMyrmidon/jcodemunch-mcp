@@ -1,5 +1,8 @@
 blank_issues_enabled: true
 contact_links:
+  - name: Concept or direction question
+    url: https://github.com/jgravelle/jcodemunch-mcp/discussions/new?category=ideas
+    about: '"Has this been considered?" or "does this fit the direction?" belongs in Discussions, under Ideas. An issue here is a bug to fix or a feature to build. Asking first is welcome and costs you nothing; it just is not tracker work until we agree there is something to do.'
   - name: Accepted design work with no start date
     url: https://github.com/jgravelle/jcodemunch-mcp/blob/main/ROADMAP.md
     about: Ideas we have agreed to build eventually live on the roadmap with their close conditions, not as open issues. Parking is not rejection.

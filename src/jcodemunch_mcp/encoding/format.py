@@ -307,10 +307,45 @@ def assemble(header: str, *sections: str) -> str:
     return "\n\n".join(parts) + "\n"
 
 
+def _quotes_balanced(text: str) -> bool:
+    """True when every RFC 4180 quoted field in ``text`` is closed.
+
+    Doubled quotes (``""``) are the escape form and cancel out, so an unclosed
+    field is exactly an odd total count.
+    """
+    return text.count('"') % 2 == 0
+
+
 def split_sections(payload: str) -> tuple[str, list[str]]:
-    """Return (header_line, [section_texts])."""
+    """Return (header_line, [section_texts]).
+
+    Blocks are separated by a blank line, but ``write_table`` emits real newlines
+    inside RFC 4180 quoted cells, so a cell containing a BLANK line would
+    otherwise be cut in half here. That was silent corruption, not a visible
+    failure: callers read tables per block (``generic.decode``,
+    ``schema_driven.decode``), so the row count still matched while the cell lost
+    everything after the blank line. A Python constant or docstring with an empty
+    line inside it is enough to trigger it.
+
+    Fix: a block whose quoted fields are still open is not a block boundary, so
+    re-join it with the next one. Content-agnostic, needs no wire-format change,
+    and repairs payloads that were written before this fix.
+    """
     if not payload.startswith(HEADER_PREFIX):
         raise ValueError("not a MUNCH payload")
     head, _, rest = payload.partition("\n")
-    blocks = [b.strip("\n") for b in rest.split("\n\n") if b.strip()]
-    return head, blocks
+
+    raw_blocks = rest.split("\n\n")
+    merged: list[str] = []
+    pending: str | None = None
+    for block in raw_blocks:
+        pending = block if pending is None else pending + "\n\n" + block
+        if _quotes_balanced(pending):
+            merged.append(pending)
+            pending = None
+    if pending is not None:
+        # Unterminated quote through end of payload: keep the text rather than
+        # dropping it. Malformed input should degrade, not vanish.
+        merged.append(pending)
+
+    return head, [b.strip("\n") for b in merged if b.strip()]

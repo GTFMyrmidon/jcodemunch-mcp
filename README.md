@@ -145,9 +145,9 @@ That's the highlight reel. The complete tour of 90+ tools, the MUNCH compact wir
 <!-- WHATSNEW:START -->
 #### What's new
 
+- **[v1.108.267](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.267)** (2026-08-08) — Kotlin and Bash constants are extracted, and a declared pattern must now prove itself
+- **[v1.108.266](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.266)** (2026-08-08) — A blank line inside a table cell no longer truncates it
 - **[v1.108.265](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.265)** (2026-08-08) — Retrieval confidence grades ranking quality, not units
-- **[v1.108.264](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.264)** (2026-08-07) — Text-mode file IO declares its encoding
-- **[v1.108.263](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.263)** (2026-08-07) — refresh --json was dead on arrival
 <!-- WHATSNEW:END -->
 
 ---

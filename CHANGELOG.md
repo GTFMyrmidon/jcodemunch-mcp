@@ -2,6 +2,136 @@
 
 All notable changes to jcodemunch-mcp are documented here.
 
+## [1.108.267] - 2026-08-08 - Kotlin and Bash constants are extracted, and a declared pattern must now prove itself
+
+Reported by @mussonking (#428) against Rust, confirmed across six languages.
+
+### The defect
+
+A `LanguageSpec` can declare `constant_patterns`, the walker can dispatch on
+them, and `_extract_constant` can have no branch for any of them. It falls
+through to `return None`.
+
+**There is no signal, and that is the actual harm.** A declared-but-unimplemented
+pattern is indistinguishable from a language that genuinely has no constants:
+`search_symbols` returns nothing and the caller concludes the symbol does not
+exist, which is the one thing an index must never let you conclude wrongly. The
+reporter only caught it because he knew for a fact his file held 935 of them.
+
+Six languages declare a constant surface and extract nothing: Rust, Go, Java,
+PHP, Kotlin, Bash. Membership in `constant_patterns` predicts nothing in either
+direction, because Scala and Gleam also declare patterns with no branch and work
+anyway by routing through `symbol_node_types` instead.
+
+### Fixed here: Kotlin and Bash
+
+**Kotlin was a different and nastier failure than a missing branch.** There *is*
+a `property_declaration` branch, but it is written against Swift's grammar: it
+requires a `value_binding_pattern` child with `mutability == let`. Kotlin spells
+the same thing `binding_pattern_kind > val`, with the name under
+`variable_declaration > simple_identifier`, so the branch returned `None` on
+every possible Kotlin input while reading as coverage. It is now keyed on
+language as well as node type, because a branch keyed only on node type is how it
+went unreachable in the first place. `const val` is a constant by declaration; a
+bare `val` is merely immutable, so it takes the naming convention the other
+extractors use.
+
+**Bash settled the multi-symbol question.** `readonly FIRST="x" SECOND="y"` is one
+`declaration_command` carrying two `variable_assignment` children, and
+`Optional[Symbol]` cannot express that. A new plural `_extract_constants` handles
+multi-binding node types and delegates everything else to `_extract_constant`
+unchanged, so Go's `const ( ... )` and Java's multi-declarator `field_declaration`
+have their plumbing already in place. Only the read-only forms count: `local` and
+a bare `declare` declare a variable, so the declaration itself is the evidence and
+no naming heuristic is needed.
+
+### The part that outlives the instance
+
+`tests/test_constant_extraction_guard.py` walks every spec declaring
+`constant_patterns`, feeds it a minimal sample, and asserts at least one constant
+comes back. Rust, Go, Java and PHP are exempt **by name** with `#428` and a
+reason, never as a category, and a ratchet asserts each still extracts nothing, so
+a fix cannot land without deleting its own exemption. Those four are left for the
+PR @mussonking offered.
+
+⚠ **The guard isolates config, and it has to.** `parse_file` consults
+`is_language_enabled`, so an unisolated run reports the developer's
+`config.jsonc` rather than the parser. A first sweep here showed a seventh
+affected language, arduino, extracting zero symbols; it was disabled locally and
+the parser was fine. Same failure mode as #411, where a test read the real
+`~/.code-index/config.jsonc`.
+
+Guard proven non-vacuous against unmodified HEAD in an isolated worktree: **5 fail
+before the fix**, 19 pass, and the passing set includes the exemption ratchet and
+a control asserting the measurement can return empty.
+
+## [1.108.266] - 2026-08-08 - A blank line inside a table cell no longer truncates it
+
+Silent data corruption in the MUNCH decoder. Found in-house.
+
+### The defect
+
+Two functions in `encoding/format.py` disagreed without saying so. `assemble`
+joins payload sections with a blank line and `split_sections` splits on one,
+while `write_table` uses `csv.writer`, which wraps a cell containing newlines in
+quotes but keeps the newlines real.
+
+So a cell whose value contains a **blank line** looks exactly like a section
+boundary, and the row gets cut in half.
+
+**It is worse than truncation, because the row count survives.** The orphaned
+second half becomes its own block; `read_table` filters by tag, so the fragment's
+first field is not the tag and it is dropped without comment. Reproduced against
+our own codec:
+
+```
+blocks: 2   rows in: 2   rows out: 2
+sym_a -> 'def f():'          # was 'def f():\n\n    return 1'
+sym_b -> 'def g(): pass'     # intact
+```
+
+Two rows in, two rows out, one cell quietly missing its middle. Nothing raises,
+nothing warns, and no arity check can catch it.
+
+The trigger is a blank line, not a newline. Multi-line cells already ship and
+round-trip correctly today. What supplies a blank line: a dict or list literal
+with a blank line between groups, a docstring with a paragraph break, or any
+span an outliner captures across one. It is latent rather than active only
+because current encoders mostly capture signatures and short spans — any future
+encoder that widens what goes in a cell trips it, and the symptom would be "the
+outline is subtly wrong sometimes", which is the worst kind to chase.
+
+### The fix
+
+`split_sections` stops treating a blank line as a boundary while the preceding
+block still has an open RFC 4180 quoted field, and re-joins instead. Detection is
+a quote-parity count: doubled quotes are the escape form and cancel, so an
+unterminated field is exactly an odd total.
+
+- **No wire-format change.** Encoders emit identical bytes; only the reader got
+  stricter about what a boundary is.
+- **Repairs payloads already written.** Anything that hit this decodes correctly
+  now.
+- **Finishes a job this file already started.** `_quote_if_needed` escapes
+  newlines for scalars, with a comment citing "audit finding F1" and naming this
+  exact `assemble` / `split_sections` collision. The scalar path was hardened;
+  the table path never was.
+- **Malformed input degrades instead of vanishing.** An unterminated quote
+  through end of payload keeps its text.
+
+Escaping newlines at write time was considered and rejected: unescaping on read
+would corrupt legitimate code content, since a source cell containing the two
+literal characters `\n` would come back as a real newline. That would need a
+header flag and a version gate. The reader-side repair has none of that exposure.
+
+Tests: `tests/encoding/test_format.py` 68 to 78. Ten new cases — the reported
+cell, multiple blank lines in one cell, a blank line at the very end of a cell, a
+cell of only blank lines, embedded quotes alongside a blank line, two cells each
+carrying one, a scalars block in front, and CRLF. **Seven fail before the fix.**
+Three pass on both sides deliberately, as controls: genuine boundaries near
+quoted values must still split, an unterminated quote must still degrade, and
+CRLF must keep working.
+
 ## [1.108.265] - 2026-08-08 - Retrieval confidence grades ranking quality, not units
 
 Found while fixing the same defect in jdocmunch
