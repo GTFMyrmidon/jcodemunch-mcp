@@ -94,6 +94,7 @@ def _attach_cap_report(result: dict, cap: Optional[dict]) -> None:
         f"JCODEMUNCH_MAX_FOLDER_FILES) and re-index, or narrow the path."
     )
 
+
 #: Skip reasons where the file is REAL, CURRENT and WANTED, and we refused it
 #: anyway (v1.108.193, reported by @dkiaulakis). Every other reason describes a
 #: file that was never a candidate for this corpus: a `.png` is `binary`, a
@@ -724,6 +725,7 @@ from ._utils import (
     PARSER_UPGRADE_WARNING,
     describe_unloadable_index,
     needs_parser_upgrade as _needs_parser_upgrade,
+    size_cap_warning as _size_cap_warning,
     stamp_incremental_outcome as _stamp_incremental_outcome,
 )
 from .package_registry import extract_package_names as _extract_package_names
@@ -1134,6 +1136,7 @@ def discover_local_files(
     max_files = get_max_folder_files(max_files, repo=_repo_key)
     files = []
     warnings = []
+    oversize: list[str] = []
 
     skip_counts: dict[str, int] = {
         "skip_dir": 0,
@@ -1244,6 +1247,12 @@ def discover_local_files(
             )
             if not ok:
                 skip_counts[reason] = skip_counts.get(reason, 0) + 1
+                if reason == "too_large" and rel_path:
+                    # Collected, not warned per file: the aggregate lands once
+                    # after the walk (#429). `_should_index_file` deliberately
+                    # returns no warning here because the watcher fast path
+                    # shares it and fires per event.
+                    oversize.append(rel_path)
                 if warning is not None:
                     warnings.append(warning)
                 logger.debug(
@@ -1260,6 +1269,10 @@ def discover_local_files(
         len(files),
         skip_counts,
     )
+
+    _size_warning = _size_cap_warning(oversize, max_size)
+    if _size_warning is not None:
+        warnings.append(_size_warning)
 
     # File count limit with prioritization
     if len(files) > max_files:
@@ -1299,6 +1312,7 @@ def index_folder(
     progress_cb: "Optional[Callable[[int, int, str], None]]" = None,
     identity_mode: str = "config",
     force_reparse: bool = False,
+    max_size: Optional[int] = None,
 ) -> dict:
     """Index a local folder containing source code.
 
@@ -1329,6 +1343,16 @@ def index_folder(
             and the stored SYMBOLS are the thing that is wrong. It is the whole
             reason `index_folder(paths=[...])` could not be used to slice up a
             generation upgrade before this existed.
+        max_size: Per-file byte cap for this run, overriding config and the
+            default (#429). ``get_max_file_size`` has accepted this override
+            since v1.108.193, but no caller passed one and it reached no tool
+            schema, so over MCP — the transport every actual user is on — the
+            only route to the cap was editing a config file. Left None the
+            resolution order is unchanged: project ``.jcodemunch.jsonc``, then
+            global config / ``JCODEMUNCH_MAX_FILE_SIZE``, then the default.
+
+            ⚠ Per-call, so it does NOT persist. A repo with a permanently
+            oversize file wants the config key; this is for one run.
 
     Returns:
         Dict with indexing results.
@@ -1630,7 +1654,13 @@ def index_folder(
             # `repo=` for the same reason the two walks below take it: this is a
             # third discovery entry point, and a cap the project sets must reach
             # all three or the file appears on one route and vanishes on another.
-            _fast_max_size = get_max_file_size(repo=str(Path(walk_root).resolve()))
+            # `max_size` first for the same reason `repo=` is passed: this is
+            # the third discovery entry point, and a cap that reaches only two
+            # of them makes a file appear on one route and vanish on another
+            # (#429 follows the same rule the comment above states for repo).
+            _fast_max_size = get_max_file_size(
+                max_size, repo=str(Path(walk_root).resolve())
+            )
 
             def _fast_forced_paths() -> set:
                 for _c in changed_paths:
@@ -2008,12 +2038,14 @@ def index_folder(
                 walk_root,
                 list(paths),
                 max_files=max_files,
+                max_size=max_size,
                 follow_symlinks=follow_symlinks,
             )
         else:
             source_files, discover_warnings, skip_counts = discover_local_files(
                 walk_root,
                 max_files=max_files,
+                max_size=max_size,
                 extra_ignore_patterns=_merged_ignore or None,
                 follow_symlinks=follow_symlinks,
             )

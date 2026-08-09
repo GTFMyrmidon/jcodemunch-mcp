@@ -1,5 +1,66 @@
 # Changelog
 
+## [1.108.269] - 2026-08-09 - A withheld oversize file says so, and the cap is reachable
+
+[#429](https://github.com/jgravelle/jcodemunch-mcp/issues/429). Found when this
+repository's own `src/jcodemunch_mcp/server.py` crossed `DEFAULT_MAX_FILE_SIZE`
+by **532 bytes (0.10%)** and the MCP entrypoint stopped entering its own index.
+
+The size cap itself is working as designed. v1.108.193 made `too_large` a
+**withheld** reason precisely so a corpus missing a real, current, wanted file
+refuses to certify absence, and that refusal is correct. Two things around it
+were not.
+
+**The exclusion was silent on the path that matters.** `resolve_explicit_paths`
+warned per entry; the `os.walk` path bumped a counter and said nothing. Same
+limit, same repository, and whether you were told depended on whether you had
+passed `paths=`. The counter surfaced only as `coverage.excluded.too_large`
+inside a verdict block, and only when a later query happened to ask about
+absence and got refused — so a user with a 600 KB generated client received
+quietly incomplete answers with no signal that anything had been withheld.
+Indexing now emits one aggregate warning naming the withheld files, the
+effective cap, and both routes to raise it. It names at most five and then
+reports a remainder: a repository of generated clients turning one warning into
+a wall of them is its own kind of silence.
+
+**The per-call override was unreachable over MCP.** `get_max_file_size` has
+accepted a `max_size` argument since .193, but no caller passed one and it
+reached no tool schema, so over the transport every actual user is on, editing
+a config file was the only route. `index_folder` and `index_repo` now take
+`max_size` and declare it. It is hidden under `compact_schemas` like its
+neighbours and honoured all the same — an escape hatch is not worth core-tier
+schema tokens, and the warning now tells a caller it exists at the moment it
+becomes relevant.
+
+⚠⚠ **Found alongside, and the more serious half: `index_repo.discover_source_files`
+carried a hardcoded `max_size: int = 500 * 1024`** that consulted neither config
+nor env. A **fourth** copy of the limit, so .193's escape hatch and .197's
+per-project key both applied to `index_folder` and did nothing whatsoever for a
+GitHub repository, on any route. It dropped the file with a bare `continue` and
+no counter anywhere, so unlike the local walk the exclusion was not merely
+under-reported — it was unobservable from every surface. A cap fixed on one
+discovery path is not fixed.
+
+⚠ The local walk has **three** discovery entry points (full walk, explicit
+paths, watcher fast path) and `max_size` reaches all three, for the same reason
+`repo=` was threaded to all three in .197: a cap that reaches some of them makes
+a file appear on one route and vanish on another.
+
+⚠ `max_size` is per-call and does not persist. #429's own repository wants the
+config key; the argument is for one run.
+
+**Not addressed here:** `server.py` is 10,549 lines and will cross the next
+ceiling too. Splitting it is the actual fix; this only makes the repository
+navigable in the meantime. Parked in `ROADMAP.md` with close conditions, per the
+rule that an issue opens when work starts or a user is blocked. ⚠ Raising the
+limit again is explicitly not one of those close conditions — the cap already
+moved once for this class of file, and moving it a second time buys the same
+amount of time and teaches the next person to move it a third.
+
+`tests/test_v1_108_269.py`, 34 tests. Proven non-vacuous against unmodified
+HEAD in an isolated worktree: **26 fail before the fix**, and the 8 that pass on
+both sides are the controls.
+
 ## [1.108.268] - 2026-08-09 - JSON-RPC gets a private stdout
 
 Suite parity with jdocmunch-mcp 1.129.0 ([jdoc#110](https://github.com/jgravelle/jdocmunch-mcp/issues/110)).

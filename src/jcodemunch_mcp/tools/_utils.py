@@ -268,6 +268,50 @@ def describe_unloadable_index(store, owner: str, name: str) -> tuple[str, str]:
     return reason, message
 
 
+#: How many oversize paths ``size_cap_warning`` names before it stops and
+#: reports a remainder. A repo full of generated clients would otherwise turn
+#: one warning into a wall of them, which is its own kind of silence.
+SIZE_CAP_WARNING_SAMPLE = 5
+
+
+def size_cap_warning(dropped: list, max_size: int) -> "Optional[str]":
+    """One aggregate warning naming files the per-file size cap withheld (#429).
+
+    ``too_large`` is a WITHHELD reason, not an ordinary exclusion: the file is
+    real, current and wanted, and only OUR limit kept it out. Before this the
+    local walk recorded it as a ``coverage.excluded.too_large`` counter and
+    said nothing else, so the drop surfaced only when some later query happened
+    to ask about absence and got refused; the GitHub walk did not even count
+    it. An index that quietly missed the largest file in the tree read as
+    healthy on both.
+
+    ⚠ ``resolve_explicit_paths`` already warned per entry. Same limit, same
+    repo, and whether you heard about it depended on whether you passed
+    ``paths=`` — the inconsistency is the defect, not the wording.
+
+    Lives here, not beside either caller, because both discovery paths need it
+    and a hazard fixed on one path is not fixed.
+
+    Returns None when nothing was withheld, so a clean index is unchanged.
+    """
+    if not dropped:
+        return None
+    ordered = sorted(dropped)
+    shown = ", ".join(ordered[:SIZE_CAP_WARNING_SAMPLE])
+    remainder = len(ordered) - SIZE_CAP_WARNING_SAMPLE
+    if remainder > 0:
+        shown += f", and {remainder} more"
+    return (
+        f"Size cap reached: {len(ordered)} file(s) over max_file_size="
+        f"{max_size} bytes are MISSING from the index ({shown}). Symbols "
+        f"defined in them cannot be found, and absence cannot be proven for "
+        f"anything they contain. Pass max_size on this call for a one-off, or "
+        f"raise max_file_size in config (the project's .jcodemunch.jsonc, or "
+        f"the global config.jsonc) / set JCODEMUNCH_MAX_FILE_SIZE to make it "
+        f"stick, then re-index."
+    )
+
+
 #: Warning text for the one-off re-parse an extraction-semantics bump forces.
 PARSER_UPGRADE_WARNING = (
     "This index's symbols were extracted by an older version of the parser "

@@ -1,6 +1,12 @@
 {
-  "current": "1.108.268",
+  "current": "1.108.269",
   "entries": [
+    {
+      "version": "1.108.269",
+      "date": "2026-08-09",
+      "title": "A withheld oversize file says so, and the size cap is reachable over MCP",
+      "summary": "Found in-house (#429). A file over max_file_size was dropped with only a counter inside a verdict block; indexing now names it. The per-call max_size override reached no tool schema, and index_repo hardcoded the limit outright, so config and env never moved the cap for a GitHub repo."
+    },
     {
       "version": "1.108.268",
       "date": "2026-08-09",

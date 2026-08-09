@@ -14,7 +14,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 from ..parser import get_language_for_path
-from ..security import is_secret_file, is_binary_extension, get_max_index_files, get_extra_ignore_patterns, get_skip_patterns
+from ..security import is_secret_file, is_binary_extension, get_max_index_files, get_max_file_size, get_extra_ignore_patterns, get_skip_patterns
 from ..storage import IndexStore
 from ..storage.index_store import PARSER_GENERATION
 from ._indexing_pipeline import (
@@ -25,6 +25,7 @@ from ._utils import (
     PARSER_UPGRADE_WARNING,
     describe_unloadable_index,
     needs_parser_upgrade as _needs_parser_upgrade,
+    size_cap_warning as _size_cap_warning,
     stamp_incremental_outcome as _stamp_incremental_outcome,
 )
 
@@ -174,8 +175,9 @@ def discover_source_files(
     tree_entries: list[dict],
     gitignore_content: Optional[str] = None,
     max_files: Optional[int] = None,
-    max_size: int = 500 * 1024,  # 500KB
+    max_size: Optional[int] = None,
     extra_ignore_patterns: Optional[list] = None,
+    oversize_out: Optional[list] = None,
 ) -> tuple[list[str], dict[str, str], bool]:
     """Discover source files from tree entries.
 
@@ -187,13 +189,28 @@ def discover_source_files(
     5. .gitignore matching
     6. File count limit
 
+    Args:
+        max_size: Per-file byte cap. Resolved through ``get_max_file_size``
+            like the local walk's (#429). ⚠ This used to be a hardcoded
+            ``500 * 1024`` default — a FOURTH copy of the limit that consulted
+            neither config nor env, so the v1.108.193 escape hatch and the
+            v1.108.197 per-project key both applied to ``index_folder`` and
+            silently did nothing here. A cap fixed on one discovery path is
+            not fixed.
+        oversize_out: Optional sink the caller passes to learn WHICH paths the
+            size cap withheld. This loop drops them with a bare ``continue``
+            and no counter, so before this the drop was unobservable from any
+            surface at all.
+
     Returns:
-        Tuple of (file_paths, blob_shas, truncated). blob_shas maps each
-        accepted path to its GitHub blob SHA for incremental diff.
+        Tuple of (file_paths, blob_shas, truncated, files_discovered).
+        blob_shas maps each accepted path to its GitHub blob SHA for
+        incremental diff.
     """
     import pathspec
 
     max_files = get_max_index_files(max_files)
+    max_size = get_max_file_size(max_size)
 
     # Parse gitignore if provided
     gitignore_spec = None
@@ -245,6 +262,8 @@ def discover_source_files(
 
         # Size limit
         if size > max_size:
+            if oversize_out is not None:
+                oversize_out.append(path)
             continue
 
         # Gitignore matching
@@ -322,15 +341,19 @@ async def index_repo(
     incremental: bool = True,
     extra_ignore_patterns: Optional[list] = None,
     progress_cb: "Optional[Callable[[int, int, str], None]]" = None,
+    max_size: Optional[int] = None,
 ) -> dict:
     """Index a GitHub repository.
-    
+
     Args:
         url: GitHub repository URL or owner/repo string
         use_ai_summaries: Whether to use AI for symbol summaries
         github_token: GitHub API token (optional, for private repos/higher rate limits)
         storage_path: Custom storage path (default: ~/.code-index/)
-    
+        max_size: Per-file byte cap for this run (#429). Left None, resolution
+            is global config / ``JCODEMUNCH_MAX_FILE_SIZE`` / default — which
+            this path did not consult at all until now.
+
     Returns:
         Dict with indexing results
     """
@@ -411,12 +434,22 @@ async def index_repo(
         gitignore_content = await fetch_gitignore(owner, repo, github_token)
 
         # Discover source files (also collects blob SHAs for incremental diff)
+        # Resolved HERE so the warning below quotes the same number the filter
+        # applied. `get_max_file_size` is idempotent on an int, so passing the
+        # resolved value down changes nothing about which cap is used.
+        _effective_max_size = get_max_file_size(max_size)
+        _oversize: list[str] = []
         source_files, blob_shas, truncated, files_discovered = discover_source_files(
             tree_entries,
             gitignore_content,
             max_files=max_files,
+            max_size=_effective_max_size,
             extra_ignore_patterns=extra_ignore_patterns,
+            oversize_out=_oversize,
         )
+        _size_warning = _size_cap_warning(_oversize, _effective_max_size)
+        if _size_warning is not None:
+            warnings.append(_size_warning)
 
         logger.info("index_repo discovery — %d source files (truncated=%s)", len(source_files), truncated)
 

@@ -790,8 +790,13 @@ _COMPACT_STRIP_PARAMS: dict[str, set[str]] = {
     "index_dependency": {"ecosystem", "max_files"},
     "find_importers": {"cross_repo"},
     "get_dependency_graph": {"cross_repo"},
-    "index_repo": {"extra_ignore_patterns", "incremental"},
-    "index_folder": {"extra_ignore_patterns", "incremental"},
+    # v1.108.269 (#429): `max_size` joins them on the same rule. It is an escape
+    # hatch for a repo with one oversize file, not a routine indexing control —
+    # and the response now NAMES the withheld files in `warnings`, so a caller
+    # who needs it is told the param exists at the moment it becomes relevant.
+    # Honoured under compact all the same; only the schema property is hidden.
+    "index_repo": {"extra_ignore_patterns", "incremental", "max_size"},
+    "index_folder": {"extra_ignore_patterns", "incremental", "max_size"},
 }
 
 # Params whose enum is demoted to a plain string filter under compact_schemas.
@@ -1249,6 +1254,11 @@ def _build_tools_list() -> list[Tool]:
                         "type": "boolean",
                         "description": "When true and an existing index exists, only re-index changed files.",
                         "default": True
+                    },
+                    "max_size": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Per-file byte cap for this run, overriding config and the 512000-byte default. Files over the cap are skipped entirely and their symbols never enter the index; the response names them in `warnings`. Omit to use config / JCODEMUNCH_MAX_FILE_SIZE."
                     }
                 },
                 "required": ["url"]
@@ -1294,6 +1304,11 @@ def _build_tools_list() -> list[Tool]:
                         "enum": ["config", "local", "git"],
                         "description": "Repo-identity strategy. `config` (default): respect existing index. `local`: path-keyed. `git`: git-root-keyed (monorepo subdir merging).",
                         "default": "config"
+                    },
+                    "max_size": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Per-file byte cap for this run, overriding config and the 512000-byte default. Files over the cap are skipped entirely and their symbols never enter the index; the response names them in `warnings`. Per-call only — for a repo with a permanently oversize file, set `max_file_size` in its .jcodemunch.jsonc instead. Omit to use config / JCODEMUNCH_MAX_FILE_SIZE."
                     }
                 },
                 "required": ["path"]
@@ -5392,6 +5407,7 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent] | Cal
                 incremental=arguments.get("incremental", True),
                 extra_ignore_patterns=arguments.get("extra_ignore_patterns"),
                 progress_cb=_progress_cb,
+                max_size=arguments.get("max_size"),
             )
             _result_cache_invalidate()
         elif name == "index_folder":
@@ -5409,6 +5425,7 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent] | Cal
                     paths=arguments.get("paths"),
                     identity_mode=arguments.get("identity_mode", "config"),
                     progress_cb=_progress_cb,
+                    max_size=arguments.get("max_size"),
                 )
             )
             _result_cache_invalidate()

@@ -79,8 +79,8 @@ Secret files are never stored in the index or cached content directory.
 
 ## File Size Limits
 
-* **Default maximum:** 500 KB per file (configurable via `max_file_size`).
-* Files exceeding the limit are skipped during discovery.
+* **Default maximum:** 500 KB per file (configurable via `max_file_size` in config, the `JCODEMUNCH_MAX_FILE_SIZE` environment variable, or the `max_size` argument on a single `index_folder` / `index_repo` call).
+* Files exceeding the limit are skipped during discovery, and the indexing response names them in `warnings`. A skipped file is treated as **withheld**, not excluded: coverage reports `complete: false` and absence claims over the corpus are refused, because "we never read that file" and "that symbol does not exist" are different answers.
 * A configurable **file count limit** (default: 500 files) prevents runaway indexing of extremely large repositories. Can be overridden using the `JCODEMUNCH_MAX_INDEX_FILES` environment variable.
 
 ---
