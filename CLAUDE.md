@@ -597,3 +597,19 @@ thing they do.
    changelog. On each release, add the new entry and drop the 4th-oldest — the detail
    already lives in CHANGELOG.md. (2026-07-25: this section had grown to 157 entries /
    ~233k chars, loading ~58k est. tokens into every session under this directory.)
+6. **A CI step that produces a PUBLIC verdict is product surface — test its text.**
+   `tests/test_health_radar_action.py` opened by asserting that the Action's shell
+   and YAML steps "can only be exercised by running the Action in a real CI
+   environment", and under that exemption
+   `git fetch origin "$BASE" --depth=1` sat unread in the base-checkout step.
+   ⚠ **`--depth=1` does not merely limit a download — against an already complete
+   clone it SHORTENS it**, writing `.git/shallow`. `churn_surface` is
+   `complexity x log(1 + churn)` with churn counted by `git log --since=<N> days
+   ago`, so the base saw ONE commit, scored every file at churn <= 1, and came
+   back artificially healthy. ⚠⚠ **Measured 2026-08-10 at a single commit,
+   identical tree hash both sides: shallow 82.2 (B), full 75.5 (C), and
+   `churn_surface` the only axis that moved.** The same commit graded B against
+   itself. Every PR was charged for the gap, publicly, on the contributor's own
+   thread. **Cannot execute it is not cannot check it** — the guard that closes
+   this reads step text, which is weaker than running the Action and is still
+   exactly what was missing.

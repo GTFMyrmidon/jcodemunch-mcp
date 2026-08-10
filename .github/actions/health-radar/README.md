@@ -102,6 +102,13 @@ The composite is the arithmetic mean of every scored axis;
 - **`coupling` axis penalises high import fan-out**, which can be
   legitimate in framework-style codebases. Treat the absolute number
   as suggestive; the *delta* is what matters at PR time.
+- **`churn_surface` needs full git history on both sides.** It is
+  `complexity x log(1 + churn)`, and churn is counted by
+  `git log --since=<N> days ago`. A shallow checkout collapses churn to
+  at most 1 per file, so whichever side is shallow scores artificially
+  healthy and the *other* side reads as a regression. The action now
+  unshallows both sides itself, but `fetch-depth: 0` in your checkout
+  step is still the cheaper way to get there.
 
 ## Disabling
 

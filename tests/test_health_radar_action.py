@@ -1,8 +1,18 @@
-"""Tests for the health-radar GitHub Action's renderer (v1.88.0).
+"""Tests for the health-radar GitHub Action (v1.88.0).
 
-The action's shell + YAML steps can only be exercised by running the
-Action in a real CI environment. The Python piece (``render_comment.py``)
-is the load-bearing part for output quality and is unit-testable here.
+The Python piece (``render_comment.py``) is unit-testable directly.
+
+⚠ The shell + YAML steps cannot be *executed* here, but their text can be
+asserted on, and that distinction cost us. This file used to open by saying
+those steps "can only be exercised by running the Action in a real CI
+environment", and under that assumption ``git fetch origin "$BASE" --depth=1``
+sat in the base-checkout step unread. `--depth=1` does not merely limit a
+download: against an already complete clone it SHORTENS the repo, and churn is
+counted by ``git log --since=<N> days ago``. The base therefore scored every
+file at churn <= 1 and came back artificially healthy, so PRs were charged for
+a regression measured against a one-commit history. Verified on this repo at a
+single commit: identical tree, shallow side composite 82.2 (B), full side 75.5
+(C), and ``churn_surface`` the only axis that moved. See TestBaseFetchDepth.
 """
 
 from __future__ import annotations
@@ -13,6 +23,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 # Load the renderer by file path — it lives under .github/actions/, not
 # the importable package tree.
@@ -129,6 +140,80 @@ class TestLoadRadar:
         path.write_text(json.dumps({"foo": "bar"}), encoding="utf-8")
         with pytest.raises(ValueError):
             renderer._load_radar(path)
+
+
+_ACTION_PATH = _REPO_ROOT / ".github" / "actions" / "health-radar" / "action.yml"
+_CALLER_PATH = _REPO_ROOT / ".github" / "workflows" / "health-radar.yml"
+
+
+def _action_steps() -> list[dict]:
+    data = yaml.safe_load(_ACTION_PATH.read_text(encoding="utf-8"))
+    return data["runs"]["steps"]
+
+
+def _step(name_fragment: str) -> dict:
+    for step in _action_steps():
+        if name_fragment.lower() in (step.get("name") or "").lower():
+            return step
+    raise AssertionError(
+        f"no step matching {name_fragment!r} in action.yml — "
+        "if the step was renamed, update this guard rather than deleting it"
+    )
+
+
+class TestBaseFetchDepth:
+    """The base and PR sides must see the same git history depth.
+
+    A depth-limited fetch on either side silently rewrites what
+    ``churn_surface`` measures, and the resulting verdict is posted publicly
+    on contributor PRs. These assertions are on step *text*, which is weaker
+    than executing the Action, but it is exactly the check that was missing.
+    """
+
+    def test_base_fetch_does_not_limit_depth(self):
+        run = _step("Compute radar on base branch")["run"]
+        # Comment lines are excluded deliberately: the step documents the
+        # hazard by naming `--depth=1`, and a guard that cannot tell an
+        # explanation from an instruction would push that explanation out.
+        offenders = [
+            line.strip()
+            for line in run.splitlines()
+            if not line.strip().startswith("#")
+            and "git fetch" in line
+            and "--depth" in line
+        ]
+        assert not offenders, (
+            "the base fetch must not limit history depth; a depth-limited "
+            "fetch shortens an already complete clone and collapses churn "
+            f"to <= 1 per file. Offending line(s): {offenders}"
+        )
+
+    def test_base_fetch_unshallows_when_shallow(self):
+        run = _step("Compute radar on base branch")["run"]
+        assert "--unshallow" in run, (
+            "the base fetch must deepen a shallow clone; without it a caller "
+            "checking out at the default fetch-depth measures churn against "
+            "one commit"
+        )
+
+    def test_pr_side_is_unshallowed_too(self):
+        run = _step("Ensure full history on the PR side")["run"]
+        assert "--unshallow" in run, (
+            "the PR side needs the same treatment as the base, or a caller "
+            "using actions/checkout's default fetch-depth gets the identical "
+            "asymmetry in the other direction"
+        )
+
+    def test_our_caller_checks_out_full_history(self):
+        data = yaml.safe_load(_CALLER_PATH.read_text(encoding="utf-8"))
+        checkout = next(
+            s for s in data["jobs"]["radar"]["steps"]
+            if "actions/checkout" in (s.get("uses") or "")
+        )
+        assert checkout["with"]["fetch-depth"] == 0, (
+            "health-radar.yml must check out full history; the action can "
+            "recover from a shallow checkout but should not have to"
+        )
 
 
 class TestArrowsAndSigns:
