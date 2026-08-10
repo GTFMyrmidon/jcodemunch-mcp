@@ -1,5 +1,110 @@
 # Changelog
 
+## [1.108.271] - 2026-08-10 - A stock Nuxt 4 project is not an empty one, and advice you cannot follow is worse than none
+
+Two defects, both found by reading a contributor's pull request rather than by
+a report.
+
+### Nuxt 4's default layout indexed zero routes ([#434](https://github.com/jgravelle/jcodemunch-mcp/issues/434))
+
+`NuxtContextProvider` probed `folder_path / "pages"` and returned when it was
+absent, while `detect()` passed on `nuxt.config.*` either way. Nuxt 4 changed
+the **default** `srcDir` to `app/`, so pages live at `app/pages/`. Every stock
+Nuxt 4 project therefore reported the framework as detected and **zero routes**,
+silently.
+
+That is the wrong direction of error for this project. A zero that cannot
+distinguish "this project has no routes" from "we looked in the wrong directory"
+is exactly what the absence contract exists to prevent.
+
+**It was found by reviewing [PR #433](https://github.com/jgravelle/jcodemunch-mcp/pull/433)**,
+which fixes the identical defect in the Next.js provider. @lilubot found a
+defect **class**; we had been treating it as one framework's problem. Nobody had
+reported the Nuxt half.
+
+**Three probes were wrong, not one.** `_parse_pages` and `_build_auto_import_map`
+(`composables/`, `utils/`) both move under `app/`. The auto-import one carries
+the knock-on cost: an empty map makes `_build_auto_import_edges` return early,
+so every synthetic edge that makes Nuxt's implicit imports visible disappears.
+
+⚠ **`_parse_server_api` was already correct and is untouched.** `server/` stays
+at the project root in the Nuxt 4 layout. Its srcDir-relative probe is a strictly
+additive fallback, tried only when the root directory is absent, so it cannot
+change the Nuxt 4 result.
+
+`_resolve_src_dir` reads `srcDir` from `nuxt.config.*` first, because that is the
+actual answer and `srcDir` is configurable beyond either default. Probing is the
+documented fallback, and it requires a **Nuxt-shaped child** (`pages`, `app.vue`,
+`components`, `composables`, `layouts`) rather than a bare `app/` directory:
+plenty of projects have an unrelated one, and guessing wrong relocates the entire
+scan, which is a worse failure than the one being fixed.
+
+The `nuxt` framework profile carried the same root assumption and now names both
+layouts, with `server/` deliberately not mirrored. `nestjs` gained the JavaScript
+variants it was missing across its entry points and all four layer globs
+([#435](https://github.com/jgravelle/jcodemunch-mcp/issues/435)).
+
+⚠ **The `next` profile is deliberately NOT included**, though #435 covers it. PR
+#433 edits those exact lines, and changing them underneath an open contributor
+pull request forces a conflict onto the rebase its author was asked for.
+`test_ts_patterns_carry_js_variants` exempts `next` **by name**, so the exemption
+is a visible thing to delete when #433 lands rather than a gap nobody notices.
+
+### `get_dead_code_v2` advised a parameter it did not accept ([#436](https://github.com/jgravelle/jcodemunch-mcp/issues/436))
+
+Two warnings told the caller to pass `entry_point_patterns`. The function had no
+such parameter, the MCP schema exposed none, and the dispatcher forwarded
+nothing. The parameter was real, but it belonged to `find_dead_code`; the text
+had been carried across without it.
+
+**Both warnings fire on the degenerate path**, which is the moment the tool is
+telling the caller its own answer is untrustworthy. `signal_warning` can be
+accompanied by "nothing can be returned" and then offer two remedies of which one
+did not exist. Remediation advice on the failure path is the last thing a caller
+can fall back on.
+
+The parameter now exists at all three layers and does real work: matched files
+join `extra_entries`, the same hook `package.json` roots already use, so Signal 1
+genuinely discriminates. Both warnings became conditional, so a caller who took
+the advice is not handed it again.
+
+⚠ `_matches_any_pattern` is **imported from `find_dead_code`**, never
+reimplemented. Two definitions of what a pattern means would be this defect in a
+new costume, and a test asserts the two are the identical object.
+
+⚠⚠ **`fnmatch` does not treat `**` as recursive.** `handlers/**/*.py` does **not**
+match `handlers/h.py`. Use `handlers/*.py` for one level, or a bare filename to
+match at any depth. The schema description says so, because its first draft used
+exactly the pattern that does not work as its example.
+
+**The general guard is worth more than the instance.**
+`test_advised_parameter_exists_on_the_tool_that_advises_it` walks every tool
+module's AST, extracts each `Pass <name>` from a string inside a function, and
+asserts the name is one of that function's parameters. No docstring review
+catches this class, because the sentence is correct English about a real feature
+belonging to a different tool.
+
+### Also in this release
+
+`benchmarks/codex_surface/` measures jCodeMunch's net token effect on Codex CLI
+across four arms. ⚠⚠ **Its first full run is a NEGATIVE result and its arm
+numbers must not be quoted**: every arm difference was smaller than the
+baseline's own run-to-run spread, and the directions were incoherent. The
+hypothesis is untested, not disproven.
+
+⚠ **One measurement did survive, and it corrects a claim made in this
+repository.** 86% of baseline input is cached, so the tool-schema block is paid
+at full rate roughly once and at cache-read rates thereafter. Any framing of
+"24,007 tokens in every request" is wrong. `--surface-only` still measures the
+schema exactly and needs no API credits; what it does not measure is what that
+costs in practice.
+
+### Tests
+
+`tests/test_nuxt_srcdir.py` (18; 15 fail pre-fix) and
+`tests/test_v1_108_271.py` (106; 8 fail pre-fix, with the general guard failing
+on `get_dead_code_v2.py` specifically while passing on 98 other tool modules).
+
 ## [1.108.270] - 2026-08-09 - A directory that declares itself a cache is not corpus
 
 jCodeMunch now honours the [Cache Directory Tagging Specification](https://bford.info/cachedir/):

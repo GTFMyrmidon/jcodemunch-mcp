@@ -145,9 +145,9 @@ That's the highlight reel. The complete tour of 90+ tools, the MUNCH compact wir
 <!-- WHATSNEW:START -->
 #### What's new
 
-- **[v1.108.267](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.267)** (2026-08-08) — Kotlin and Bash constants are extracted, and a declared pattern must now prove itself
-- **[v1.108.266](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.266)** (2026-08-08) — A blank line inside a table cell no longer truncates it
-- **[v1.108.265](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.265)** (2026-08-08) — Retrieval confidence grades ranking quality, not units
+- **[v1.108.271](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.271)** (2026-08-10) — A stock Nuxt 4 project is not an empty one, and advice you cannot follow is worse than none
+- **[v1.108.270](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.270)** (2026-08-09) — A directory that declares itself a cache is not corpus
+- **[v1.108.269](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.269)** (2026-08-09) — A withheld oversize file says so, and the cap is reachable
 <!-- WHATSNEW:END -->
 
 ---
