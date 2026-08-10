@@ -262,6 +262,83 @@ Tree-sitter grammar lacks clean named fields for these — custom regex extracto
 ## PR / Issue History
 See `git log` and CHANGELOG.md. Active contributors: MariusAdrian88, DrHayt, tmeckel, drax1222, oderwat, thomasmodeneis, gokhanozdemir, horknfbr.
 
+### ⚠ UNRELEASED on main (2026-08-10) — #434, #436, #435-partial
+
+⚠ **Three fixes sit on `main` above 1.108.270 and are NOT on PyPI.** They are
+deliberately NOT in `Current State`: that section is gated by
+`tests/test_claude_md_rotation.py` to name exactly the shipping version and the
+three newest CHANGELOG releases, so an unreleased entry there fails the build.
+**Move them into the rotation at release, not before.**
+
+**#434 — a stock Nuxt 4 project is not an empty one.** `NuxtContextProvider`
+probed `folder_path / "pages"` and returned when absent, while `detect()` passed
+on `nuxt.config.*` either way. Nuxt 4 changed the **default** `srcDir` to `app/`,
+so every default Nuxt 4 project reported the framework detected and **zero
+routes**, silently. ⚠⚠ **Found by reading contributor PR #433, which fixes the
+identical defect in the Next.js provider — @lilubot found a defect CLASS and we
+had been treating it as one framework's problem.** Nobody reported the Nuxt half.
+⚠ **Three probes were wrong, not one**: `_parse_pages` and `_build_auto_import_map`
+(`composables/`, `utils/`) both move under `app/`; the auto-import one has
+knock-on effects, because an empty map makes `_build_auto_import_edges` return
+early and every synthetic edge vanishes. `_parse_server_api` was **already
+correct and is untouched** — `server/` stays at the project ROOT in Nuxt 4.
+⚠ `_resolve_src_dir` reads `srcDir` from config FIRST (it is configurable beyond
+either default); the probe is a documented fallback and requires a **Nuxt-shaped
+child**, because plenty of projects have an unrelated `app/` and guessing wrong
+relocates the entire scan — a worse failure than the one being fixed.
+
+**#436 — advice you cannot follow is worse than no advice.** `get_dead_code_v2`
+emitted two warnings telling the caller to pass `entry_point_patterns`; it
+accepted no such parameter in its signature, exposed none in its schema, and the
+dispatcher forwarded nothing. The parameter was real but belonged to
+`find_dead_code`. ⚠⚠ **Both warnings fire on the DEGENERATE path**, i.e. the
+moment the tool is telling the caller its own answer is untrustworthy and
+offering a remedy that did not exist. ⚠ `_matches_any_pattern` is **imported
+from `find_dead_code`, never reimplemented** — two definitions of what a pattern
+means would be this defect in a new costume, and a test asserts the two are the
+identical object. ⚠ **`fnmatch` does NOT treat `**` as recursive**:
+`handlers/**/*.py` does **not** match `handlers/h.py`. The first draft of the
+schema description used exactly that as its example. Use `handlers/*.py`, or a
+bare filename to match at any depth.
+⚠ The general guard is worth more than the instance:
+`test_advised_parameter_exists_on_the_tool_that_advises_it` AST-walks every tool
+module and asserts each `Pass <name>` in a warning string names a real parameter
+of that function. **No docstring review catches this class**, because the
+sentence is correct English about a real feature belonging to another tool.
+
+**#435 — deliberately PARTIAL, and the exemption is BY NAME.** `nuxt` and
+`nestjs` gained their JS variants; **`next` was NOT touched** even though the
+issue covers it, because PR #433 edits those exact lines and churning them
+underneath an open contributor PR forces a conflict onto the rebase we asked its
+author for. `test_ts_patterns_carry_js_variants` exempts `next` by name so the
+exemption is a **visible thing to delete** when #433 lands, not a gap nobody
+notices. ⚠ Do not "finish" #435 before #433 merges.
+
+### Codex tool-surface benchmark (`benchmarks/codex_surface/`) — NEGATIVE result
+
+⚠⚠ **Do not quote the arm numbers; the honesty gate fired.** Four arms x three
+repeats on FastAPI at a pinned commit, answering an
+[r/codex benchmark](https://www.reddit.com/r/codex/comments/1vjfepe/) that put
+jCodeMunch at **+28.45% on Codex** and **-3.34% on OpenCode**. Largest arm
+difference 568,617 tokens against a baseline varying against ITSELF by
+1,143,229. Directions were incoherent too (`full`, carrying 24,007 tokens of
+schema, came out CHEAPER than baseline). The hypothesis is **untested, not
+disproven** — the instrument cannot resolve an effect that size.
+
+⚠⚠ **The finding that outlived the arms, and it corrects a claim this project
+made: 86% of baseline input is CACHED.** The schema block is stable across
+requests, so it is paid at full rate roughly ONCE and at cache-read rates after.
+Any framing of "24,007 tokens in every request" is wrong, and that framing was
+used here before measuring. **The fixed-cost story is a WEAKER explanation for
+the r/codex result than the raw number suggests, not a stronger one.**
+`--surface-only` still measures the schema exactly (90 tools / 24,007 tokens at
+default `full`, 6 / 1,030 at `counter`) and needs no API credits; what it does
+not measure is what that costs in practice.
+
+⚠ Design flaw recorded so nobody repeats it: summing per-invocation input across
+a RESUMED conversation counts accumulated context on every step, so the total is
+dominated by how much the agent read early on, which compounds.
+
 **Merged 2026-07-25: #379 (@oderwat) Gleam import extraction** — Gleam was already
 in `LANGUAGE_REGISTRY`, so symbols extracted but the import graph stayed EMPTY,
 leaving `find_importers`/`get_blast_radius`/`get_dependency_graph` silently blind
