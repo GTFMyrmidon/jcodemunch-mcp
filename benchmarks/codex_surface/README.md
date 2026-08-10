@@ -35,6 +35,53 @@ move anyone, so long-time users are on the expensive setting.
 
 The savings term needs live runs. That is what the arms are for.
 
+## Result, 2026-08-10: NEGATIVE. Do not quote the arm numbers.
+
+First full run, 4 arms x 3 repeats x 6 steps on FastAPI at `a9134f62`. The
+honesty gate fired:
+
+```
+arm            schema tok     median        min        max   vs base
+baseline                0  2,247,575  1,428,363  2,571,592    +0.0%
+full               24,007  2,060,389  1,868,660  2,142,615    -8.3%
+full+policy        24,007  2,507,796  2,417,364  4,729,117   +11.6%
+counter             1,030  2,816,192  1,903,373  2,913,121   +25.3%
+
+baseline within-arm spread: 1,143,229 tokens (50.9% of median)
+```
+
+Largest arm difference is 568,617 tokens; the baseline varies against itself by
+1,143,229. **Every effect is inside the noise.** The directions are incoherent
+as well: `full` carries 24,007 tokens of schema and came out cheaper than
+baseline, `counter` carries 1,030 and came out most expensive. Both backwards
+from the mechanism. That is what noise looks like.
+
+Three metrics were checked from the same saved run. Best within-arm spread was
+11% (uncached input+output on one arm), worst 139%. None resolve a 24k effect.
+
+### Why the design cannot see it
+
+Summing per-invocation input across a RESUMED conversation counts accumulated
+context on every step: step 6 alone costs 500-700k because the whole transcript
+is resent. The total is therefore dominated by how much the agent happened to
+read early on, which compounds across steps. A fixed 24k difference is invisible
+underneath it.
+
+### The finding that outlived the arms
+
+**86% of baseline input is cached** (1,938,176 of 2,247,575). The tool-schema
+block is stable across requests, so it is paid at full rate roughly ONCE and at
+cache-read rates thereafter. Any framing of "24,007 tokens in every request" is
+wrong, and this repository said exactly that before measuring. The fixed-cost
+term is real and much cheaper than the raw number implies, which makes it a
+WEAKER explanation for the r/codex result, not a stronger one.
+
+### What it would take
+
+More repeats (n=3 against 50% variance resolves nothing), or a task flow with a
+deterministic number of tool calls, or measuring per-request rather than
+end-to-end. The `--surface-only` number needs none of this: it is exact.
+
 ## Arms
 
 | arm | MCP | surface | AGENTS.md | isolates |

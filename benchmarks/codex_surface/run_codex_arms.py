@@ -521,7 +521,7 @@ def main():
         print(f"\nbaseline within-arm spread: {within:,} tokens "
               f"({100 * within / baseline:.1f}% of median)")
         if spans and max(spans) < within:
-            print("⚠ EVERY arm difference is smaller than the baseline's own "
+            print("WARNING: EVERY arm difference is smaller than the baseline's own "
                   "run-to-run spread. This run distinguishes nothing. More "
                   "repeats or a tighter task flow, not a conclusion.")
     print(f"\nRaw events and results.json in {outdir}")
