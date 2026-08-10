@@ -1,6 +1,12 @@
 {
-  "current": "1.108.269",
+  "current": "1.108.270",
   "entries": [
+    {
+      "version": "1.108.270",
+      "date": "2026-08-09",
+      "title": "A directory that declares itself a cache is not corpus",
+      "summary": "jCodeMunch honours the Cache Directory Tagging Specification: a directory whose CACHEDIR.TAG carries the spec signature is pruned from the walk. The signature is verified, so a file merely named CACHEDIR.TAG excludes nothing. Unlike a denylist, the exclusion is declared by whoever wrote the directory."
+    },
     {
       "version": "1.108.269",
       "date": "2026-08-09",

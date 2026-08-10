@@ -1,5 +1,67 @@
 # Changelog
 
+## [1.108.270] - 2026-08-09 - A directory that declares itself a cache is not corpus
+
+jCodeMunch now honours the [Cache Directory Tagging Specification](https://bford.info/cachedir/):
+a directory containing a `CACHEDIR.TAG` whose **first 43 bytes** are
+`Signature: 8a477f597d28d172789f06886806bc55` is pruned from the walk, along
+with everything beneath it.
+
+**This arrived from outside, and the route is the point.** A sibling tool wrote
+a derived projection into a directory inside an indexed tree. jCodeMunch walked
+in and indexed its JSON as source, so content that was never project source came
+back from `search_symbols` and `search_text`. That tool then adopted
+`CACHEDIR.TAG` to declare the directory derived — and we ignored the
+declaration, because we had no notion of one. The containment it built did
+nothing for us.
+
+⚠⚠ **Why a tag rather than another denylist entry.** Three fixes were available
+and two are traps. `_SKIP_DIRECTORY_NAMES` already lists `.git`, `.venv`,
+`.tox` — every dotted directory somebody thought of in advance — so adding the
+offender re-arms the same trap for the next tool. jdocmunch fixed its half with
+a dotted-directory *rule* (jdoc#113), which is better but keys on a naming
+convention and cannot see a cache that is not dotted. The tag is a declaration
+by the **writer**: the only one of the three that does not require every reader
+to know about every writer in advance.
+
+⚠⚠ **The signature is verified, and that is the whole design.** A file merely
+*named* `CACHEDIR.TAG` excludes nothing. A name-only check asserts one instance
+of the property instead of the property, which is precisely the defect class
+this answers — the sibling tool's own test pinned its sidecar suffix as `.txt`
+and stayed green while a `.json` beside it was ingested; v1.108.267 keyed a
+constant branch on node type alone and it read as coverage while returning
+`None` for every Kotlin input. Five lookalike tags (empty, wrong hash, signature
+not first, truncated by one byte, wrong case) are parametrized controls, and a
+name-only implementation fails all five.
+
+⚠ **`cache_dir` is an ordinary exclusion, NOT a withheld reason.** A tagged
+directory holds regenerable derived data by its writer's own declaration, which
+puts it in the same class as `gitignore` and `wrong_extension`: the corpus being
+defined, not a file we refused. Coverage stays `complete` and absence claims
+over the remainder stay citable. Contrast `too_large`, where the file is real,
+current and wanted and only our limit kept it out.
+
+⚠ Reaches the full walk and the watcher fast path — the third entry point,
+`resolve_explicit_paths`, **deliberately bypasses it**, and there is a test
+saying so. That route already opts past `gitignore` and skip-directory rules by
+design so a caller can name a generated file on purpose; it keeps only the
+security filters. A caller naming a file inside a cache is asking for it by name.
+
+⚠ **Local walks only.** `index_repo` is deliberately uncovered: validating the
+signature needs the blob's content, and the GitHub tree listing carries only
+paths and sizes, so honouring it there costs a fetch per candidate directory. A
+filename-only check is the one thing this release exists to reject, so the
+GitHub walk gets nothing rather than a lookalike. A test pins the absence so it
+stays a known gap instead of surfacing later as a silent inconsistency.
+
+Config key `respect_cachedir_tag` (default true, only an explicit `false`
+disables it) / `JCODEMUNCH_RESPECT_CACHEDIR_TAG`. Pruned directories are counted
+as `cache_dir` in `discovery_skip_counts`.
+
+`tests/test_v1_108_270.py`, 31 tests. Non-vacuous against unmodified HEAD in an
+isolated worktree: **27 fail before the fix**, and the 4 that pass on both sides
+are the controls.
+
 ## [1.108.269] - 2026-08-09 - A withheld oversize file says so, and the cap is reachable
 
 [#429](https://github.com/jgravelle/jcodemunch-mcp/issues/429). Found when this

@@ -32,7 +32,9 @@ from ..security import (
     get_max_file_size,
     get_max_folder_files,
     get_extra_ignore_patterns,
+    get_respect_cachedir_tag,
     get_skip_directories,
+    is_cache_directory,
     SKIP_FILES
 )
 from ..storage import IndexStore
@@ -402,6 +404,7 @@ class _IndexFilters:
     skip_dirs_regex: Optional[re.Pattern] = None
     check_binary: bool = True
     check_filename: bool = True
+    respect_cachedir_tag: bool = True
 
 
 def _build_index_filters(
@@ -414,6 +417,7 @@ def _build_index_filters(
     skip_dirs_regex: Optional[re.Pattern] = None,
     check_binary: bool = True,
     check_filename: bool = True,
+    respect_cachedir_tag: bool = True,
 ) -> _IndexFilters:
     """Bundle pre-computed filter config for ``_should_index_file``.
 
@@ -433,6 +437,7 @@ def _build_index_filters(
         skip_dirs_regex=skip_dirs_regex,
         check_binary=check_binary,
         check_filename=check_filename,
+        respect_cachedir_tag=respect_cachedir_tag,
     )
 
 
@@ -527,6 +532,13 @@ def _should_index_file(
             ancestor = ancestor / part
             if is_linked_worktree(ancestor):
                 return False, "nested_worktree", rel_path, None
+            # CACHEDIR.TAG on the fast path. The full walk prunes these in
+            # `os.walk`'s dirnames and never reaches here, exactly like the two
+            # checks above; this branch exists so a watchfiles event for a file
+            # that appeared inside a tagged cache does not enter the index by
+            # the back door. Third entry point, same rule as #429.
+            if cfg.respect_cachedir_tag and is_cache_directory(ancestor):
+                return False, "cache_dir", rel_path, None
 
     # 8. Gitignore (string-prefix specs, walk-order)
     if gitignore_specs and _is_gitignored_fast(resolved_str, gitignore_specs):
@@ -1134,6 +1146,7 @@ def discover_local_files(
     _repo_key = str(root)
     max_size = get_max_file_size(max_size, repo=_repo_key)
     max_files = get_max_folder_files(max_files, repo=_repo_key)
+    respect_cachedir_tag = get_respect_cachedir_tag(repo=_repo_key)
     files = []
     warnings = []
     oversize: list[str] = []
@@ -1153,6 +1166,7 @@ def discover_local_files(
         "unreadable": 0,
         "binary": 0,
         "file_limit": 0,
+        "cache_dir": 0,
     }
 
     # Pre-compute string-based gitignore specs — built incrementally during
@@ -1197,6 +1211,7 @@ def discover_local_files(
         skip_dirs_regex=None,
         check_binary=True,
         check_filename=True,
+        respect_cachedir_tag=respect_cachedir_tag,
     )
 
     skip_dirs_regex = _build_skip_dirs_regex()
@@ -1209,15 +1224,23 @@ def discover_local_files(
         # index and burn the max_folder_files cap (#372).
         pruned = []
         worktrees = []
+        caches = []
         kept = []
         for d in dirnames:
             if skip_dirs_regex.match(d):
                 pruned.append(d)
             elif is_linked_worktree(dpath / d):
                 worktrees.append(d)
+            # A directory that declares ITSELF a cache, per the Cache Directory
+            # Tagging Specification. Checked last because it costs an open() and
+            # the two rules above are string/stat work; ordering is behaviour-
+            # neutral since a directory matching an earlier rule is pruned
+            # either way.
+            elif respect_cachedir_tag and is_cache_directory(dpath / d):
+                caches.append(d)
             else:
                 kept.append(d)
-        if pruned or worktrees:
+        if pruned or worktrees or caches:
             rel_dir = os.path.relpath(dirpath, root_str)
             for d in pruned:
                 skip_counts["skip_dir"] += 1
@@ -1227,6 +1250,9 @@ def discover_local_files(
                 logger.debug(
                     "SKIP nested_worktree: %s", os.path.join(rel_dir, d)
                 )
+            for d in caches:
+                skip_counts["cache_dir"] += 1
+                logger.debug("SKIP cache_dir: %s", os.path.join(rel_dir, d))
         dirnames[:] = kept
 
         # Load .gitignore for this directory BEFORE filtering its files so
@@ -1683,6 +1709,9 @@ def index_folder(
                 skip_dirs_regex=_build_skip_dirs_regex(),
                 check_binary=False,
                 check_filename=True,
+                respect_cachedir_tag=get_respect_cachedir_tag(
+                    repo=str(Path(walk_root).resolve())
+                ),
             )
 
             # Branch detection for watcher fast-path
