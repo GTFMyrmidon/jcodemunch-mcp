@@ -3143,6 +3143,11 @@ def _build_tools_list() -> list[Tool]:
                         "exclusiveMinimum": 0.5,
                         "maximum": 1.0,
                     },
+                    "entry_point_patterns": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Glob patterns for files to treat as live roots, for frameworks the filename heuristic cannot see (e.g. 'handlers/*.py' for AWS Lambda, 'route.ts' for Next.js App Router). Matched with fnmatch against the repo-relative path AND against the bare filename, so 'route.ts' catches the file at any depth. NOTE: '**' is NOT recursive here — 'handlers/**/*.py' will not match 'handlers/h.py'. Use 'handlers/*.py' for one level, or a bare filename to match anywhere. Same matcher as find_dead_code.",
+                    },
                 },
                 "required": ["repo"],
             },
@@ -6123,6 +6128,7 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent] | Cal
                     file_pattern=arguments.get("file_pattern"),
                     storage_path=storage_path,
                     degeneracy_cutoff=arguments.get("degeneracy_cutoff"),
+                    entry_point_patterns=arguments.get("entry_point_patterns"),
                 )
             )
         elif name == "get_extraction_candidates":
