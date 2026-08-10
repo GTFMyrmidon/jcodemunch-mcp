@@ -47,6 +47,17 @@ REPO_ROOT = HERE.parent.parent
 # PATHEXT lookup without shell=True, so passing the bare name raises WinError 2.
 CODEX_BIN = shutil.which("codex") or "codex"
 
+# Deliberately OUTSIDE the repository tree. Codex populates its home with
+# downloaded plugin caches and skill scripts, i.e. third-party Python that every
+# repo-wide guard test then scans. Pointing it at benchmarks/ made
+# test_no_text_mode_subprocess_without_encoding fail on four files nobody here
+# wrote and gitignore does not help, because those guards walk the filesystem,
+# not the index. Keeping it out of the tree also means a live auth token is
+# never one `git add -f` away.
+DEFAULT_CODEX_HOME = Path(
+    os.environ.get("CODE_INDEX_PATH", str(Path.home() / ".code-index"))
+) / "codex_bench_home"
+
 # ---------------------------------------------------------------------------
 # Arms
 # ---------------------------------------------------------------------------
@@ -330,7 +341,7 @@ def main():
                          "combination verified working on a ChatGPT account")
     ap.add_argument("--tasks", default=str(HERE / "tasks.json"))
     ap.add_argument("--out", default=str(HERE / "results"))
-    ap.add_argument("--codex-home", default=str(HERE / ".codexhome"),
+    ap.add_argument("--codex-home", default=str(DEFAULT_CODEX_HOME),
                     help="isolated CODEX_HOME; the operator's real ~/.codex is never touched")
     ap.add_argument("--timeout", type=int, default=900, help="per-step seconds")
     ap.add_argument("--arms", default="A,B,C,D")

@@ -67,21 +67,31 @@ _NUXT = FrameworkProfile(
     ignore_patterns=[
         "node_modules/", ".nuxt/", ".output/", "dist/", ".nitro/",
     ],
+    # Both layouts are listed because both are defaults of a current major
+    # version: Nuxt 3 keeps these at the root, Nuxt 4 moves them under `app/`
+    # (see NuxtContextProvider._resolve_src_dir). `server/` stays at the root in
+    # both, so it is deliberately NOT mirrored. A profile cannot read srcDir, so
+    # naming both is the honest static approximation.
     entry_point_patterns=[
         "pages/**/*.vue",
-        "server/api/**/*.ts",
-        "plugins/**/*.ts",
-        "middleware/**/*.ts",
+        "plugins/**/*.{ts,js,mjs}",
+        "middleware/**/*.{ts,js,mjs}",
+        "app/pages/**/*.vue",
+        "app/plugins/**/*.{ts,js,mjs}",
+        "app/middleware/**/*.{ts,js,mjs}",
+        "server/api/**/*.{ts,js,mjs}",
     ],
     layer_definitions=[
-        Layer("pages",       ["pages/"]),
-        Layer("components",  ["components/"]),
-        Layer("composables", ["composables/"]),
-        Layer("stores",      ["stores/"]),
+        Layer("pages",       ["pages/", "app/pages/"]),
+        Layer("components",  ["components/", "app/components/"]),
+        Layer("composables", ["composables/", "app/composables/"]),
+        Layer("stores",      ["stores/", "app/stores/"]),
         Layer("server",      ["server/"]),
-        Layer("plugins",     ["plugins/"]),
+        Layer("plugins",     ["plugins/", "app/plugins/"]),
     ],
-    high_value_paths=["pages/", "composables/", "server/api/"],
+    high_value_paths=[
+        "pages/", "composables/", "app/pages/", "app/composables/", "server/api/",
+    ],
 )
 
 _NEXT = FrameworkProfile(
@@ -89,6 +99,10 @@ _NEXT = FrameworkProfile(
     ignore_patterns=[
         "node_modules/", ".next/", "out/", "dist/",
     ],
+    # NOTE: the JS/JSX counterparts (#435) are deliberately NOT added here yet.
+    # PR #433 edits exactly these lines to add the src/app layout, and changing
+    # them underneath an open contributor PR forces a conflict onto the rebase
+    # we asked its author for. Sequenced after #433 merges; #435 says so.
     entry_point_patterns=[
         "app/**/page.tsx",
         "app/**/route.ts",
@@ -203,12 +217,14 @@ _SPRING_BOOT = FrameworkProfile(
 _NESTJS = FrameworkProfile(
     name="nestjs",
     ignore_patterns=["node_modules/", "dist/", ".next/", ".nuxt/", "coverage/"],
-    entry_point_patterns=["src/main.ts", "src/app.module.ts"],
+    entry_point_patterns=[
+        "src/main.{ts,js}", "src/app.module.{ts,js}",
+    ],
     layer_definitions=[
-        Layer("controllers", ["src/**/*controller.ts"]),
-        Layer("services",   ["src/**/*service.ts"]),
-        Layer("modules",   ["src/**/*.module.ts"]),
-        Layer("guards",    ["src/**/*guard.ts"]),
+        Layer("controllers", ["src/**/*controller.{ts,js}"]),
+        Layer("services",   ["src/**/*service.{ts,js}"]),
+        Layer("modules",   ["src/**/*.module.{ts,js}"]),
+        Layer("guards",    ["src/**/*guard.{ts,js}"]),
     ],
     high_value_paths=["src/", "modules/", "controllers/", "services/"],
 )
