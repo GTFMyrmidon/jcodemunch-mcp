@@ -490,7 +490,12 @@ def render_text(
     out.write(f"  Tokens delivered (actual):     {totals['actual_tokens']:>12,}\n")
     out.write(f"  Tokens you would have spent:   {totals['baseline_tokens']:>12,}\n")
     out.write(f"                                 {'-' * 12}\n")
-    out.write(f"  Net savings:                   {totals['savings_tokens']:>12,} tokens\n\n")
+    out.write(f"  Net savings:                   {totals['savings_tokens']:>12,} tokens\n")
+    # Call-count-invariant companion to the total. The total scales with calls
+    # by construction (baseline = actual x multiplier, per call), so a rising
+    # total can mean more calls rather than better ones. This figure cannot.
+    per_call = totals["savings_tokens"] / totals["calls"] if totals["calls"] else 0
+    out.write(f"  Per call:                      {per_call:>12,.0f} tokens/call\n\n")
 
     rate = _MODEL_PRICES_USD_PER_MTOK.get(model.lower(), _MODEL_PRICES_USD_PER_MTOK[_DEFAULT_MODEL])
     primary_dollars = dollar_savings(totals["savings_tokens"], model)
@@ -523,6 +528,9 @@ def render_text(
     out.write("  Methodology: per-tool savings multipliers calibrated against\n")
     out.write("  published RAG benchmarks (Express/FastAPI/Gin). Run with --explain\n")
     out.write("  to see the full multiplier table; --export csv|json for raw data.\n")
+    out.write("  Read the total WITH the call count: savings is computed per call,\n")
+    out.write("  so it rises with calls by construction and is not cost-per-task.\n")
+    out.write("  Tool calls are themselves a cost carrier. --explain has the detail.\n")
     out.write("  Provenance: basis = measured — committed, drift-guarded artifacts\n")
     out.write("  at benchmarks/provenance/measured.json (tiktoken methodology +\n")
     out.write("  CI-gated replay retrieval golden). --export json carries the block.\n")
@@ -538,6 +546,18 @@ def render_explain() -> str:
     out.write("Per-tool savings multipliers. For each call:\n")
     out.write("  baseline_tokens = actual_tokens × multiplier\n")
     out.write("  savings_tokens  = baseline_tokens − actual_tokens\n\n")
+    out.write("⚠ Savings is computed PER CALL, so the total rises with the\n")
+    out.write("number of calls by construction. Doubling the calls doubles the\n")
+    out.write("reported savings even when the work done is identical. The total\n")
+    out.write("therefore cannot distinguish 'did more with less' from 'made more\n")
+    out.write("calls', and it is not a cost-per-task figure.\n\n")
+    out.write("This matters because token cost is not the only carrier. arXiv\n")
+    out.write("2608.01347 measures verification loops as a separate, TOOL-borne\n")
+    out.write("carrier: the runs with the most redundant verification cost 18x\n")
+    out.write("the clean-run median and made 2.5x the tool calls, at no gain in\n")
+    out.write("success rate. A workload can cut tokens per call and still cost\n")
+    out.write("more. Read the per-call figure alongside the total, and read the\n")
+    out.write("call count as a cost, not as evidence of value.\n\n")
     out.write("Calibrated against published RAG benchmarks\n")
     out.write("(benchmarks/rag_baseline_results.md) which show 30–56×\n")
     out.write("retrieval savings on Express/FastAPI/Gin. Multipliers below\n")
