@@ -27,6 +27,87 @@ def _provider():
 
 
 # ---------------------------------------------------------------------------
+# JS-variant sweep (#435)
+# ---------------------------------------------------------------------------
+
+# Profiles allowed to carry TS-only globs, named with the reason and the issue
+# that retires the exemption.
+#
+# ⚠ Exemptions live HERE, not in a parametrize list. `next` was previously
+# exempt by being absent from one, which is indistinguishable from nobody
+# having thought about it, and is the shape tests/test_constant_extraction_guard.py
+# was built to avoid for #428: "an exemption outliving its defect is how a
+# ratchet rots into a permanent allowance."
+_JS_VARIANT_EXEMPT = {
+    "next": (
+        "#435: PR #433 edits these exact lines to add the src/app layout. "
+        "Adding JS variants now forces a conflict onto the rebase we asked "
+        "its author for. Sequenced after #433 merges."
+    ),
+}
+
+
+def _profile_by_name() -> dict:
+    """Every FrameworkProfile defined in the module, keyed by its own name.
+
+    Enumerated rather than listed, so a profile added later is swept without
+    anyone remembering to add it. #435 exists because three profiles got the
+    JS variants right by attention and three did not.
+    """
+    from jcodemunch_mcp.parser.context import framework_profiles as fp
+    return {
+        obj.name: obj
+        for obj in vars(fp).values()
+        if isinstance(obj, fp.FrameworkProfile)
+    }
+
+
+# A TS extension and the JS extensions that count as covering it.
+_TS_TO_JS = {
+    ".tsx": (".jsx", ".js"),
+    ".ts":  (".js", ".mjs"),
+}
+
+
+def _ts_only_globs(profile) -> list[str]:
+    """TS-pinned globs with no JS counterpart.
+
+    ⚠ Two spellings both count as covered, and an earlier version of this
+    helper only understood one. `nuxt` and `nestjs` use brace alternation
+    (`plugins/**/*.{ts,js,mjs}`); `vue-spa`, `react-spa` and `express` list
+    the extensions as separate sibling entries (`src/main.ts` alongside
+    `src/main.js`). Flagging the second group would have been a false
+    failure against three profiles that are already correct.
+    """
+    globs = list(profile.entry_point_patterns)
+    for layer in profile.layer_definitions:
+        globs += layer.paths
+    globs += list(profile.high_value_paths)
+
+    present = set(globs)
+    offenders = []
+    for glob in globs:
+        if "{" in glob:
+            continue
+        for ts_ext, js_exts in _TS_TO_JS.items():
+            if not glob.endswith(ts_ext):
+                continue
+            stem = glob[: -len(ts_ext)]
+            if not any(stem + js_ext in present for js_ext in js_exts):
+                offenders.append(glob)
+            break
+    return offenders
+
+
+def pytest_generate_tests(metafunc):
+    if "profile_name" in metafunc.fixturenames:
+        names = sorted(set(_profile_by_name()) - set(_JS_VARIANT_EXEMPT))
+        metafunc.parametrize("profile_name", names)
+    if "exempt_name" in metafunc.fixturenames:
+        metafunc.parametrize("exempt_name", sorted(_JS_VARIANT_EXEMPT))
+
+
+# ---------------------------------------------------------------------------
 # srcDir resolution
 # ---------------------------------------------------------------------------
 
@@ -167,22 +248,39 @@ class TestProfilePatterns:
             assert any(p.startswith("app/") for p in by_name[name]), name
         assert by_name["server"] == ["server/"]
 
-    @pytest.mark.parametrize("profile_name", ["nuxt", "nestjs"])
     def test_ts_patterns_carry_js_variants(self, profile_name):
         """A TS-only entry-point list gives a JS project no reachability seed.
 
-        `next` is exempt BY NAME until PR #433 lands, because that PR edits the
-        same lines and we will not force a conflict onto a contributor's rebase.
-        Remove the exemption when #433 merges; #435 tracks it.
+        Every profile is swept, so a profile added later is covered by
+        construction rather than by whoever writes it remembering. Non-JS
+        profiles carry no `.ts` globs and pass trivially.
         """
-        from jcodemunch_mcp.parser.context import framework_profiles as fp
-        profile = {"nuxt": fp._NUXT, "nestjs": fp._NESTJS}[profile_name]
-        globs = list(profile.entry_point_patterns)
-        for layer in profile.layer_definitions:
-            globs += layer.paths
-        offenders = [
-            g for g in globs
-            if (g.endswith(".ts") or g.endswith(".tsx"))
-            and "{" not in g
-        ]
+        profile = _profile_by_name()[profile_name]
+        offenders = _ts_only_globs(profile)
         assert not offenders, f"{profile_name} has TS-only globs: {offenders}"
+
+    def test_exempt_profiles_still_warrant_their_exemption(self, exempt_name):
+        """The ratchet. An exemption must expire the moment its defect does.
+
+        ⚠ Without this, `next` was exempt by ABSENCE from a parametrize list,
+        with only a docstring saying to remove it when #433 lands. Nothing
+        failed if nobody read the docstring, so the deferral could outlive
+        the reason for it and #435 could be closed on the two thirds that
+        shipped. Modelled on tests/test_constant_extraction_guard.py, which
+        got this right for #428 on the same day this got it wrong.
+
+        Fixing an exempt profile makes THIS test fail. That is intended: the
+        fix and the deletion of its exemption land together or not at all.
+
+        It also doubles as the non-vacuity proof for the sweep above. That
+        sweep asserts `_ts_only_globs` returns EMPTY for 12 profiles, which a
+        helper broken to always return empty would also satisfy. This one
+        asserts it returns NON-empty for `next`, so the two together show the
+        helper discriminates rather than just agreeing.
+        """
+        profile = _profile_by_name()[exempt_name]
+        assert _ts_only_globs(profile), (
+            f"{exempt_name} no longer has TS-only globs, so its entry in "
+            f"_JS_VARIANT_EXEMPT is spent. Delete it: "
+            f"{_JS_VARIANT_EXEMPT[exempt_name]}"
+        )
