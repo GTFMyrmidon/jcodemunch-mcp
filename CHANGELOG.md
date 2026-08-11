@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased] - A Windows drive-root child can prove it is a repository
+
+### Exact Git working trees no longer trip the broad-root guard ([#438](https://github.com/jgravelle/jcodemunch-mcp/issues/438))
+
+On Windows, an explicit repository at `X:\repo` has only two logical path
+components, so `index_folder` rejected it alongside genuinely broad paths. The
+guard now accepts that narrow case only when `.git` exists at the selected root.
+Drive roots, shallow non-Git directories, POSIX paths, and UNC depth handling are
+unchanged.
+
+The Windows regression coverage keeps the positive repository case beside both
+negative cases and mocks the filesystem probes, so the runner's drive layout
+cannot decide the result.
+
 ## [1.108.275] - 2026-08-12 - A pattern that matches nothing now says so
 
 ### `entry_point_patterns` failed silently ([#446](https://github.com/jgravelle/jcodemunch-mcp/issues/446))
@@ -136,7 +150,6 @@ Item 1 of the QA pass — the `install-pack` archive guard missing drive-absolut
 member names — is [#447](https://github.com/jgravelle/jcodemunch-mcp/issues/447),
 with @elfrost's [PR #443](https://github.com/jgravelle/jcodemunch-mcp/pull/443)
 open against it.
-
 ## [1.108.273] - 2026-08-12 - A pattern that names two extensions and matches neither
 
 ### v1.108.271's #435 fix matched nothing ([#445](https://github.com/jgravelle/jcodemunch-mcp/issues/445))
