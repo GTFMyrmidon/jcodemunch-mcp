@@ -60,6 +60,29 @@ from the `vX.Y.Z` package release tags. A package release does not imply
 an action change, and this action's behaviour should not shift because
 the Python package shipped a patch.
 
+Two ways to reference it, and the tradeoff is the usual one:
+
+```yaml
+# Immutable. Never changes under you. You update deliberately.
+- uses: jgravelle/jcodemunch-mcp/.github/actions/health-radar@health-radar-v1.0.1
+
+# Floating. Tracks the newest 1.x, so fixes arrive without a pin bump,
+# and so does anything else that lands.
+- uses: jgravelle/jcodemunch-mcp/.github/actions/health-radar@health-radar-v1
+```
+
+`health-radar-v1` always points at the newest `health-radar-v1.Y.Z`. It is
+the only tag in this namespace that moves, and choosing it is opting into
+that. If you want to audit what you run, take the immutable pin.
+
+⚠ The floating tag is a maintenance obligation, not a free convenience.
+It is worth naming what it costs: it has to be moved by hand on every
+action change, and nothing fails if that is forgotten. Tags are not
+reliably present in a CI checkout, so a guard test would be either
+skippable or flaky, and a guard nobody can see fail is one nobody should
+believe. The instructions live at the top of `action.yml`, where whoever
+changes the file will see them.
+
 ⚠ **`@v1.88.0` is superseded and should not be used.** It fetched the base
 branch with `git fetch --depth=1`, which shortens an already complete clone
 rather than merely limiting a download. `churn_surface` is

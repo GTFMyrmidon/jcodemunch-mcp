@@ -1,3 +1,23 @@
+# ⚠ MAINTENANCE: editing this file creates a release obligation.
+#
+# External consumers pin `@health-radar-vX.Y.Z` or track `@health-radar-v1`.
+# A change here reaches NEITHER until it is tagged, which is how the
+# --depth=1 base fetch stayed live for consumers after it was fixed on main.
+#
+# On any change to this file:
+#   1. git tag -a health-radar-vX.Y.Z -m "..."      (immutable, new version)
+#   2. git tag -f health-radar-v1                    (floating, moves forward)
+#   3. git push origin health-radar-vX.Y.Z && git push -f origin health-radar-v1
+#
+# ⚠ NEVER repoint an existing health-radar-vX.Y.Z. The floating v1 is the only
+# tag here that moves, and consumers opt into that by choosing it. `v1.88.0`
+# is left pointing at the known-bad version deliberately; see README.md.
+#
+# This is a documented habit, not an enforced ratchet. Tags are not reliably
+# present in a CI checkout, so a guard test here would either be skippable
+# (and therefore invisible) or flaky. Treated as weaker than the ratchets in
+# tests/, and named as such rather than pretended otherwise.
+
 name: 'jCodeMunch Health Radar'
 description: >-
   Compute a six-axis code-health radar on the PR branch and the base branch,
