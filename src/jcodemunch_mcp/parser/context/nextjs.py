@@ -105,19 +105,25 @@ class NextjsContextProvider(ContextProvider):
         if self._folder is None:
             self._folder = folder_path
 
-        self._parse_app_router(folder_path)
-        self._parse_middleware(folder_path)
+        # Root directories win: when app/ or pages/ exists at the project
+        # root, Next.js ignores src/ entirely
+        # (https://nextjs.org/docs/app/api-reference/file-conventions/src-folder).
+        # Resolved once, here, so the router and middleware parsers share one
+        # precedence rule and cannot drift apart.
+        src_ignored = (folder_path / "app").is_dir() or (folder_path / "pages").is_dir()
 
-    def _parse_app_router(self, folder_path: Path) -> None:
+        self._parse_app_router(folder_path, src_ignored)
+        self._parse_middleware(folder_path, src_ignored)
+
+    def _parse_app_router(self, folder_path: Path, src_ignored: bool) -> None:
         """Parse the App Router directory (app/ or src/app/)."""
-        # Next.js supports both the root app/ layout and the src/ directory
-        # layout (create-next-app --src-dir). Root directories win: if app/
-        # or pages/ exists at the root, Next.js ignores src/ entirely
-        # (https://nextjs.org/docs/app/api-reference/file-conventions/src-folder),
-        # so an ignored src/app tree must not be published as live routes.
+        # Root app/ wins over src/app. A root pages/ directory (src_ignored
+        # without a root app/) means any src/app tree is dead — publishing
+        # it would invent routes, and inventing routes is a worse failure
+        # than missing them.
         app_prefix = "app"
         if not (folder_path / app_prefix).is_dir():
-            if (folder_path / "pages").is_dir():
+            if src_ignored:
                 return
             app_prefix = "src/app"
             if not (folder_path / app_prefix).is_dir():
@@ -181,9 +187,12 @@ class NextjsContextProvider(ContextProvider):
             len(self._route_metadata), len(self._api_metadata),
         )
 
-    def _parse_middleware(self, folder_path: Path) -> None:
-        """Detect middleware.ts at the project root or under src/."""
-        for name in ("middleware.ts", "middleware.js", "src/middleware.ts", "src/middleware.js"):
+    def _parse_middleware(self, folder_path: Path, src_ignored: bool) -> None:
+        """Detect middleware.ts at the project root (or src/, when src/ is live)."""
+        names = ("middleware.ts", "middleware.js")
+        if not src_ignored:
+            names += ("src/middleware.ts", "src/middleware.js")
+        for name in names:
             mw_path = folder_path / name
             if mw_path.exists():
                 try:

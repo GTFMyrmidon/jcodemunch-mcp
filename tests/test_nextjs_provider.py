@@ -327,6 +327,41 @@ export const config = { matcher: ['/dashboard/:path*'] };
         assert "nextjs-middleware" in ctx.tags
         assert "/dashboard/:path*" in ctx.properties.get("matcher", "")
 
+    def test_root_app_blocks_src_middleware(self, tmp_path):
+        """A root app/ directory makes Next.js ignore src/ entirely —
+        middleware included. A stale src/middleware.ts must not be published
+        as a live handler while a root layout is what actually serves.
+        """
+        _make_next_project(tmp_path)
+        _write(tmp_path / "app" / "page.tsx", "export default () => <div/>;")
+        _write(tmp_path / "src" / "middleware.ts", """
+export function middleware(request) { return NextResponse.next(); }
+export const config = { matcher: ['/dashboard/:path*'] };
+""")
+
+        provider = NextjsContextProvider()
+        assert provider.detect(tmp_path)
+        provider.load(tmp_path)
+
+        assert provider.get_file_context("src/middleware.ts") is None
+        # Only the dead middleware is suppressed — the live root app/ tree
+        # still publishes.
+        assert provider.stats() == {"page_routes": 1, "api_routes": 0}
+
+    def test_root_pages_blocks_src_middleware(self, tmp_path):
+        """Same precedence, pages/ shape: root pages/ live, src/ staged."""
+        _make_next_project(tmp_path)
+        _write(tmp_path / "pages" / "index.tsx", "export default () => <div/>;")
+        _write(tmp_path / "src" / "middleware.ts", """
+export function middleware(request) { return NextResponse.next(); }
+""")
+
+        provider = NextjsContextProvider()
+        assert provider.detect(tmp_path)
+        provider.load(tmp_path)
+
+        assert provider.get_file_context("src/middleware.ts") is None
+
     def test_src_app_metadata_and_no_dir_safety(self, tmp_path):
         _make_next_project(tmp_path)
         _write(tmp_path / "src" / "app" / "page.tsx", "export default () => <div/>;")
