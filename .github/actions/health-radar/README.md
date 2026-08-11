@@ -47,11 +47,16 @@ jobs:
           # shallow checkout changes what the number means. The action
           # unshallows both sides itself, but doing it here is cheaper.
           fetch-depth: 0
-      - uses: jgravelle/jcodemunch-mcp/.github/actions/health-radar@health-radar-v1.0.0
+      - uses: jgravelle/jcodemunch-mcp/.github/actions/health-radar@health-radar-v1
 ```
 
 That's the whole setup. The action handles install, index, base/branch
 toggling, and comment posting itself.
+
+`@health-radar-v1` is the floating tag, so fixes reach you without a pin
+bump. That is the right default for a suggestion-style action that never
+gates a merge. If you'd rather audit exactly what runs, take an immutable
+pin instead; see [Versioning](#versioning).
 
 ## Versioning
 
@@ -63,12 +68,13 @@ the Python package shipped a patch.
 Two ways to reference it, and the tradeoff is the usual one:
 
 ```yaml
+# Floating, and the default in the usage example above. Tracks the newest
+# 1.x, so fixes arrive without a pin bump, and so does anything else that
+# lands.
+- uses: jgravelle/jcodemunch-mcp/.github/actions/health-radar@health-radar-v1
+
 # Immutable. Never changes under you. You update deliberately.
 - uses: jgravelle/jcodemunch-mcp/.github/actions/health-radar@health-radar-v1.0.1
-
-# Floating. Tracks the newest 1.x, so fixes arrive without a pin bump,
-# and so does anything else that lands.
-- uses: jgravelle/jcodemunch-mcp/.github/actions/health-radar@health-radar-v1
 ```
 
 `health-radar-v1` always points at the newest `health-radar-v1.Y.Z`. It is
