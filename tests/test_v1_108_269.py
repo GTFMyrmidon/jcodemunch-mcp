@@ -271,13 +271,17 @@ class TestRepoDiscoveryHonoursTheConfiguredCap:
         files, _, _, _ = discover_source_files(entries)
         assert sorted(files) == ["f0.py", "f1.py"]
 
-    def test_the_documented_env_var_reaches_this_path(self, monkeypatch):
+    def test_the_documented_env_var_reaches_this_path(self, monkeypatch, tmp_path):
         """⚠ Read at `load_config()` time, so a bare `os.environ` poke without a
         reload proves nothing — that is what made the env route look dead in
         #375 when it was not."""
         from jcodemunch_mcp import config as config_module
         from jcodemunch_mcp.tools.index_repo import discover_source_files
 
+        # ⚠ Pin storage before load_config() (#437). Unpinned, it reads the
+        # developer's real ~/.code-index/config.jsonc past conftest's reset, and
+        # creates that file when it is absent.
+        monkeypatch.setenv("CODE_INDEX_PATH", str(tmp_path / "storage"))
         monkeypatch.setenv("JCODEMUNCH_MAX_FILE_SIZE", "1000000")
         config_module.load_config()
         try:

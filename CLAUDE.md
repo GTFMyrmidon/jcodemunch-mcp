@@ -613,3 +613,20 @@ thing they do.
    thread. **Cannot execute it is not cannot check it** — the guard that closes
    this reads step text, which is weaker than running the Action and is still
    exactly what was missing.
+7. **A test must never read or write the developer's real global config.**
+   `load_config()` with no `storage_path` resolves to `CODE_INDEX_PATH` or
+   `~/.code-index/config.jsonc`, reads it, and with the default
+   `create_missing=True` WRITES it when absent. ⚠⚠ **conftest's
+   `_reset_global_config` already guarded this and already cited #411; a bare
+   `load_config()` in a fixture runs AFTER that reset and re-pulls the real config
+   straight past it.** The guard existed and the call sites walked around it, which
+   is why `tests/test_config_isolation_guard.py` checks the CALL, not the reset.
+   ⚠ **The write half is the worse half:** on a storage dir that looks like an
+   existing install (any `.db`) with no config file, the config a test run creates
+   has `tool_surface` ABSENT, resolving to `full`, and `_fresh_config_content` is
+   explicit that `upgrade_config` can never back-inject it. A test run could pin a
+   user to a surface nothing migrates them off. Found as three failures @lilubot
+   hit on PR #433 and reasonably blamed on their own machine (#437). Our suite was
+   green because this box has `max_folder_files` commented out, CI green because
+   the runner has no config at all. **A test that passes on two machines and fails
+   on a third, for a reason none of the three can see, is the defect.**
