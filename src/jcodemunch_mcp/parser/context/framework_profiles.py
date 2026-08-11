@@ -107,15 +107,21 @@ _NEXT = FrameworkProfile(
         "app/**/page.tsx",
         "app/**/route.ts",
         "app/layout.tsx",
+        "src/app/**/page.tsx",
+        "src/app/**/route.ts",
+        "src/app/layout.tsx",
         "middleware.ts",
+        "src/middleware.ts",
     ],
     layer_definitions=[
-        Layer("pages",      ["app/"]),
-        Layer("components", ["components/"]),
-        Layer("lib",        ["lib/"]),
-        Layer("api",        ["app/api/"]),
+        Layer("pages",      ["app/", "src/app/"]),
+        Layer("components", ["components/", "src/components/"]),
+        Layer("lib",        ["lib/", "src/lib/"]),
+        Layer("api",        ["app/api/", "src/app/api/"]),
     ],
-    high_value_paths=["app/", "lib/", "components/"],
+    high_value_paths=[
+        "app/", "src/app/", "lib/", "src/lib/", "components/", "src/components/",
+    ],
 )
 
 _VUE_SPA = FrameworkProfile(
