@@ -43,12 +43,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0    # need full history for index + base checkout
-      - uses: jgravelle/jcodemunch-mcp/.github/actions/health-radar@v1.88.0
+          # Full history. churn_surface is measured from `git log`, so a
+          # shallow checkout changes what the number means. The action
+          # unshallows both sides itself, but doing it here is cheaper.
+          fetch-depth: 0
+      - uses: jgravelle/jcodemunch-mcp/.github/actions/health-radar@health-radar-v1.0.0
 ```
 
 That's the whole setup. The action handles install, index, base/branch
 toggling, and comment posting itself.
+
+## Versioning
+
+The action is tagged in its own `health-radar-vX.Y.Z` namespace, separate
+from the `vX.Y.Z` package release tags. A package release does not imply
+an action change, and this action's behaviour should not shift because
+the Python package shipped a patch.
+
+⚠ **`@v1.88.0` is superseded and should not be used.** It fetched the base
+branch with `git fetch --depth=1`, which shortens an already complete clone
+rather than merely limiting a download. `churn_surface` is
+`complexity x log(1 + churn)` with churn counted by `git log --since=<N>
+days ago`, so the base saw one commit, scored every file at churn <= 1, and
+came back artificially healthy. Every PR was then charged for the gap.
+Measured at a single commit with identical trees on both sides: shallow
+82.2 (B) against full 75.5 (C), with `churn_surface` the only axis that
+moved. If you pinned `@v1.88.0`, every regression verdict it posted on
+`churn_surface` is suspect.
+
+That tag is deliberately not moved. Repointing a published tag at different
+code is worse than leaving a known-bad one in place, because it breaks the
+one guarantee pinning offers.
 
 ## Inputs
 
