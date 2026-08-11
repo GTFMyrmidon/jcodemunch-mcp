@@ -27,6 +27,7 @@ import time
 from typing import Optional
 
 from ..storage import IndexStore, record_savings, estimate_savings, cost_avoided
+from ._stop_rule import build_stop_rule
 from ._utils import index_status_to_tool_error, resolve_repo
 from .check_delete_safe import (
     _is_test_file,
@@ -308,6 +309,16 @@ def check_edit_safe(
         },
         "blockers": blockers_out,
         "recommended_action": actions[verdict],
+        # Executable stop rule beside the certainty language. `terminal` means
+        # no further jcodemunch call moves this verdict; it does NOT mean safe.
+        # See tools/_stop_rule.py for why this ships by default.
+        "stop_rule": build_stop_rule(
+            "check_edit_safe",
+            verdict,
+            cross_repo=cross_repo,
+            include_runtime=include_runtime,
+            runtime_data_present=runtime_data_present,
+        ),
         "signals": {
             "external_import_count": external_import_count,
             "cross_repo_count": cross_repo_count,

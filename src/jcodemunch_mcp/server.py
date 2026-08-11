@@ -2930,7 +2930,13 @@ def _build_tools_list() -> list[Tool]:
                 "one-line recommended_action. Verdict tiers: safe_to_delete / test_coverage_only / "
                 "internal_only / internal_uses_blocking / external_uses_blocking / cross_repo_blocking "
                 "/ runtime_observed / entry_point. Top-5 blockers ranked by severity. Read-only — "
-                "never mutates the codebase."
+                "never mutates the codebase. "
+                "ALREADY CONSULTED, do not re-run to confirm this verdict: find_dead_code, "
+                "find_importers, check_references. "
+                "Response carries `stop_rule.terminal`: true means no further jcodemunch call "
+                "changes this verdict, so stop checking and decide. It does NOT mean safe — a "
+                "blocking verdict is terminal too. When false, `stop_rule.would_change_verdict` "
+                "names the specific action that would move it."
             ),
             inputSchema={
                 "type": "object",
@@ -2963,7 +2969,13 @@ def _build_tools_list() -> list[Tool]:
                 "cyclomatic complexity, test-coverage presence, and runtime traffic into a single "
                 "verdict + one-line recommended_action. Verdict tiers: safe_to_edit / untested / "
                 "complexity_risk / signature_impact / runtime_critical. Top-5 blockers ranked by "
-                "severity. Read-only — never mutates the codebase."
+                "severity. Read-only — never mutates the codebase. "
+                "ALREADY CONSULTED, do not re-run to confirm this verdict: find_importers, "
+                "check_references. "
+                "Response carries `stop_rule.terminal`: true means no further jcodemunch call "
+                "changes this verdict, so stop checking and decide. It does NOT mean safe — a "
+                "blocking verdict is terminal too. When false, `stop_rule.would_change_verdict` "
+                "names the specific action that would move it."
             ),
             inputSchema={
                 "type": "object",
