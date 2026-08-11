@@ -77,7 +77,8 @@ class NextjsContextProvider(ContextProvider):
     """Context provider for Next.js projects (App Router).
 
     Detects next.config.js/ts/mjs, then parses (app/ or src/app/ — both
-    official layouts; root app/ wins when both exist, matching Next.js):
+    official layouts; a root app/ or pages/ directory makes Next.js ignore
+    src/ entirely, and parsing matches):
     - <app>/**/page.tsx    → page routes with route metadata
     - <app>/**/layout.tsx  → layout nesting
     - <app>/api/**/route.ts → API handlers with HTTP methods
@@ -110,14 +111,18 @@ class NextjsContextProvider(ContextProvider):
     def _parse_app_router(self, folder_path: Path) -> None:
         """Parse the App Router directory (app/ or src/app/)."""
         # Next.js supports both the root app/ layout and the src/ directory
-        # layout (create-next-app --src-dir). When both exist, Next.js itself
-        # uses root app/ and ignores src/app — probe in the same order.
-        for app_prefix in ("app", "src/app"):
-            app_dir = folder_path / app_prefix
-            if app_dir.is_dir():
-                break
-        else:
-            return
+        # layout (create-next-app --src-dir). Root directories win: if app/
+        # or pages/ exists at the root, Next.js ignores src/ entirely
+        # (https://nextjs.org/docs/app/api-reference/file-conventions/src-folder),
+        # so an ignored src/app tree must not be published as live routes.
+        app_prefix = "app"
+        if not (folder_path / app_prefix).is_dir():
+            if (folder_path / "pages").is_dir():
+                return
+            app_prefix = "src/app"
+            if not (folder_path / app_prefix).is_dir():
+                return
+        app_dir = folder_path / app_prefix
 
         for src_file in sorted(app_dir.rglob("*")):
             if src_file.suffix not in (".tsx", ".ts", ".jsx", ".js"):

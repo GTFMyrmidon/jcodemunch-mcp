@@ -119,7 +119,9 @@ _NEXT = FrameworkProfile(
         Layer("lib",        ["lib/", "src/lib/"]),
         Layer("api",        ["app/api/", "src/app/api/"]),
     ],
-    high_value_paths=["app/", "src/app/", "lib/", "components/"],
+    high_value_paths=[
+        "app/", "src/app/", "lib/", "src/lib/", "components/", "src/components/",
+    ],
 )
 
 _VUE_SPA = FrameworkProfile(

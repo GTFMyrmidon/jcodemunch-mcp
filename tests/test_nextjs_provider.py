@@ -288,6 +288,29 @@ export async function POST(request: Request) { return Response.json({}); }
         assert provider.get_file_context("src/app/other/page.tsx") is None
         assert provider.stats()["page_routes"] == 1
 
+    def test_root_pages_blocks_src_app(self, tmp_path):
+        """A root pages/ directory makes Next.js ignore src/ entirely.
+
+        "src/app or src/pages will be ignored if app or pages are present in
+        the root directory" — so a half-finished App Router migration (root
+        pages/ still live, src/app staged) must publish NO src/app routes.
+        Inventing routes is a worse failure than missing them.
+        """
+        _make_next_project(tmp_path)
+        _write(tmp_path / "pages" / "index.tsx", "export default () => <div/>;")
+        _write(tmp_path / "src" / "app" / "page.tsx", "export default () => <div/>;")
+        _write(tmp_path / "src" / "app" / "api" / "users" / "route.ts",
+               "export function GET() { return Response.json([]); }")
+
+        provider = NextjsContextProvider()
+        assert provider.detect(tmp_path)
+        provider.load(tmp_path)
+
+        assert provider.get_file_context("src/app/page.tsx") is None
+        assert provider.get_file_context("src/app/api/users/route.ts") is None
+        assert provider.stats() == {"page_routes": 0, "api_routes": 0}
+        assert provider.get_metadata() == {}
+
     def test_src_middleware_detected(self, tmp_path):
         _make_next_project(tmp_path)
         _write(tmp_path / "src" / "middleware.ts", """
@@ -317,3 +340,13 @@ export const config = { matcher: ['/dashboard/:path*'] };
         meta = provider.get_metadata()
         assert "/" in meta["nextjs_routes"]
         assert any("/api/health" in key for key in meta["nextjs_api"])
+
+    def test_high_value_paths_cover_both_layouts(self):
+        """#433 review: layer_definitions listed the src/ twins but
+        high_value_paths only picked up src/app/, so --src-dir projects had
+        src/lib and src/components deprioritized by profile consumers."""
+        from jcodemunch_mcp.parser.context.framework_profiles import _NEXT
+        hv = set(_NEXT.high_value_paths)
+        for root in ("app/", "lib/", "components/"):
+            assert root in hv, root
+            assert f"src/{root}" in hv, f"src/{root}"
