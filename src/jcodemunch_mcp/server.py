@@ -303,10 +303,66 @@ def _effective_surface() -> str:
 def _counter_front_door_tools() -> list:
     """Tool definitions for order / menu / route."""
     return [
-                                Tool(name='order', description='Dispatch a catalog action by name with arguments (for example, get_ranked_context with compress=true). Returns the result.', inputSchema={'type': 'object', 'properties': {'action': {'type': 'string', 'description': 'Name of the catalog action to run.'}, 'args': {'type': 'object', 'description': "Arguments for that action, exactly as you'd pass them directly.", 'default': {}}, 'allow_state_change': {'type': 'boolean', 'description': 'Opt in to dispatching an index/session state-changing action.', 'default': False}}, 'required': ['action']}),
-                                Tool(name='menu', description='Discover catalog actions and required arguments. Returns matching actions with compact summaries.', inputSchema={'type': 'object', 'properties': {'query': {'type': 'string', 'description': 'Optional. Keywords describing what you want to do; ranks matching.'}, 'limit': {'type': 'integer', 'description': 'Max actions to return.', 'default': 25}}}),
-                                Tool(name='route', description='Map a plain-language task prompt to the best catalog action. Returns recommended actions with argument templates.', inputSchema={'type': 'object', 'properties': {'task': {'type': 'string', 'description': "What you're trying to do, in plain language."}, 'repo': {'type': 'string', 'description': 'Repository identifier (required to execute repo-scoped actions).'}, 'execute': {'type': 'boolean', 'description': 'If true, dispatch the top recommended action and return its.', 'default': False}, 'model': {'type': 'string', 'description': 'Optional active model id; piggybacks tier-switch like plan_turn(model=...).'}}, 'required': ['task']}),
-                                Tool(name='get_tool_details', description='Return parameter schema, docstring, and usage examples for a catalog action.', inputSchema={'type': 'object', 'properties': {'name': {'type': 'string', 'description': 'Name of the catalog tool or action to inspect.'}}, 'required': ['name']}),
+        Tool(
+            name="order",
+            description=(
+                "Dispatch any jcodemunch action by name: order(action, args). The "
+                "single-verb front door to the full tool catalog. Read-only by "
+                "default — actions that change index/session state require "
+                "allow_state_change=true, and execution/file-write verbs are refused. "
+                "For exploration questions ('how does X work'), "
+                "order('get_ranked_context', {repo, query, token_budget}) answers in "
+                "ONE call — prefer it over chained search/outline/source hops; add "
+                "compress=true to fit more symbols in the same budget. "
+                "Call 'menu' to discover actions, or 'route' to pick one from a task."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "description": "Name of the catalog action to run (e.g. 'search_symbols')."},
+                    "args": {"type": "object", "description": "Arguments for that action, exactly as you'd pass them directly.", "default": {}},
+                    "allow_state_change": {"type": "boolean", "description": "Opt in to dispatching an index/session state-changing action (e.g. index_repo).", "default": False},
+                },
+                "required": ["action"],
+            },
+        ),
+        Tool(
+            name="menu",
+            description=(
+                "Discover catalog actions without keeping the full tool catalog "
+                "resident: menu(query?). Returns compact rows (action, summary, "
+                "required args, state_changing). With no query, lists the catalog. "
+                "Pair with 'order' to dispatch the chosen action."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Optional. Keywords describing what you want to do; ranks matching actions."},
+                    "limit": {"type": "integer", "description": "Max actions to return.", "default": 25},
+                },
+            },
+        ),
+        Tool(
+            name="route",
+            description=(
+                "Map a natural-language task to the best catalog action(s): "
+                "route(task, repo?, execute?). Returns ranked recommendations with "
+                "ready-to-run argument templates. With execute=true, dispatches the "
+                "top recommendation and returns its result in the same call, "
+                "collapsing discover-then-call into one round-trip. Recommends "
+                "assemble_task_context / plan_turn for context-gathering intents."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string", "description": "What you're trying to do, in plain language."},
+                    "repo": {"type": "string", "description": "Repository identifier (required to execute repo-scoped actions)."},
+                    "execute": {"type": "boolean", "description": "If true, dispatch the top recommended action and return its result.", "default": False},
+                    "model": {"type": "string", "description": "Optional active model id; piggybacks tier-switch like plan_turn(model=...)."},
+                },
+                "required": ["task"],
+            },
+        ),
     ]
 
 
@@ -734,8 +790,13 @@ _COMPACT_STRIP_PARAMS: dict[str, set[str]] = {
     "index_dependency": {"ecosystem", "max_files"},
     "find_importers": {"cross_repo"},
     "get_dependency_graph": {"cross_repo"},
-    "index_repo": {"extra_ignore_patterns", "incremental"},
-    "index_folder": {"extra_ignore_patterns", "incremental"},
+    # v1.108.269 (#429): `max_size` joins them on the same rule. It is an escape
+    # hatch for a repo with one oversize file, not a routine indexing control —
+    # and the response now NAMES the withheld files in `warnings`, so a caller
+    # who needs it is told the param exists at the moment it becomes relevant.
+    # Honoured under compact all the same; only the schema property is hidden.
+    "index_repo": {"extra_ignore_patterns", "incremental", "max_size"},
+    "index_folder": {"extra_ignore_patterns", "incremental", "max_size"},
 }
 
 # Params whose enum is demoted to a plain string filter under compact_schemas.
@@ -1169,98 +1230,3126 @@ def _apply_readonly_annotations(tools: list[Tool]) -> list[Tool]:
 def _build_tools_list() -> list[Tool]:
     """Build the full tool list, applying config-driven filtering and overrides."""
     all_tools = [
-                                Tool(name='index_repo', description='Index a GitHub repository source code. Parses ASTs, extracts symbols, and saves data to local storage.', inputSchema={'type': 'object', 'properties': {'url': {'type': 'string', 'description': 'GitHub repository URL or owner/repo string.'}, 'use_ai_summaries': {'type': 'boolean', 'description': 'Use AI to generate symbol summaries. Supports Anthropic, Gemini, OpenAI-compatible.', 'default': True}, 'extra_ignore_patterns': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Additional gitignore-style patterns to exclude from indexing (merged with JCODEMUNCH_EXTRA_IGNORE_PATTERNS.'}, 'incremental': {'type': 'boolean', 'description': 'When true and an existing index exists, only re-index changed.', 'default': True}}, 'required': ['url']}),
-                                Tool(name='index_folder', description='Index a local source code folder. Parses ASTs, extracts symbols, and saves data to local storage.', inputSchema={'type': 'object', 'properties': {'path': {'type': 'string', 'description': 'Path to local folder (absolute or relative; ~ expands).'}, 'use_ai_summaries': {'type': 'boolean', 'description': 'Generate symbol summaries via AI. When false, falls back to.', 'default': True}, 'extra_ignore_patterns': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Additional gitignore-style exclude patterns.'}, 'follow_symlinks': {'type': 'boolean', 'description': 'Include symlinked files. Symlinked directories are never followed.', 'default': False}, 'incremental': {'type': 'boolean', 'description': 'When an existing index exists, only re-index changed files.', 'default': True}, 'paths': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Optional explicit paths (absolute or relative to `path`). When set,.'}, 'identity_mode': {'type': 'string', 'enum': ['config', 'local', 'git'], 'description': 'Repo-identity strategy. `config` (default): respect existing index. `local`: path-keyed. `git`:.', 'default': 'config'}}, 'required': ['path']}),
-                                Tool(name='summarize_repo', description='Generate AI summaries for repository symbols across files.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or local/hash).'}, 'force': {'type': 'boolean', 'description': 'If true, clear all existing summaries and re-summarize every symbol.', 'default': False}}, 'required': ['repo']}),
-                                Tool(name='index_file', description='Index a single source file within a repository.', inputSchema={'type': 'object', 'properties': {'path': {'type': 'string', 'description': 'Absolute path to the file to index.'}, 'use_ai_summaries': {'type': 'boolean', 'description': 'Generate symbol summaries via AI. When false, falls back to.', 'default': True}, 'context_providers': {'type': 'boolean', 'description': 'Whether to run context providers.', 'default': True}}, 'required': ['path']}),
-                                Tool(name='index_dependency', description='Index an external dependency package for symbol navigation.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Host repository identifier (must be locally indexed).'}, 'package': {'type': 'string', 'description': 'Npm package (supports @scope/name) or PyPI distribution/import name, as installed.'}, 'ecosystem': {'type': 'string', 'enum': ['auto', 'npm', 'pypi'], 'description': "Where to resolve: 'auto' tries node_modules then repo-local virtualenvs (.venv/venv/env).", 'default': 'auto'}, 'max_files': {'type': 'integer', 'description': 'Cap on code files copied into the snapshot (truncation is.', 'default': 2000}}, 'required': ['repo', 'package']}),
-                                Tool(name='import_runtime_signal', description='Ingest execution trace data into local repository storage.', inputSchema={'type': 'object', 'properties': {'source': {'type': 'string', 'enum': ['otel', 'sql_log', 'stack_log', 'apm'], 'description': "Trace source format. Phases 1+4+5 accept 'otel', 'sql_log', and 'stack_log'.", 'default': 'otel'}, 'path': {'type': 'string', 'description': 'Absolute filesystem path to the trace file.'}, 'repo': {'type': 'string', 'description': 'Repository identifier (owner/name) —.'}, 'redact_enabled': {'type': 'boolean', 'description': 'Override the runtime_redact_enabled config key. Disable ONLY for offline debugging.'}}, 'required': ['path']}),
-                                Tool(name='get_runtime_coverage', description='Calculate code execution coverage metrics from runtime traces.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/name).'}, 'file_path': {'type': 'string', 'description': 'Optional repo-relative file path. When set, scopes the histogram to.'}, 'unmapped_limit': {'type': 'integer', 'description': 'Cap on the unmapped_runtime list.', 'default': 50}}, 'required': ['repo']}),
-                                Tool(name='find_hot_paths', description='Find which functions are hit hardest at runtime from trace data.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/name).'}, 'query': {'type': 'string', 'description': 'Optional case-insensitive substring filter on symbol name.'}, 'top_n': {'type': 'integer', 'description': 'Cap on returned rows.', 'default': 20}}, 'required': ['repo']}),
-                                Tool(name='find_unused_paths', description='Find unexecuted code paths from trace data.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/name).'}, 'since_days': {'type': 'integer', 'description': 'Look-back window in days.', 'default': 90}, 'include_tests': {'type': 'boolean', 'description': 'Include symbols in test files.', 'default': False}, 'include_entry_points': {'type': 'boolean', 'description': 'Include symbols in entry-point filenames (main.py, wsgi.py, ).', 'default': False}, 'max_results': {'type': 'integer', 'description': 'Cap on returned rows.', 'default': 200}}, 'required': ['repo']}),
-                                Tool(name='get_redaction_log', description='Return a log of redacted sensitive values from trace ingestion.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/name).'}, 'source': {'type': 'string', 'enum': ['otel', 'sql_log', 'stack_log', 'apm'], 'description': 'Optional filter to a single source label.'}, 'since_days': {'type': 'integer', 'description': 'Lookback window for last_redacted filter.', 'default': 30}}, 'required': ['repo']}),
-                                Tool(name='list_repos', description='List all indexed repositories in local storage.', inputSchema={'type': 'object', 'properties': {}}),
-                                Tool(name='get_watch_status', description='Return the status of active repository file watchers.', inputSchema={'type': 'object', 'properties': {}}),
-                                Tool(name='resolve_repo', description='Resolve a repository name or path to its canonical identifier.', inputSchema={'type': 'object', 'properties': {'path': {'type': 'string', 'description': 'Absolute filesystem path (repo root, worktree, subdirectory, or file).'}}, 'required': ['path']}),
-                                Tool(name='get_file_tree', description='List directories and file paths in a repository to show what is in here.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'path_prefix': {'type': 'string', 'description': 'Optional path prefix to filter.', 'default': ''}, 'include_summaries': {'type': 'boolean', 'description': 'Include file-level summaries in the tree nodes.', 'default': False}, 'max_files': {'type': 'integer', 'description': 'Maximum number of files to return . When truncated, response.', 'default': 500}}, 'required': ['repo']}),
-                                Tool(name='get_file_outline', description='Return top-level symbols, functions, and classes outlined for a file.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'file_path': {'type': 'string', 'description': 'Path to the file within the repository.'}, 'file_paths': {'type': 'array', 'items': {'type': 'string'}, 'description': 'List of file paths to query in batch mode. Returns.'}}, 'required': ['repo']}),
-                                Tool(name='get_symbol_source', description='Return implementation source code for a symbol.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'symbol_id': {'type': 'string', 'description': 'Single symbol ID — returns flat symbol object.'}, 'symbol_ids': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Multiple symbol IDs — returns {symbols, errors}.'}, 'verify': {'type': 'boolean', 'description': 'Verify content hash matches stored hash (detects source drift).', 'default': False}, 'verify_against': {'type': 'string', 'enum': ['cache', 'git_sha'], 'description': "Where to source the comparison target when verify=True. 'cache' (default).", 'default': 'cache'}, 'context_lines': {'type': 'integer', 'description': 'Number of lines before/after symbol to include for context.', 'default': 0}, 'fqn': {'type': 'string', 'description': 'PHP fully-qualified class name . Resolves to symbol_id via PSR-4.'}, 'source_start_line': {'type': 'integer', 'description': 'Bounded mode: absolute file line (1-based, same frame as `line`/`end_line`).'}, 'source_end_line': {'type': 'integer', 'description': 'Bounded mode: absolute file line (1-based, inclusive) to end the.'}, 'max_source_lines': {'type': 'integer', 'description': 'Bounded mode: keep at most the first N lines of.'}, 'max_source_bytes': {'type': 'integer', 'description': 'Bounded mode: UTF-8-safe per-symbol byte cap on the returned source.'}, 'max_total_source_bytes': {'type': 'integer', 'description': 'Bounded mode (batch): cap on total returned source bytes across.'}, 'receipt': {'type': 'boolean', 'description': _RECEIPT_ARG_DESCRIPTION, 'default': False}}, 'required': ['repo']}),
-                                Tool(name='get_file_content', description='Read file content lines in an indexed repository.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'file_path': {'type': 'string', 'description': 'Path to the file within the repository.'}, 'start_line': {'type': 'integer', 'description': 'Optional 1-based start line (inclusive).'}, 'end_line': {'type': 'integer', 'description': 'Optional 1-based end line (inclusive).'}}, 'required': ['repo', 'file_path']}),
-                                Tool(name='search_symbols', description='Search for repository symbols by name, kind, file pattern, or text.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'query': {'type': 'string', 'description': 'Search query (matches symbol names, signatures, summaries, docstrings).'}, 'kind': {'type': 'string', 'description': 'Optional filter by symbol kind.', 'enum': ['function', 'class', 'method', 'constant', 'type', 'template', 'import']}, 'file_pattern': {'type': 'string', 'description': 'Optional glob pattern to filter files.'}, 'language': {'type': 'string', 'description': 'Optional filter by language.', 'enum': _build_language_enum()}, 'decorator': {'type': 'string', 'description': 'Optional filter: only return symbols with this decorator (case-insensitive substring.'}, 'max_results': {'type': 'integer', 'description': 'Maximum number of results to return (ignored when token_budget is.', 'default': 10}, 'token_budget': {'type': 'integer', 'description': 'Token budget cap. When set, results are sorted by score.'}, 'detail_level': {'type': 'string', 'description': "Controls result verbosity. 'compact' returns id/name/kind/file/line only (~15 tokens each,.", 'enum': ['compact', 'standard', 'full'], 'default': 'standard'}, 'debug': {'type': 'boolean', 'description': 'When true, each result includes a score_breakdown showing per-field scoring.', 'default': False}, 'fuzzy': {'type': 'boolean', 'description': 'Enable fuzzy matching. When true, uses trigram overlap + Levenshtein.', 'default': False}, 'fuzzy_threshold': {'type': 'number', 'description': 'Minimum Jaccard trigram similarity (0.0–1.0) for fuzzy candidates. Lower values.', 'default': 0.4}, 'max_edit_distance': {'type': 'integer', 'description': 'Maximum Levenshtein distance for direct name matching (catches typos).', 'default': 2}, 'sort_by': {'type': 'string', 'enum': ['relevance', 'centrality', 'combined'], 'description': "Ranking strategy. 'relevance' (default) = BM25 text match. 'centrality' =.", 'default': 'relevance'}, 'semantic': {'type': 'boolean', 'description': 'Enable semantic (embedding-based) search. Requires an embedding provider: JCODEMUNCH_EMBED_MODEL (sentence-transformers),.', 'default': False}, 'semantic_weight': {'type': 'number', 'description': 'Weight for semantic score in hybrid BM25+embedding ranking (0.0–1.0). BM25.', 'default': 0.5}, 'semantic_only': {'type': 'boolean', 'description': 'Skip BM25 entirely and rank solely by embedding cosine similarity.', 'default': False}, 'fusion': {'type': 'boolean', 'description': 'Enable multi-signal fusion (Weighted Reciprocal Rank) across lexical, structural, similarity,.', 'default': False}, 'fqn': {'type': 'string', 'description': 'PHP fully-qualified class name . Resolves via PSR-4 and uses.'}, 'receipt': {'type': 'boolean', 'description': _RECEIPT_ARG_DESCRIPTION, 'default': False}}, 'required': ['repo', 'query']}),
-                                Tool(name='invalidate_cache', description='Clear cached query results for a repository.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}}, 'required': ['repo']}),
-                                Tool(name='search_text', description='Search exact text or regular expressions across repository files.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'query': {'type': 'string', 'description': 'Text to search for. Case-insensitive substring by =true for full.'}, 'is_regex': {'type': 'boolean', 'description': 'When true, treat query as a Python regex (re.search, case-insensitive).', 'default': False}, 'file_pattern': {'type': 'string', 'description': 'Optional glob pattern to filter files.'}, 'max_results': {'type': 'integer', 'description': 'Maximum number of matching lines to return.', 'default': 20}, 'context_lines': {'type': 'integer', 'description': 'Lines of context to include before and after each match.', 'default': 0}, 'receipt': {'type': 'boolean', 'description': _RECEIPT_ARG_DESCRIPTION, 'default': False}}, 'required': ['repo', 'query']}),
-                                Tool(name='get_repo_outline', description='Return high-level structure outline of files and directories for an indexed repository.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}}, 'required': ['repo']}),
-                                Tool(name='find_importers', description='Find files that import a specified module or symbol.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier.'}, 'file_path': {'type': 'string', 'description': 'Target file path within the repo . Use for single-file.'}, 'file_paths': {'type': 'array', 'items': {'type': 'string'}, 'description': 'List of target file paths for batch queries. Returns a.'}, 'max_results': {'type': 'integer', 'default': 50, 'description': 'Maximum results per file.'}, 'cross_repo': {'type': 'boolean', 'default': False, 'description': 'When true, also search other indexed repos for cross-repo importers.'}}, 'required': ['repo']}),
-                                Tool(name='find_references', description='Find symbol usage references across repository files.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier.'}, 'identifier': {'type': 'string', 'description': 'Symbol or module name to search for . Use for.'}, 'identifiers': {'type': 'array', 'items': {'type': 'string'}, 'description': 'List of symbol or module names to search for (batch.'}, 'max_results': {'type': 'integer', 'default': 50, 'description': 'Maximum results.'}, 'include_call_chain': {'type': 'boolean', 'default': False, 'description': 'When true (singular mode only), each reference entry includes calling_symbols:.'}}, 'required': ['repo']}),
-                                Tool(name='check_references', description='Verify symbol reference counts across repository files.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier.'}, 'identifier': {'type': 'string', 'description': 'Single identifier to check.'}, 'identifiers': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Multiple identifiers to check in one call. Returns grouped results.'}, 'search_content': {'type': 'boolean', 'default': True, 'description': 'Also search file contents (not just imports). Set false for.'}, 'max_content_results': {'type': 'integer', 'default': 20, 'description': 'Max files to return per identifier for content search.'}}, 'required': ['repo']}),
-                                Tool(name='search_columns', description='Search database column definitions across models and schema files.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'query': {'type': 'string', 'description': 'Search query (matches column names and descriptions).'}, 'model_pattern': {'type': 'string', 'description': 'Optional glob to filter by model name.'}, 'max_results': {'type': 'integer', 'description': 'Maximum number of results to return.', 'default': 20}}, 'required': ['repo', 'query']}),
-                                Tool(name='get_context_bundle', description='Assemble code context bundle for a function plus everything it imports.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'symbol_id': {'type': 'string', 'description': 'Single symbol ID (backward-compatible). Use symbol_ids for multi-symbol bundles.'}, 'symbol_ids': {'type': 'array', 'items': {'type': 'string'}, 'description': 'List of symbol IDs for a multi-symbol bundle. Imports are.'}, 'include_callers': {'type': 'boolean', 'description': "When true, each symbol entry includes a 'callers' list of.", 'default': False}, 'output_format': {'type': 'string', 'description': "'json' (default) or 'markdown' — markdown renders a paste-ready document.", 'enum': ['json', 'markdown'], 'default': 'json'}, 'token_budget': {'type': 'integer', 'description': 'Max tokens to return. When set, symbols are ranked and.'}, 'budget_strategy': {'type': 'string', 'enum': ['most_relevant', 'core_first', 'compact'], 'description': "'most_relevant' (default) ranks by file centrality (import in-degree). 'core_first' keeps.", 'default': 'most_relevant'}, 'include_budget_report': {'type': 'boolean', 'description': "When true, include a 'budget_report' field showing tokens used, symbols.", 'default': False}, 'fqn': {'type': 'string', 'description': 'PHP fully-qualified class name . Resolves to symbol_id via PSR-4.'}}, 'required': ['repo']}),
-                                Tool(name='get_session_stats', description='Return telemetry statistics for the active session.', inputSchema={'type': 'object', 'properties': {}}),
-                                Tool(name='analyze_perf', description='Return query timing statistics for server operations.', inputSchema={'type': 'object', 'properties': {'window': {'type': 'string', 'enum': ['session', '1h', '24h', '7d', 'all'], 'default': 'session', 'description': 'Session = in-memory ring; others read telemetry.db.'}, 'top': {'type': 'integer', 'default': 20, 'description': 'Cap on slowest tools to return.'}, 'tool': {'type': 'string', 'description': 'Restrict the analysis to a single tool name.'}, 'compare_release': {'type': 'string', 'description': 'Compare current session against a saved baseline at benchmarks/token_baselines/v{version}.json.'}, 'ledger': {'type': 'boolean', 'default': False, 'description': 'Include ranking_ledger summary (per-repo and per-tool event counts, average confidence,.'}}}),
-                                Tool(name='check_embedding_drift', description='Measure embedding index drift against repository code changes.', inputSchema={'type': 'object', 'properties': {'capture': {'type': 'boolean', 'default': False, 'description': 'Pin a fresh canary instead of running the drift check.'}, 'force': {'type': 'boolean', 'default': False, 'description': 'Re-pin the canary before checking. Use after intentional provider/model upgrades.'}, 'threshold': {'type': 'number', 'default': 0.05, 'description': 'Cosine-distance threshold above which the alarm fires (per-canary maximum, not.'}}}),
-                                Tool(name='tune_weights', description='Optimize retrieval ranking weights based on log history.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Limit tuning to a single repo.'}, 'dry_run': {'type': 'boolean', 'default': False, 'description': 'Compute proposed deltas without writing tuning.jsonc.'}, 'min_events': {'type': 'integer', 'default': 50, 'description': 'Skip repos with fewer ledger events than this (defends against.'}, 'explain': {'type': 'boolean', 'default': False, 'description': 'Include per-signal correlations (mean confidence with/without semantic and identity channels).'}, 'max_age_days': {'type': 'integer', 'default': 90, 'description': 'Only learn from ledger events newer than this many days.'}}}),
-                                Tool(name='get_session_context', description='Return active session context state.', inputSchema={'type': 'object', 'properties': {'max_files': {'type': 'integer', 'description': 'Maximum number of files to return in files_accessed.', 'default': 50}, 'max_queries': {'type': 'integer', 'description': 'Maximum number of queries to return in recent_searches.', 'default': 20}}}),
-                                Tool(name='get_session_snapshot', description='Save a snapshot of active session state.', inputSchema={'type': 'object', 'properties': {'max_files': {'type': 'integer', 'default': 10, 'description': 'Maximum focus files to include.'}, 'max_searches': {'type': 'integer', 'default': 5, 'description': 'Maximum key searches to include.'}, 'max_edits': {'type': 'integer', 'default': 10, 'description': 'Maximum edited files to include.'}, 'include_negative_evidence': {'type': 'boolean', 'default': True, 'description': 'Include dead-end searches (negative evidence) in snapshot.'}}}),
-                                Tool(name='get_file_risk', description='Calculate file risk score based on code churn and complexity.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repo identifier (owner/name, full id, or bare display name).'}, 'file_path': {'type': 'string', 'description': 'Path to the file within the indexed repo.'}}, 'required': ['repo', 'file_path']}),
-                                Tool(name='diff_health_radar', description='Compare repository health metrics between git commits.', inputSchema={'type': 'object', 'properties': {'baseline': {'type': 'object', 'description': 'Radar payload from baseline . The `radar` field of a.'}, 'current': {'type': 'object', 'description': 'Radar payload from current . The `radar` field of a.'}}, 'required': ['baseline', 'current']}),
-                                Tool(name='finalize_handoff', description='Prepare structured handoff context for an agent session.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier the handoff is about.'}, 'task': {'type': 'string', 'description': 'Task/question this handoff answers (becomes the title).'}, 'sections': {'type': 'array', 'description': 'Ordered report sections, each {heading, content} (markdown). The caller authors.', 'items': {'type': 'object', 'properties': {'heading': {'type': 'string'}, 'content': {'type': 'string'}, 'claims': {'type': 'array', 'description': "Optional caller-authored claims, each {id, statement, evidence_refs, classification?}. Ids must be unique across the handoff; each claim's refs are attested separately and rendered beside the claim.", 'items': {'type': 'object', 'properties': {'id': {'type': 'string'}, 'statement': {'type': 'string'}, 'evidence_refs': {'type': 'array', 'items': {'type': 'string'}}, 'classification': {'type': 'string'}}, 'required': ['id', 'statement', 'evidence_refs']}}}, 'required': ['heading']}}, 'evidence_refs': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Symbol ids or file paths retrieved this session; validated against.'}, 'profile': {'type': 'string', 'default': 'general', 'description': 'Handoff profile label.'}, 'appendices': {'type': 'array', 'description': 'Optional named appendices, each {name, content, content_type?}; names must be.', 'items': {'type': 'object', 'properties': {'name': {'type': 'string'}, 'content': {'type': 'string'}, 'content_type': {'type': 'string'}}, 'required': ['name', 'content']}}}, 'required': ['repo', 'task', 'sections', 'evidence_refs']}),
-                                Tool(name='digest', description='Return a concise briefing digest overview of this codebase and key symbols.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repo identifier (owner/name, full id, or bare display name).'}, 'since_sha': {'type': 'string', 'description': 'Override the last-seen SHA (for re-running a delta).'}, 'max_changed_files': {'type': 'integer', 'default': 5, 'description': 'Cap on changed-files list.'}, 'max_hotspots': {'type': 'integer', 'default': 3, 'description': 'Cap on hotspot list.'}, 'max_dead_code': {'type': 'integer', 'default': 3, 'description': 'Cap on dead-code candidates.'}}, 'required': ['repo']}),
-                                Tool(name='plan_turn', description='Plan next execution turn and select active tool tier.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier.'}, 'query': {'type': 'string', 'description': "What you're looking for (task description or symbol name)."}, 'max_recommended': {'type': 'integer', 'description': 'Maximum number of symbols to recommend.', 'default': 5}, 'model': {'type': 'string', 'description': 'Optional. Your active model identifier . When supplied and adaptive_tiering.'}}, 'required': ['repo', 'query']}),
-                                Tool(name='register_edit', description='Record a file edit to track index staleness.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier.'}, 'file_paths': {'type': 'array', 'items': {'type': 'string'}, 'description': 'List of file paths that were edited.'}, 'reindex': {'type': 'boolean', 'description': 'If True, also reindex the files.', 'default': False}}, 'required': ['repo', 'file_paths']}),
-                                Tool(name='test_summarizer', description='Validate AI summary provider configuration.', inputSchema={'type': 'object', 'properties': {'timeout_ms': {'type': 'integer', 'description': 'Slow-response threshold in ms.', 'default': 15000}}}),
-                                Tool(name='audit_agent_config', description='Audit server and CLAUDE.md agent instructions for stale settings.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier for cross-referencing symbols and files. If omitted, skips.'}, 'project_path': {'type': 'string', 'description': 'Project directory to scan for config files.'}}}),
-                                Tool(name='suggest_corrections', description='Suggest corrections for unknown symbol or file names.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository whose retrieval ledger to analyze.'}, 'project_path': {'type': 'string', 'description': 'Project directory holding the config files to target.'}, 'window_days': {'type': 'integer', 'description': 'Rolling window of ledger history to mine.', 'default': 30}, 'all_time': {'type': 'boolean', 'description': 'Ignore the window and analyze the full ledger.', 'default': False}, 'apply_weights': {'type': 'boolean', 'description': 'Persist the ranking-weight proposal to the tuning.jsonc sidecar (NOT user.', 'default': False}}}),
-                                Tool(name='get_dependency_graph', description='Return module import dependency graph showing the import chain from a file outward.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'file': {'type': 'string', 'description': 'File path within the repo.'}, 'direction': {'type': 'string', 'description': "'imports' (files this file depends on), 'importers' (files that depend.", 'enum': ['imports', 'importers', 'both'], 'default': 'imports'}, 'depth': {'type': 'integer', 'description': 'Number of hops to traverse (1–3).', 'default': 1}, 'cross_repo': {'type': 'boolean', 'description': 'When true, include cross-repo edges (imports that resolve to packages.', 'default': False}}, 'required': ['repo', 'file']}),
-                                Tool(name='get_symbol_diff', description='Return source code diff for a symbol between git commits.', inputSchema={'type': 'object', 'properties': {'repo_a': {'type': 'string', 'description': "First repo identifier (the 'before' snapshot)."}, 'repo_b': {'type': 'string', 'description': "Second repo identifier (the 'after' snapshot)."}}, 'required': ['repo_a', 'repo_b']}),
-                                Tool(name='get_class_hierarchy', description='Return class inheritance tree for a class symbol.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'class_name': {'type': 'string', 'description': 'Name of the class to analyse.'}}, 'required': ['repo', 'class_name']}),
-                                Tool(name='get_related_symbols', description='Find symbols related by call or import coupling.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'symbol_id': {'type': 'string', 'description': 'ID of the symbol to find relatives for.'}, 'max_results': {'type': 'integer', 'description': 'Maximum results.', 'default': 10}}, 'required': ['repo', 'symbol_id']}),
-                                Tool(name='suggest_queries', description='Suggest search queries when exploring what to look at first.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}}, 'required': ['repo']}),
-                                Tool(name='get_blast_radius', description='Calculate affected symbols and files for a code change.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'symbol': {'type': 'string', 'description': 'Symbol name or ID to analyse.'}, 'depth': {'type': 'integer', 'description': 'Import hops to traverse (1 = direct importers only, max.', 'default': 1}, 'include_depth_scores': {'type': 'boolean', 'description': 'When true, adds impact_by_depth (files grouped by hop distance) and.', 'default': False}, 'cross_repo': {'type': 'boolean', 'description': 'When true, also find files in other indexed repos that.', 'default': False}, 'call_depth': {'type': 'integer', 'description': 'When > 0, also find symbols that *call* this symbol.', 'default': 0}, 'fqn': {'type': 'string', 'description': 'PHP fully-qualified class name . Resolves to symbol via PSR-4.'}, 'decorator_filter': {'type': 'string', 'description': 'Optional: filter confirmed results to only those containing symbols with.'}, 'include_source': {'type': 'boolean', 'description': 'When true, each confirmed file includes source_snippets (lines referencing the.', 'default': False}, 'source_budget': {'type': 'integer', 'description': 'Max tokens for source snippets across all files . Files.', 'default': 8000}, 'include_decisions': {'type': 'boolean', 'description': "When true, attach a read-only 'decisions' block: decision-bearing commits (revert/perf/refactor/rename/bugfix).", 'default': False}}, 'required': ['repo', 'symbol']}),
-                                Tool(name='get_call_hierarchy', description='Return caller and callee trees for a function or method symbol.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'symbol_id': {'type': 'string', 'description': 'Symbol name or full ID to analyse. Use search_symbols to.'}, 'direction': {'type': 'string', 'enum': ['callers', 'callees', 'both'], 'description': "'callers' = who calls this symbol; 'callees' = what this.", 'default': 'both'}, 'depth': {'type': 'integer', 'description': 'Maximum hops to traverse (1–5).', 'default': 3}}, 'required': ['repo', 'symbol_id']}),
-                                Tool(name='get_impact_preview', description='Preview impact of proposed code edits on callers and importers.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'symbol_id': {'type': 'string', 'description': 'Symbol name or full ID to analyse. Use search_symbols to.'}, 'include_decisions': {'type': 'boolean', 'description': "When true, attach a read-only 'decisions' block: decision-bearing commits (revert/perf/refactor/rename/bugfix).", 'default': False}}, 'required': ['repo', 'symbol_id']}),
-                                Tool(name='get_symbol_provenance', description='Trace origin, commit history, and who wrote this code.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'symbol': {'type': 'string', 'description': 'Symbol name or full ID as returned by search_symbols.'}, 'max_commits': {'type': 'integer', 'description': 'Maximum commits to analyse.', 'default': 25}}, 'required': ['repo', 'symbol']}),
-                                Tool(name='get_pr_risk_profile', description='Calculate risk profile for pull request changes.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'base_ref': {'type': 'string', 'description': 'Base SHA/ref to compare from.'}, 'head_ref': {'type': 'string', 'description': 'Head SHA/ref to compare to.', 'default': 'HEAD'}, 'days': {'type': 'integer', 'description': 'Churn look-back window in days.', 'default': 90}}, 'required': ['repo']}),
-                                Tool(name='get_dependency_cycles', description='Detect circular dependencies between repository modules.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}}, 'required': ['repo']}),
-                                Tool(name='get_coupling_metrics', description='Calculate coupling metrics showing which modules are too tangled together.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'module_path': {'type': 'string', 'description': 'File path within the repo.'}}, 'required': ['repo', 'module_path']}),
-                                Tool(name='get_layer_violations', description='Detect architectural layer boundary violations when breaking layering rules.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'rules': {'type': 'array', 'description': 'Layer definitions. Each entry: {name, paths: [...], may_not_import: [...]}. If.', 'items': {'type': 'object'}}}, 'required': ['repo']}),
-                                Tool(name='check_rename_safe', description='Verify safety of renaming a symbol across the repository.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'symbol_id': {'type': 'string', 'description': 'Symbol ID to rename . Bare name accepted when unambiguous.'}, 'new_name': {'type': 'string', 'description': 'Proposed new symbol name (not a full ID, just the.'}}, 'required': ['repo', 'symbol_id', 'new_name']}),
-                                Tool(name='check_delete_safe', description='Verify safety of deleting a symbol across the repository.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier.'}, 'symbol': {'type': 'string', 'description': 'Symbol ID or name to evaluate for deletion safety.'}, 'cross_repo': {'type': 'boolean', 'description': 'Include other indexed repos in the analysis.', 'default': True}, 'include_runtime': {'type': 'boolean', 'description': 'Consult runtime_calls for production evidence.', 'default': True}}, 'required': ['repo', 'symbol']}),
-                                Tool(name='check_edit_safe', description='Verify safety of editing a symbol signature or behavior.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier.'}, 'symbol': {'type': 'string', 'description': 'Symbol ID or name to evaluate for edit safety.'}, 'cross_repo': {'type': 'boolean', 'description': 'Include other indexed repos in the analysis.', 'default': True}, 'include_runtime': {'type': 'boolean', 'description': 'Consult runtime_calls for production evidence.', 'default': True}}, 'required': ['repo', 'symbol']}),
-                                Tool(name='find_implementations', description='Find implementations of an interface or abstract class.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier.'}, 'symbol': {'type': 'string', 'description': 'Symbol ID or name of the interface/abstract/method to analyse.'}, 'relationship_kinds': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Optional whitelist: subclass_override, interface_impl, duck_typed, decorator_handler, subclass.'}, 'include_subclasses': {'type': 'boolean', 'description': 'Walk class hierarchy for class-kind targets.', 'default': True}, 'cross_repo': {'type': 'boolean', 'description': 'Also search other indexed repos via the package registry.', 'default': False}, 'rank_by_importance': {'type': 'boolean', 'description': 'Sort by confidence then PageRank × byte_length.', 'default': True}, 'max_results': {'type': 'integer', 'description': 'Cap on returned implementations.', 'default': 50}, 'token_budget': {'type': 'integer', 'description': 'Hard cap on response payload.', 'default': 4000}}, 'required': ['repo', 'symbol']}),
-                                Tool(name='plan_refactoring', description='Generate a step-by-step refactoring plan for a symbol.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'symbol': {'type': 'string', 'description': 'Symbol name or ID to refactor. For extract, comma-separated list.'}, 'refactor_type': {'type': 'string', 'enum': ['rename', 'move', 'extract', 'signature'], 'description': 'Type of refactoring to plan.'}, 'new_name': {'type': 'string', 'description': 'New name for rename operations.'}, 'new_file': {'type': 'string', 'description': 'Destination file path for move/extract operations.'}, 'new_signature': {'type': 'string', 'description': "New function signature ')."}, 'depth': {'type': 'integer', 'description': 'Import hops to traverse (1-3, ).', 'default': 2}}, 'required': ['repo', 'symbol', 'refactor_type']}),
-                                Tool(name='get_dead_code_v2', description='Identify unreferenced dead functions and classes that are never used.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'min_confidence': {'type': 'number', 'description': 'Minimum confidence threshold 0.0–1.0.', 'default': 0.5}, 'include_tests': {'type': 'boolean', 'description': 'Include test files in analysis.', 'default': False}, 'max_results': {'type': 'integer', 'description': 'Cap on returned dead symbols . _meta.truncated + _meta.total_matches flag.', 'default': 100, 'minimum': 0}, 'file_pattern': {'type': 'string', 'description': 'Optional glob — only scopes the RESULTS, not the population.'}, 'degeneracy_cutoff': {'type': 'number', 'description': 'Advanced. Fire rate at or above which a signal is.', 'default': 0.9, 'exclusiveMinimum': 0.5, 'maximum': 1.0}}, 'required': ['repo']}),
-                                Tool(name='get_extraction_candidates', description='Find code candidates for module extraction.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'file_path': {'type': 'string', 'description': 'Relative file path within the repo.'}, 'min_complexity': {'type': 'integer', 'description': 'Minimum cyclomatic complexity threshold.', 'default': 5}, 'min_callers': {'type': 'integer', 'description': 'Minimum number of distinct caller files.', 'default': 2}}, 'required': ['repo', 'file_path']}),
-                                Tool(name='get_symbol_complexity', description='Return cyclomatic complexity metrics for a symbol.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'symbol_id': {'type': 'string', 'description': 'Full symbol ID as returned by search_symbols or get_file_outline.'}}, 'required': ['repo', 'symbol_id']}),
-                                Tool(name='get_churn_rate', description='Return git commit modification frequency for how often a file gets touched.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'target': {'type': 'string', 'description': 'Relative file path  or a full symbol ID.'}, 'days': {'type': 'integer', 'description': 'Look-back window in days.', 'default': 90}}, 'required': ['repo', 'target']}),
-                                Tool(name='get_delivery_metrics', description='Return delivery velocity metrics for what code shipped and stuck over the last month.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'window_days': {'type': 'integer', 'description': 'Look-back window in days.', 'default': 30}, 'rework_horizon_days': {'type': 'integer', 'description': 'Days within which a re-touch counts as churn-back; also defines.', 'default': 14}}, 'required': ['repo']}),
-                                Tool(name='get_parity_map', description='Map feature parity across implementations.', inputSchema={'type': 'object', 'properties': {'source_repo': {'type': 'string', 'description': 'Repo id of the tree being ported FROM.'}, 'target_repo': {'type': 'string', 'description': 'Repo id of the tree being ported TO (may equal.'}, 'source_path': {'type': 'string', 'description': 'Optional subtree within source_repo (file-path prefix).'}, 'target_path': {'type': 'string', 'description': 'Optional subtree within target_repo (file-path prefix).'}, 'match_threshold': {'type': 'number', 'description': 'Similarity floor (0-1) for rename matching.', 'default': 0.75}, 'divergence': {'type': 'string', 'description': "Divergence policy: 'signature' (default), 'signature+body', or 'name_only' (presence only, no.", 'enum': ['signature', 'signature+body', 'name_only'], 'default': 'signature'}, 'rename': {'type': 'boolean', 'description': 'Match renamed symbols by similarity . Auto-disabled past the pair.', 'default': True}, 'include_port_plan': {'type': 'boolean', 'description': 'Emit the dependency-ordered plan over unported symbols.', 'default': True}}, 'required': ['source_repo', 'target_repo']}),
-                                Tool(name='get_decorator_census', description='List symbol decorators used across the repository.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'name_filter': {'type': 'string', 'description': 'Case-insensitive substring on the normalized decorator name.'}, 'scope_path': {'type': 'string', 'description': 'Optional subtree prefix (file-path) to restrict the census.'}, 'kind': {'type': 'string', 'description': 'Optional symbol-kind filter (function/method/class/...).'}, 'include_sites': {'type': 'boolean', 'description': 'List the decorated symbols per bucket (capped at max_sites_per).', 'default': False}, 'max_decorators': {'type': 'integer', 'description': 'Cap on histogram rows.', 'default': 100}, 'max_sites_per': {'type': 'integer', 'description': 'Cap on sites listed per decorator when include_sites.', 'default': 50}}, 'required': ['repo']}),
-                                Tool(name='get_architecture_metrics', description='Return overall architecture health metrics.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'top_n': {'type': 'integer', 'description': 'Number of top concentrators to list per Gini metric.', 'default': 10}}, 'required': ['repo']}),
-                                Tool(name='get_hotspots', description='Identify complex and frequently modified files.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'top_n': {'type': 'integer', 'description': 'Number of results to return.', 'default': 20}, 'days': {'type': 'integer', 'description': 'Churn look-back window in days.', 'default': 90}, 'min_complexity': {'type': 'integer', 'description': 'Minimum cyclomatic complexity to include.', 'default': 2}}, 'required': ['repo']}),
-                                Tool(name='get_repo_health', description='Return repository health score.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'days': {'type': 'integer', 'description': 'Churn look-back window for hotspot calculation.', 'default': 90}}, 'required': ['repo']}),
-                                Tool(name='get_untested_symbols', description='Find functions and symbols lacking unit test coverage.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'file_pattern': {'type': 'string', 'description': 'Optional glob to narrow which source files are analysed.'}, 'min_confidence': {'type': 'number', 'description': 'Minimum confidence to include (0.0–1.0, ).', 'default': 0.5}, 'max_results': {'type': 'integer', 'description': 'Cap on returned symbols.', 'default': 100}}, 'required': ['repo']}),
-                                Tool(name='search_ast', description='Search code using AST pattern matching.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'pattern': {'type': 'string', 'description': 'Preset name (empty_catch, bare_except, deeply_nested, nested_loops, god_function, eval_exec, hardcoded_secret, todo_fixme,.'}, 'category': {'type': 'string', 'description': 'Run all presets in a category: security, error_handling, complexity, performance,.'}, 'language': {'type': 'string', 'description': 'Restrict scan to one language.'}, 'file_pattern': {'type': 'string', 'description': 'Glob filter on file paths.'}, 'max_results': {'type': 'integer', 'description': 'Cap on total matches returned.', 'default': 50}}, 'required': ['repo']}),
-                                Tool(name='get_symbol_importance', description='Rank which symbols matter most architecturally by call centrality.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'top_n': {'type': 'integer', 'description': 'Number of top symbols to return.', 'default': 20}, 'algorithm': {'type': 'string', 'enum': ['pagerank', 'degree'], 'description': "'pagerank' (default) = full PageRank on import graph; 'degree' =.", 'default': 'pagerank'}, 'scope': {'type': 'string', 'description': 'Limit to a subdirectory prefix.'}}, 'required': ['repo']}),
-                                Tool(name='find_similar_symbols', description='Find clusters of duplicate functions to detect two copies of the same logic.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'threshold': {'type': 'number', 'description': 'Minimum combined similarity to form a cluster edge (0.0–1.0).', 'default': 0.8}, 'min_size': {'type': 'integer', 'description': 'Minimum byte_length per symbol.', 'default': 30}, 'max_clusters': {'type': 'integer', 'description': 'Cap on clusters returned.', 'default': 25}, 'include_tests': {'type': 'boolean', 'description': 'When False (default), test files are skipped — tests intentionally.', 'default': False}, 'scope': {'type': 'string', 'description': 'Optional glob to limit to a subdirectory.'}, 'include_kinds': {'type': 'array', 'items': {'type': 'string'}, 'description': "Symbol kind whitelist. ['function', 'method', 'class']."}, 'semantic_weight': {'type': 'number', 'description': 'Embedding weight when embeddings are present (0.0–1.0).', 'default': 0.6}, 'token_budget': {'type': 'integer', 'description': "Hard cap on the response's payload.", 'default': 4000}}, 'required': ['repo']}),
-                                Tool(name='get_repo_map', description='Generate a compact code map of repository symbols.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'token_budget': {'type': 'integer', 'description': 'Hard cap on returned tokens.', 'default': 2048}, 'scope': {'type': 'string', 'description': 'Optional glob to limit to a subdirectory.'}, 'max_per_file': {'type': 'integer', 'description': 'Max signatures emitted per file.', 'default': 5}, 'include_kinds': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Optional list of symbol kinds to restrict results.'}}, 'required': ['repo']}),
-                                Tool(name='find_dead_code', description='Identify dead code and unreferenced functions or classes that are never used.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'granularity': {'type': 'string', 'enum': ['symbol', 'file'], 'description': "'symbol' (default) returns dead symbols; 'file' returns dead files only.", 'default': 'symbol'}, 'min_confidence': {'type': 'number', 'description': 'Minimum confidence threshold 0.0–1.0.', 'default': 0.8}, 'include_tests': {'type': 'boolean', 'description': 'Treat test files as live roots.', 'default': False}, 'entry_point_patterns': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Additional glob patterns to treat as live roots.'}}, 'required': ['repo']}),
-                                Tool(name='get_ranked_context', description='Retrieve ranked code context matching a query prompt.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'query': {'type': 'string', 'description': 'Natural language or identifier describing the task (max 500 chars).'}, 'token_budget': {'type': 'integer', 'description': 'Hard cap on returned tokens.', 'default': 4000}, 'strategy': {'type': 'string', 'enum': ['combined', 'bm25', 'centrality'], 'description': "'combined' (default) = BM25 + PageRank weighted sum. 'bm25' =.", 'default': 'combined'}, 'include_kinds': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Optional list of symbol kinds to restrict results.'}, 'scope': {'type': 'string', 'description': 'Optional glob pattern to limit search to a subdirectory.'}, 'fusion': {'type': 'boolean', 'description': 'Enable multi-signal fusion (Weighted Reciprocal Rank) for ranking. Combines lexical,.', 'default': False}, 'compress': {'type': 'boolean', 'description': 'Keystone-protected structural compression: prune low-signal lines from oversized bodies so.', 'default': False}, 'receipt': {'type': 'boolean', 'description': _RECEIPT_ARG_DESCRIPTION, 'default': False}}, 'required': ['repo', 'query']}),
-                                Tool(name='assemble_task_context', description='Assemble code context bundle tailored to a task prompt.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier.'}, 'task': {'type': 'string', 'description': 'Natural-language task description. Anchors auto-extracted from task text.'}, 'symbols': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Optional anchor symbol IDs or names; auto-extracted from task when.'}, 'intent': {'type': 'string', 'enum': ['explore', 'debug', 'refactor', 'extend', 'audit', 'review'], 'description': 'Optional override; auto-detected from task when omitted.'}, 'token_budget': {'type': 'integer', 'description': 'End-to-end hard cap on returned tokens.', 'default': 8000}, 'include': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Optional whitelist of stages to run.'}, 'cross_repo': {'type': 'boolean', 'description': 'When True, layer cross-repo signals.', 'default': False}}, 'required': ['repo', 'task']}),
-                                Tool(name='get_changed_symbols', description='List symbols modified between git commits.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier — must be locally indexed with index_folder.'}, 'since_sha': {'type': 'string', 'description': 'Compare from this git SHA or ref.'}, 'until_sha': {'type': 'string', 'description': 'Compare to this git SHA or ref.', 'default': 'HEAD'}, 'include_blast_radius': {'type': 'boolean', 'description': 'Also return downstream importers (blast radius) for each changed symbol.', 'default': False}, 'max_blast_depth': {'type': 'integer', 'description': 'Hop limit when include_blast_radius=true.', 'default': 3}}, 'required': ['repo']}),
-                                Tool(name='embed_repo', description='Generate vector embeddings for repository symbols.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'batch_size': {'type': 'integer', 'description': 'Symbols per embedding batch.', 'default': 50}, 'force': {'type': 'boolean', 'description': 'Recompute all embeddings even if they already exist.', 'default': False}}, 'required': ['repo']}),
-                                Tool(name='get_cross_repo_map', description='Map dependencies showing which of our repos depend on which other ones.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Optional repo ID to filter. If omitted, returns the full.'}}}),
-                                Tool(name='get_group_contracts', description='Map API contracts across a group of repositories.', inputSchema={'type': 'object', 'properties': {'repos': {'type': 'array', 'items': {'type': 'string'}, 'description': 'List of indexed repo IDs (owner/name or bare names). Must.'}, 'min_importers': {'type': 'integer', 'description': 'Minimum distinct external repo importers to surface a contract.', 'default': 2}, 'include_internal': {'type': 'boolean', 'description': 'Surface leaky_internal contracts (architecture violations).', 'default': True}, 'include_dead_contracts': {'type': 'boolean', 'description': 'Surface public symbols with zero external importers.', 'default': False}, 'classify': {'type': 'boolean', 'description': 'Attach verdict tier per contract.', 'default': True}, 'churn_days': {'type': 'integer', 'description': 'Window for stability scoring.', 'default': 90}, 'max_contracts': {'type': 'integer', 'description': 'Cap on returned contracts.', 'default': 50}, 'token_budget': {'type': 'integer', 'description': 'Hard cap on response payload.', 'default': 4000}}, 'required': ['repos']}),
-                                Tool(name='get_tectonic_map', description='Map major component boundaries and code churn.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'days': {'type': 'integer', 'description': 'Git co-churn look-back window in days.', 'default': 90}, 'min_plate_size': {'type': 'integer', 'description': 'Minimum files per plate to include; smaller groups go to.', 'default': 2}}, 'required': ['repo']}),
-                                Tool(name='get_signal_chains', description='Trace execution flow of how an incoming HTTP request travels through code.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'symbol': {'type': 'string', 'description': 'Symbol name or ID for lookup mode. When provided, returns.'}, 'kind': {'type': 'string', 'description': 'Filter gateways by kind: http, cli, event, task, main, test.', 'enum': ['http', 'cli', 'event', 'task', 'main', 'test']}, 'max_depth': {'type': 'integer', 'description': 'BFS depth limit per chain (1–8, ).', 'default': 5}, 'include_tests': {'type': 'boolean', 'description': 'Include test_* functions as gateways.', 'default': False}, 'include_flow_edges': {'type': 'boolean', 'description': 'Resolve framework flow edges the call graph is blind to.', 'default': True}}, 'required': ['repo']}),
-                                Tool(name='get_endpoint_impact', description='Analyze impact of changing an HTTP endpoint or handler symbol.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'endpoint': {'type': 'string', 'description': 'HTTP endpoint to analyse, One of endpoint / handler_symbol_id is.'}, 'handler_symbol_id': {'type': 'string', 'description': 'Analyse a handler symbol directly instead of by URL (use.'}, 'depth': {'type': 'integer', 'description': 'Import hops for blast radius (1 = direct importers; max.', 'default': 1}, 'call_depth': {'type': 'integer', 'description': 'Call-graph hops for caller detection (0 disables; max 3).', 'default': 2}, 'include_infra': {'type': 'boolean', 'description': 'Attach per-impact infra links: env vars / compose services /.', 'default': False}}, 'required': ['repo']}),
-                                Tool(name='render_diagram', description='Render graph tool output as a Mermaid diagram.', inputSchema={'type': 'object', 'properties': {'source': {'type': 'object', 'description': 'Raw output dict from any supported graph-producing tool.'}, 'theme': {'type': 'string', 'enum': ['flow', 'risk', 'minimal'], 'description': "Visual theme: 'flow' (architecture), 'risk' (impact), 'minimal' (docs).", 'default': 'flow'}, 'max_nodes': {'type': 'integer', 'description': 'Maximum nodes before smart pruning.', 'default': 80}, **({'open_in_viewer': {'type': 'boolean', 'description': 'When true, also open the rendered mermaid in the local mmd-viewer. The HTML file is written under <index_storage>/temp/mermaid/. Non-fatal: if the viewer is missing, mermaid is returned anyway.', 'default': False}} if config_module.get('render_diagram_viewer_enabled', False) else {})}, 'required': ['source']}),
-                                Tool(name='get_project_intel', description='Extract infrastructure, CI, and configuration metadata.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or display name).'}, 'category': {'type': 'string', 'description': 'Category to return: all, infra, ci, config, deps, api, data.', 'default': 'all', 'enum': ['all', 'infra', 'ci', 'config', 'deps', 'api', 'data']}, 'scope_path': {'type': 'string', 'description': 'Optional subpath (relative to source_root) to restrict intel discovery to.'}}, 'required': ['repo']}),
-                                Tool(name='list_workspaces', description='List monorepo workspace packages and paths.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or display name).'}}, 'required': ['repo']}),
-                                Tool(name='winnow_symbols', description='Filter symbols using multi-axis criteria.', inputSchema={'type': 'object', 'properties': {'repo': {'type': 'string', 'description': 'Repository identifier (owner/repo or just repo name).'}, 'criteria': {'type': 'array', 'description': 'Ordered list of filters. Each item is {axis, op, value}.', 'items': {'type': 'object', 'properties': {'axis': {'type': 'string'}, 'op': {'type': 'string'}, 'value': {}, 'window_days': {'type': 'integer', 'description': "Only used when axis='churn'. Days of git history to scan (default 90)."}}, 'required': ['axis', 'op', 'value']}}, 'rank_by': {'type': 'string', 'enum': ['importance', 'complexity', 'churn', 'name'], 'default': 'importance', 'description': 'Ranking axis for survivors.'}, 'order': {'type': 'string', 'enum': ['asc', 'desc'], 'default': 'desc'}, 'max_results': {'type': 'integer', 'default': 20, 'description': 'Hard cap on returned results.'}}, 'required': ['repo', 'criteria']}),
+        Tool(
+            name="index_repo",
+            description="Index a GitHub repository's source code. Fetches files, parses ASTs, extracts symbols, and saves to local storage. Set JCODEMUNCH_USE_AI_SUMMARIES=false to disable AI summaries globally.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "GitHub repository URL or owner/repo string"
+                    },
+                    "use_ai_summaries": {
+                        "type": "boolean",
+                        "description": "Use AI to generate symbol summaries. Supports Anthropic, Gemini, OpenAI-compatible endpoints, MiniMax, and GLM-5 via env vars. When false, uses docstrings or signature fallback.",
+                        "default": True
+                    },
+                    "extra_ignore_patterns": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Additional gitignore-style patterns to exclude from indexing (merged with JCODEMUNCH_EXTRA_IGNORE_PATTERNS env var)"
+                    },
+                    "incremental": {
+                        "type": "boolean",
+                        "description": "When true and an existing index exists, only re-index changed files.",
+                        "default": True
+                    },
+                    "max_size": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Per-file byte cap for this run, overriding config and the 512000-byte default. Files over the cap are skipped entirely and their symbols never enter the index; the response names them in `warnings`. Omit to use config / JCODEMUNCH_MAX_FILE_SIZE."
+                    }
+                },
+                "required": ["url"]
+            }
+        ),
+        Tool(
+            name="index_folder",
+            description="Index a local folder of source code. Response surfaces `discovery_skip_counts` and `no_symbols_files` for diagnosing missing files.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to local folder (absolute or relative; ~ expands)."
+                    },
+                    "use_ai_summaries": {
+                        "type": "boolean",
+                        "description": "Generate symbol summaries via AI. When false, falls back to docstrings or signature.",
+                        "default": True
+                    },
+                    "extra_ignore_patterns": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Additional gitignore-style exclude patterns."
+                    },
+                    "follow_symlinks": {
+                        "type": "boolean",
+                        "description": "Include symlinked files. Symlinked directories are never followed.",
+                        "default": False
+                    },
+                    "incremental": {
+                        "type": "boolean",
+                        "description": "When an existing index exists, only re-index changed files.",
+                        "default": True
+                    },
+                    "paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional explicit paths (absolute or relative to `path`). When set, skips the directory walk; directories in the list are recursed. Walk-path validation applies."
+                    },
+                    "identity_mode": {
+                        "type": "string",
+                        "enum": ["config", "local", "git"],
+                        "description": "Repo-identity strategy. `config` (default): respect existing index. `local`: path-keyed. `git`: git-root-keyed (monorepo subdir merging).",
+                        "default": "config"
+                    },
+                    "max_size": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Per-file byte cap for this run, overriding config and the 512000-byte default. Files over the cap are skipped entirely and their symbols never enter the index; the response names them in `warnings`. Per-call only — for a repo with a permanently oversize file, set `max_file_size` in its .jcodemunch.jsonc instead. Omit to use config / JCODEMUNCH_MAX_FILE_SIZE."
+                    }
+                },
+                "required": ["path"]
+            }
+        ),
+        Tool(
+            name="summarize_repo",
+            description=(
+                "Re-run AI summarization on all symbols in an existing index. "
+                "Use this when index_folder completed but AI summaries are missing — "
+                "e.g., the background summarization thread was interrupted, AI was disabled "
+                "at index time, or the summarizer provider wasn't configured yet. "
+                "With force=true (recommended), clears all existing summaries and re-runs "
+                "the full 3-tier pipeline (docstring → AI → signature fallback)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or local/hash)"
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": (
+                            "If true, clear all existing summaries and re-summarize every symbol. "
+                            "Required when index_folder already applied signature fallbacks. "
+                            "If false, only process symbols with no summary at all."
+                        ),
+                        "default": False
+                    }
+                },
+                "required": ["repo"]
+            }
+        ),
+        Tool(
+            name="index_file",
+            description="Index a single file within an existing index. Surgical update after edits. The file must be under an already-indexed folder's source_root. Can also add new files.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Absolute path to the file to index."
+                    },
+                    "use_ai_summaries": {
+                        "type": "boolean",
+                        "description": "Generate symbol summaries via AI. When false, falls back to docstrings or signature.",
+                        "default": True
+                    },
+                    "context_providers": {
+                        "type": "boolean",
+                        "description": "Whether to run context providers",
+                        "default": True
+                    }
+                },
+                "required": ["path"]
+            }
+        ),
+        Tool(
+            name="index_dependency",
+            description=(
+                "Resolve and index an INSTALLED third-party dependency of an "
+                "already-indexed local repo — the version actually in "
+                "node_modules or the repo's virtualenv site-packages, read "
+                "from package metadata (no registry lookup, fully local). "
+                "Copies a filtered snapshot into the index store and indexes "
+                "it as its own queryable repo (version visible in the repo "
+                "id), then reports what docs the package ships. Use when the "
+                "agent needs ground truth for a library API instead of "
+                "guessing from training data."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Host repository identifier (must be locally indexed).",
+                    },
+                    "package": {
+                        "type": "string",
+                        "description": (
+                            "npm package (supports @scope/name) or PyPI "
+                            "distribution/import name, as installed."
+                        ),
+                    },
+                    "ecosystem": {
+                        "type": "string",
+                        "enum": ["auto", "npm", "pypi"],
+                        "description": (
+                            "Where to resolve: 'auto' tries node_modules then "
+                            "repo-local virtualenvs (.venv/venv/env)."
+                        ),
+                        "default": "auto",
+                    },
+                    "max_files": {
+                        "type": "integer",
+                        "description": "Cap on code files copied into the snapshot (truncation is reported).",
+                        "default": 2000,
+                    },
+                },
+                "required": ["repo", "package"],
+            },
+        ),
+        Tool(
+            name="import_runtime_signal",
+            description=(
+                "Ingest a runtime trace file into the runtime_* tables for the target "
+                "repo. source='otel' takes OTel JSON / JSON-Lines / .gz and maps spans "
+                "via (file_path, line_no, function_name); source='sql_log' takes "
+                "pg_stat_statements CSV or a generic SQL JSON-Lines log and maps queries "
+                "via referenced tables (file-stem match) and dbt/SQLMesh column metadata; "
+                "source='stack_log' takes a plain-text application log or JSON-Lines "
+                "record set with Python / JVM / Node.js tracebacks and writes to both "
+                "runtime_calls (severity-agnostic rollup) and runtime_stack_events "
+                "(per-severity counts: error/warn/info). Returns {records, mapped, "
+                "unmapped, redactions_fired, unmapped_reasons, evicted} plus source-"
+                "specific fields (columns_recorded for sql_log; severity_counts and "
+                "frames for stack_log). PII is redacted at the chokepoint by default. "
+                "apm is reserved."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "source": {
+                        "type": "string",
+                        "enum": ["otel", "sql_log", "stack_log", "apm"],
+                        "description": "Trace source format. Phases 1+4+5 accept 'otel', 'sql_log', and 'stack_log'.",
+                        "default": "otel",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Absolute filesystem path to the trace file",
+                    },
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/name) — defaults to the current directory's resolved repo",
+                    },
+                    "redact_enabled": {
+                        "type": "boolean",
+                        "description": "Override the runtime_redact_enabled config key. Disable ONLY for offline debugging on synthetic data.",
+                    },
+                },
+                "required": ["path"],
+            },
+        ),
+        Tool(
+            name="get_runtime_coverage",
+            description=(
+                "Runtime coverage histogram for a repo or a single file: count of "
+                "indexed symbols with vs without runtime evidence, plus the diagnostic "
+                "list of unmapped runtime spans (likely reflective dispatch the AST "
+                "missed). Pairs with Phase 2's per-result _runtime_confidence stamping. "
+                "Returns coverage_pct=0 with sources=[] when no traces have been ingested."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier (owner/name)"},
+                    "file_path": {
+                        "type": "string",
+                        "description": "Optional repo-relative file path. When set, scopes the histogram to this file.",
+                    },
+                    "unmapped_limit": {
+                        "type": "integer",
+                        "description": "Cap on the unmapped_runtime list (default 50)",
+                        "default": 50,
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="find_hot_paths",
+            description=(
+                "Top-N symbols ranked by total runtime hit count across ingested traces, "
+                "with per-symbol p50/p95 latency, sources contributing, and last_seen. "
+                "Optionally filtered by a name substring. Pairs with get_blast_radius to "
+                "answer 'is this PR touching code that runs 4M times/day?' Returns an "
+                "empty results list when no traces have been ingested."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier (owner/name)"},
+                    "query": {
+                        "type": "string",
+                        "description": "Optional case-insensitive substring filter on symbol name",
+                    },
+                    "top_n": {
+                        "type": "integer",
+                        "description": "Cap on returned rows (default 20, max 200)",
+                        "default": 20,
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="find_unused_paths",
+            description=(
+                "Symbols with zero (or stale) runtime hits over the look-back window. "
+                "Distinct from find_dead_code: this surfaces code that's reachable on "
+                "paper but never executed — only possible to detect with runtime data. "
+                "Excludes test files and entry-point filenames by default. Returns an "
+                "empty results list when no traces have been ingested (refuses to flag "
+                "every symbol as 'unused' against an empty runtime baseline)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier (owner/name)"},
+                    "since_days": {
+                        "type": "integer",
+                        "description": "Look-back window in days (default 90)",
+                        "default": 90,
+                    },
+                    "include_tests": {
+                        "type": "boolean",
+                        "description": "Include symbols in test files",
+                        "default": False,
+                    },
+                    "include_entry_points": {
+                        "type": "boolean",
+                        "description": "Include symbols in entry-point filenames (main.py, wsgi.py, etc.)",
+                        "default": False,
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Cap on returned rows (default 200, max 1000)",
+                        "default": 200,
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="get_redaction_log",
+            description=(
+                "Per-pattern PII redaction counts from runtime_redaction_log. "
+                "Operators run this to verify the redaction chokepoint is firing on "
+                "production traffic — covers the OTel / SQL / stack ingest paths "
+                "(file-based or HTTP live-ingest, Phase 6). Returns "
+                "{patterns: [{source, pattern, count, last_redacted}], "
+                "total_redactions, sources}. Empty patterns list = either no traffic "
+                "yet, or JCODEMUNCH_RUNTIME_REDACT was disabled."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier (owner/name)"},
+                    "source": {
+                        "type": "string",
+                        "enum": ["otel", "sql_log", "stack_log", "apm"],
+                        "description": "Optional filter to a single source label",
+                    },
+                    "since_days": {
+                        "type": "integer",
+                        "description": "Lookback window for last_redacted filter (default 30)",
+                        "default": 30,
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="list_repos",
+            description=(
+                "List all indexed repositories. "
+                "START HERE before using Grep/Read/search tools — check if the project is "
+                "already indexed, then use search_symbols / get_symbol_source instead of "
+                "native file reads. If jcodemunch tools appear as deferred in your tool list, "
+                "call ToolSearch to load their schemas first."
+                if config_module.get("discovery_hint", True)
+                else "List all indexed repositories."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {}
+            }
+        ),
+        Tool(
+            name="get_watch_status",
+            description=(
+                "Report watch-all daemon coverage: every locally-indexed repo, "
+                "each repo's staleness / reindex-in-progress state, and the "
+                "OS-level service status. Call before relying on index freshness "
+                "when you suspect files may have changed since the last index."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="resolve_repo",
+            description="Resolve a filesystem path to its indexed repo identifier. O(1) lookup — faster than list_repos for finding a single repo. Accepts repo root, worktree, subdirectory, or file path.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Absolute filesystem path (repo root, worktree, subdirectory, or file)"
+                    }
+                },
+                "required": ["path"]
+            }
+        ),
+        Tool(
+            name="get_file_tree",
+            description="Get the file tree of an indexed repository, optionally filtered by path prefix. Results are capped at max_files (default 500) to prevent token overflow; use path_prefix to scope large trees.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)"
+                    },
+                    "path_prefix": {
+                        "type": "string",
+                        "description": "Optional path prefix to filter (e.g., 'src/utils')",
+                        "default": ""
+                    },
+                    "include_summaries": {
+                        "type": "boolean",
+                        "description": "Include file-level summaries in the tree nodes",
+                        "default": False
+                    },
+                    "max_files": {
+                        "type": "integer",
+                        "description": "Maximum number of files to return (default 500). When truncated, response includes total_file_count and a hint to use path_prefix.",
+                        "default": 500
+                    }
+                },
+                "required": ["repo"]
+            }
+        ),
+        Tool(
+            name="get_file_outline",
+            description="Get all symbols (functions, classes, methods) in a file with full signatures (including parameter names) and summaries. Use signatures to review naming at parameter granularity without reading the full file. Pass repo and file_path (e.g. 'src/main.py').",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)"
+                    },
+                    "file_path": {
+                        "type": "string",
+                        "description": "Path to the file within the repository (e.g., 'src/main.py')"
+                    },
+                    "file_paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of file paths to query in batch mode. Returns a grouped results array."
+                    }
+                },
+                "required": ["repo"]
+            }
+        ),
+        Tool(
+            name="get_symbol_source",
+            description="Get full source of one symbol (symbol_id → flat object) or many (symbol_ids[] → {symbols, errors}). Supports verify, context_lines, fqn (PHP FQN via PSR-4), and an optional bounded mode that caps returned source for large symbols/batches.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)"
+                    },
+                    "symbol_id": {
+                        "type": "string",
+                        "description": "Single symbol ID — returns flat symbol object"
+                    },
+                    "symbol_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Multiple symbol IDs — returns {symbols, errors}"
+                    },
+                    "verify": {
+                        "type": "boolean",
+                        "description": "Verify content hash matches stored hash (detects source drift)",
+                        "default": False
+                    },
+                    "verify_against": {
+                        "type": "string",
+                        "enum": ["cache", "git_sha"],
+                        "description": "Where to source the comparison target when verify=True. 'cache' (default) compares against the content_hash stored in the index — self-referential, only catches incoherent tamper of ~/.code-index/. 'git_sha' additionally compares the cached source against the file slice at the commit the index was built at — externally attested, catches divergence between the cache and the upstream source. Adds git_sha_verification and git_sha_rev fields to the response.",
+                        "default": "cache"
+                    },
+                    "context_lines": {
+                        "type": "integer",
+                        "description": "Number of lines before/after symbol to include for context",
+                        "default": 0
+                    },
+                    "fqn": {
+                        "type": "string",
+                        "description": "PHP fully-qualified class name (e.g. 'App\\Models\\User'). Resolves to symbol_id via PSR-4. Alternative to symbol_id."
+                    },
+                    "source_start_line": {
+                        "type": "integer",
+                        "description": "Bounded mode: absolute file line (1-based, same frame as `line`/`end_line`) to start the returned source slice; clamped to the symbol body."
+                    },
+                    "source_end_line": {
+                        "type": "integer",
+                        "description": "Bounded mode: absolute file line (1-based, inclusive) to end the returned source slice; clamped to the symbol body."
+                    },
+                    "max_source_lines": {
+                        "type": "integer",
+                        "description": "Bounded mode: keep at most the first N lines of the (ranged) slice. Sets source_truncated + metadata when it shortens the body."
+                    },
+                    "max_source_bytes": {
+                        "type": "integer",
+                        "description": "Bounded mode: UTF-8-safe per-symbol byte cap on the returned source. Verify still hashes the full body."
+                    },
+                    "max_total_source_bytes": {
+                        "type": "integer",
+                        "description": "Bounded mode (batch): cap on total returned source bytes across all symbols. Oversized symbols come back partial (source_truncated) rather than dropped, preventing an N×per-symbol blowup."
+                    },
+                    "receipt": {
+                        "type": "boolean",
+                        "description": _RECEIPT_ARG_DESCRIPTION,
+                        "default": False
+                    }
+                },
+                "required": ["repo"]
+            }
+        ),
+        Tool(
+            name="get_file_content",
+            description="Get cached source for a file, optionally sliced to a line range.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)"
+                    },
+                    "file_path": {
+                        "type": "string",
+                        "description": "Path to the file within the repository (e.g., 'src/main.py')"
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "description": "Optional 1-based start line (inclusive)"
+                    },
+                    "end_line": {
+                        "type": "integer",
+                        "description": "Optional 1-based end line (inclusive)"
+                    }
+                },
+                "required": ["repo", "file_path"]
+            }
+        ),
+        Tool(
+            name="search_symbols",
+            description="Search for symbols matching a query across the entire indexed repository. Returns matches with signatures and summaries.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Search query (matches symbol names, signatures, summaries, docstrings)"
+                    },
+                    "kind": {
+                        "type": "string",
+                        "description": "Optional filter by symbol kind",
+                        "enum": ["function", "class", "method", "constant", "type", "template", "import"]
+                    },
+                    "file_pattern": {
+                        "type": "string",
+                        "description": "Optional glob pattern to filter files (e.g., 'src/**/*.py')"
+                    },
+                    "language": {
+                        "type": "string",
+                        "description": "Optional filter by language",
+                        "enum": _build_language_enum()
+                    },
+                    "decorator": {
+                        "type": "string",
+                        "description": "Optional filter: only return symbols with this decorator (case-insensitive substring match, e.g. 'route', 'property', 'Deprecated')"
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of results to return (ignored when token_budget is set)",
+                        "default": 10
+                    },
+                    "token_budget": {
+                        "type": "integer",
+                        "description": "Token budget cap. When set, results are sorted by score and greedily packed until the budget is exhausted, charging each row's actual payload size (compact rows ~15 tokens, so a budget can admit many rows). Overrides max_results — pass max_results without token_budget when row count matters. Reports token_budget, tokens_used, and tokens_remaining in _meta."
+                    },
+                    "detail_level": {
+                        "type": "string",
+                        "description": "Controls result verbosity. 'compact' returns id/name/kind/file/line only (~15 tokens each, best for broad discovery). 'standard' returns signatures and summaries (default). 'full' inlines source code, docstring, and end_line — equivalent to search + get_symbol in one call.",
+                        "enum": ["compact", "standard", "full"],
+                        "default": "standard"
+                    },
+                    "debug": {
+                        "type": "boolean",
+                        "description": "When true, each result includes a score_breakdown showing per-field scoring contributions (name_exact, name_contains, name_word_overlap, signature_phrase, signature_word_overlap, summary_phrase, summary_word_overlap, keywords, docstring_word_overlap). Also adds candidates_scored to _meta.",
+                        "default": False
+                    },
+                    "fuzzy": {
+                        "type": "boolean",
+                        "description": "Enable fuzzy matching. When true, uses trigram overlap + Levenshtein distance as fallback when BM25 scores are low. Fuzzy results include match_type, fuzzy_similarity, and edit_distance fields.",
+                        "default": False
+                    },
+                    "fuzzy_threshold": {
+                        "type": "number",
+                        "description": "Minimum Jaccard trigram similarity (0.0–1.0) for fuzzy candidates. Lower values surface more candidates. Default 0.4.",
+                        "default": 0.4
+                    },
+                    "max_edit_distance": {
+                        "type": "integer",
+                        "description": "Maximum Levenshtein distance for direct name matching (catches typos). Default 2.",
+                        "default": 2
+                    },
+                    "sort_by": {
+                        "type": "string",
+                        "enum": ["relevance", "centrality", "combined"],
+                        "description": "Ranking strategy. 'relevance' (default) = BM25 text match. 'centrality' = filter by query, rank by PageRank. 'combined' = BM25 + PageRank weighted.",
+                        "default": "relevance"
+                    },
+                    "semantic": {
+                        "type": "boolean",
+                        "description": "Enable semantic (embedding-based) search. Requires an embedding provider: JCODEMUNCH_EMBED_MODEL (sentence-transformers), GOOGLE_API_KEY+GOOGLE_EMBED_MODEL (Gemini), or OPENAI_API_KEY+OPENAI_EMBED_MODEL (OpenAI). When false (default) there is zero performance impact.",
+                        "default": False
+                    },
+                    "semantic_weight": {
+                        "type": "number",
+                        "description": "Weight for semantic score in hybrid BM25+embedding ranking (0.0–1.0). BM25 receives 1-weight. Default 0.5. Set to 0.0 for identical results to pure BM25; set to 1.0 for pure semantic.",
+                        "default": 0.5
+                    },
+                    "semantic_only": {
+                        "type": "boolean",
+                        "description": "Skip BM25 entirely and rank solely by embedding cosine similarity. Implies semantic=true.",
+                        "default": False
+                    },
+                    "fusion": {
+                        "type": "boolean",
+                        "description": "Enable multi-signal fusion (Weighted Reciprocal Rank) across lexical, structural, similarity, and identity channels. Produces higher-quality ranking than linear score addition. When True, sort_by is ignored.",
+                        "default": False
+                    },
+                    "fqn": {
+                        "type": "string",
+                        "description": "PHP fully-qualified class name (e.g. 'App\\Models\\User'). Resolves via PSR-4 and uses the class name as query. Alternative to query."
+                    },
+                    "receipt": {
+                        "type": "boolean",
+                        "description": _RECEIPT_ARG_DESCRIPTION,
+                        "default": False
+                    }
+                },
+                "required": ["repo", "query"]
+            }
+        ),
+        Tool(
+            name="invalidate_cache",
+            description="Delete the index and cached files for a repository. Forces a full re-index on next index_repo or index_folder call.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)"
+                    }
+                },
+                "required": ["repo"]
+            }
+        ),
+        Tool(
+            name="search_text",
+            description="Full-text search across indexed file contents. Useful when symbol search misses (e.g., string literals, comments, config values). Supports regex (is_regex=true) and context lines around matches (context_lines=N, like grep -C).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Text to search for. Case-insensitive substring by default. Set is_regex=true for full regex (e.g. 'estimateToken|tokenEstimat|\\.length.*0\\.25'). Limits: 500 chars plain, 200 chars when is_regex=true. Split longer alternations into multiple calls."
+                    },
+                    "is_regex": {
+                        "type": "boolean",
+                        "description": "When true, treat query as a Python regex (re.search, case-insensitive). Supports alternation (|), character classes, lookaheads, etc. Max 200 chars; nested quantifiers (e.g. '(a+)+') are rejected to prevent catastrophic backtracking.",
+                        "default": False
+                    },
+                    "file_pattern": {
+                        "type": "string",
+                        "description": "Optional glob pattern to filter files (e.g., '*.py')"
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of matching lines to return",
+                        "default": 20
+                    },
+                    "context_lines": {
+                        "type": "integer",
+                        "description": "Lines of context to include before and after each match (like grep -C N). Essential for understanding code around matches.",
+                        "default": 0
+                    },
+                    "receipt": {
+                        "type": "boolean",
+                        "description": _RECEIPT_ARG_DESCRIPTION,
+                        "default": False
+                    }
+                },
+                "required": ["repo", "query"]
+            }
+        ),
+        Tool(
+            name="get_repo_outline",
+            description="Get a high-level overview of an indexed repository: directories, file counts, language breakdown, symbol counts. Lighter than get_file_tree.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)"
+                    }
+                },
+                "required": ["repo"]
+            }
+        ),
+        Tool(
+            name="find_importers",
+            description="Find all files that import a given file. Answers 'what uses this file?'. has_importers=false on a result means that importer is itself unreachable (dead code chain). Supports dbt {{ ref() }} edges. Use file_paths for batch queries. Set cross_repo=true to also find importers in other indexed repos.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier"},
+                    "file_path": {"type": "string", "description": "Target file path within the repo (e.g. 'src/features/intake/IntakeService.js'). Use for single-file queries. Cannot be used together with file_paths."},
+                    "file_paths": {"type": "array", "items": {"type": "string"}, "description": "List of target file paths for batch queries. Returns a results array. Cannot be used together with file_path."},
+                    "max_results": {"type": "integer", "default": 50, "description": "Maximum results per file"},
+                    "cross_repo": {"type": "boolean", "default": False, "description": "When true, also search other indexed repos for cross-repo importers (package-level scope). Default: false (or JCODEMUNCH_CROSS_REPO_DEFAULT env var). Only valid with singular file_path or a single-element file_paths batch; combined with a multi-file file_paths batch it returns an error (use singular calls for cross-repo evidence)."},
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="find_references",
+            description="Find all files that import or reference an identifier via the import graph. Answers 'where is this imported / re-exported?'. SCOPE: import sites + dbt `{{ ref() }}` edges + (when `include_call_chain=true`) symbols whose bodies textually mention the identifier. Does NOT exhaustively enumerate every call site across the codebase — for that, combine with search_text or use get_call_hierarchy on the resolved symbol_id. Use `identifiers` for batch queries.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier"},
+                    "identifier": {"type": "string", "description": "Symbol or module name to search for (e.g. 'bulkImport', 'IntakeService'). Use for single-identifier queries. Cannot be used together with identifiers."},
+                    "identifiers": {"type": "array", "items": {"type": "string"}, "description": "List of symbol or module names to search for (batch mode). Returns a results array. Cannot be used together with identifier."},
+                    "max_results": {"type": "integer", "default": 50, "description": "Maximum results"},
+                    "include_call_chain": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "When true (singular mode only), each reference entry includes calling_symbols: symbols in that file whose bodies mention the identifier. Default false.",
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="check_references",
+            description="Check if an identifier is referenced anywhere: imports + file content. Combines find_references and search_text into one call. Returns is_referenced (bool) for quick dead-code detection. Accepts multiple identifiers in one call via identifiers param.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier"},
+                    "identifier": {"type": "string", "description": "Single identifier to check"},
+                    "identifiers": {
+                        "type": "array", "items": {"type": "string"},
+                        "description": "Multiple identifiers to check in one call. Returns grouped results.",
+                    },
+                    "search_content": {
+                        "type": "boolean", "default": True,
+                        "description": "Also search file contents (not just imports). Set false for fast import-only check.",
+                    },
+                    "max_content_results": {
+                        "type": "integer", "default": 20,
+                        "description": "Max files to return per identifier for content search.",
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="search_columns",
+            description="Search column metadata across indexed models. Works with any ecosystem provider that emits column data (dbt, SQLMesh, database catalogs, etc.). Returns model name, file path, column name, and description. Use instead of grep/search_text for column discovery — 77% fewer tokens.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Search query (matches column names and descriptions)"
+                    },
+                    "model_pattern": {
+                        "type": "string",
+                        "description": "Optional glob to filter by model name (e.g., 'fact_*', 'dim_provider')"
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of results to return",
+                        "default": 20
+                    }
+                },
+                "required": ["repo", "query"]
+            }
+        ),
+        Tool(
+            name="get_context_bundle",
+            description=(
+                "Get full source + imports for one or more symbols in one call. "
+                "Multi-symbol bundles deduplicate shared imports. "
+                "Set token_budget to cap response size; use budget_strategy to control what's kept. "
+                "Supports fqn (PHP FQN via PSR-4) as alternative to symbol_id."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)"
+                    },
+                    "symbol_id": {
+                        "type": "string",
+                        "description": "Single symbol ID (backward-compatible). Use symbol_ids for multi-symbol bundles."
+                    },
+                    "symbol_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of symbol IDs for a multi-symbol bundle. Imports are deduplicated across symbols that share a file."
+                    },
+                    "include_callers": {
+                        "type": "boolean",
+                        "description": "When true, each symbol entry includes a 'callers' list of files that directly import its defining file.",
+                        "default": False
+                    },
+                    "output_format": {
+                        "type": "string",
+                        "description": "'json' (default) or 'markdown' — markdown renders a paste-ready document with imports, docstrings, and source blocks.",
+                        "enum": ["json", "markdown"],
+                        "default": "json"
+                    },
+                    "token_budget": {
+                        "type": "integer",
+                        "description": "Max tokens to return. When set, symbols are ranked and trimmed to fit. Uses budget_strategy to prioritize."
+                    },
+                    "budget_strategy": {
+                        "type": "string",
+                        "enum": ["most_relevant", "core_first", "compact"],
+                        "description": (
+                            "'most_relevant' (default) ranks by file centrality (import in-degree). "
+                            "'core_first' keeps the primary symbol first, ranks rest by centrality. "
+                            "'compact' strips source bodies — returns signatures only."
+                        ),
+                        "default": "most_relevant"
+                    },
+                    "include_budget_report": {
+                        "type": "boolean",
+                        "description": "When true, include a 'budget_report' field showing tokens used, symbols included/excluded, and strategy applied.",
+                        "default": False
+                    },
+                    "fqn": {
+                        "type": "string",
+                        "description": "PHP fully-qualified class name (e.g. 'App\\Models\\User'). Resolves to symbol_id via PSR-4. Alternative to symbol_id."
+                    }
+                },
+                "required": ["repo"]
+            }
+        ),
+        Tool(
+            name="get_session_stats",
+            description="Get token savings stats for the current MCP session. Returns tokens saved and cost avoided (this session and all-time), per-tool breakdown, session duration, and cumulative totals. Use to see how much jCodeMunch has saved you.",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+            }
+        ),
+        Tool(
+            name="analyze_perf",
+            description="Per-tool latency telemetry: p50/p95/max in ms, error rate, plus cache hit-rate by tool. Defaults to the in-memory session ring; pass window=1h|24h|7d|all to query persisted telemetry.db (requires perf_telemetry_enabled). Useful for finding slow tools, cold caches, and regressions.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "window": {
+                        "type": "string",
+                        "enum": ["session", "1h", "24h", "7d", "all"],
+                        "default": "session",
+                        "description": "session = in-memory ring; others read telemetry.db.",
+                    },
+                    "top": {
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Cap on slowest tools to return.",
+                    },
+                    "tool": {
+                        "type": "string",
+                        "description": "Restrict the analysis to a single tool name.",
+                    },
+                    "compare_release": {
+                        "type": "string",
+                        "description": "Compare current session against a saved baseline at benchmarks/token_baselines/v{version}.json (e.g. \"1.74.0\"). Adds baseline_diff to the response with per-tool deltas in tokens_saved and latency.",
+                    },
+                    "ledger": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Include ranking_ledger summary (per-repo and per-tool event counts, average confidence, identity hits, semantic usage). Reads telemetry.db ranking_events table populated since v1.78.0; requires perf_telemetry_enabled.",
+                    },
+                },
+            }
+        ),
+        Tool(
+            name="check_embedding_drift",
+            description="Pin (or re-check) a 16-string canary against the active embedding provider. On first run with capture=True (or force=True), embeds CANARY_STRINGS and persists the vectors to ~/.code-index/embed_canary.json. Subsequent calls re-embed those strings and report cosine drift; alarm fires when max drift exceeds threshold (default 0.05 = cos sim < 0.95). Use after upgrading providers, when retrieval quality drops unexpectedly, or as a periodic background check.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "capture": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Pin a fresh canary instead of running the drift check. No-ops when a canary already exists unless force=True.",
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Re-pin the canary before checking. Use after intentional provider/model upgrades.",
+                    },
+                    "threshold": {
+                        "type": "number",
+                        "default": 0.05,
+                        "description": "Cosine-distance threshold above which the alarm fires (per-canary maximum, not mean).",
+                    },
+                },
+            }
+        ),
+        Tool(
+            name="tune_weights",
+            description="Learn per-repo retrieval weights from the v1.78.0 ranking ledger. Computes confidence correlations for the semantic and identity-match channels and writes overrides to ~/.code-index/tuning.jsonc. search_symbols reads those overrides at query time when the caller doesn't pass an explicit semantic_weight. Learns from a recency window of the ledger (default 90 days) so stale events can't anchor the weights. Safe to re-run; idempotent for stable signal.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Limit tuning to a single repo. Default: every repo present in the ledger.",
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Compute proposed deltas without writing tuning.jsonc.",
+                    },
+                    "min_events": {
+                        "type": "integer",
+                        "default": 50,
+                        "description": "Skip repos with fewer ledger events than this (defends against overfitting on small samples).",
+                    },
+                    "explain": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Include per-signal correlations (mean confidence with/without semantic and identity channels) in the response.",
+                    },
+                    "max_age_days": {
+                        "type": "integer",
+                        "default": 90,
+                        "description": "Only learn from ledger events newer than this many days. Keeps stale events from anchoring weights to an outdated query distribution. 0 = lifetime ledger.",
+                    },
+                },
+            }
+        ),
+        Tool(
+            name="get_session_context",
+            description="Get the current session context — files accessed, searches performed, and edits registered during this MCP session. Use to avoid re-reading the same files.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "max_files": {
+                        "type": "integer",
+                        "description": "Maximum number of files to return in files_accessed.",
+                        "default": 50,
+                    },
+                    "max_queries": {
+                        "type": "integer",
+                        "description": "Maximum number of queries to return in recent_searches.",
+                        "default": 20,
+                    },
+                },
+            }
+        ),
+        Tool(
+            name="get_session_snapshot",
+            description="Get a compact session snapshot for context continuity. Returns a ~200 token markdown summary of files explored, edits made, searches performed, and dead ends. Designed for injection after context compaction to restore session orientation.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "max_files": {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Maximum focus files to include.",
+                    },
+                    "max_searches": {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "Maximum key searches to include.",
+                    },
+                    "max_edits": {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Maximum edited files to include.",
+                    },
+                    "include_negative_evidence": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": "Include dead-end searches (negative evidence) in snapshot.",
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="get_file_risk",
+            description=(
+                "Per-symbol composite risk for one file. For each function or "
+                "method, returns a 0-100 composite score (higher = healthier; "
+                "lower = riskier) plus per-axis sub-scores (complexity, exposure, "
+                "churn, test_gap). Powers the VS Code risk-density gutter. "
+                "complexity is per-symbol (cyclomatic from the index); the other "
+                "three axes are file-level (shared across all symbols in the file) "
+                "because per-symbol caller-count needs find_references per symbol "
+                "and would be too slow for save-time refresh."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repo identifier (owner/name, full id, or bare display name).",
+                    },
+                    "file_path": {
+                        "type": "string",
+                        "description": "Path to the file within the indexed repo.",
+                    },
+                },
+                "required": ["repo", "file_path"],
+            },
+        ),
+        Tool(
+            name="diff_health_radar",
+            description=(
+                "Compare two health-radar payloads (from get_repo_health.radar) "
+                "and return axis-by-axis deltas, composite delta, grade movement, "
+                "and a one-line verdict. Pure data transform — no index access, "
+                "no I/O. Designed for PR-time diff-grade reports: run "
+                "get_repo_health on the base branch, run it on the PR branch, "
+                "pass both radar payloads here. Returns regressions/improvements "
+                "lists for axes that moved more than 3 points."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "baseline": {
+                        "type": "object",
+                        "description": "Radar payload from baseline (e.g. base branch). The `radar` field of a get_repo_health response.",
+                    },
+                    "current": {
+                        "type": "object",
+                        "description": "Radar payload from current (e.g. PR branch). The `radar` field of a get_repo_health response.",
+                    },
+                },
+                "required": ["baseline", "current"],
+            },
+        ),
+        Tool(
+            name="finalize_handoff",
+            description=(
+                "Finalize one canonical Markdown handoff for a completed repository "
+                "audit/analysis (jcodemunch.handoff/v1). The server assembles YOUR "
+                "sections deterministically, validates every evidence_refs entry "
+                "against what this session actually retrieved (symbol ids or file "
+                "paths served by search_symbols / get_ranked_context — unknown refs "
+                "fail closed), persists the result session-scoped, and returns a "
+                "compact receipt {handoff_id, resource_uri, sha256, length, "
+                "canonical:true}. Read the immutable body via the "
+                "munch://handoff/<id> resource; repeated reads are byte-identical. "
+                "Appendices are included exactly once; no character limit; never "
+                "writes to the repository."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier the handoff is about.",
+                    },
+                    "task": {
+                        "type": "string",
+                        "description": "The task/question this handoff answers (becomes the title).",
+                    },
+                    "sections": {
+                        "type": "array",
+                        "description": "Ordered report sections, each {heading, content} (markdown). The caller authors these; the server only assembles. Optional per-section claims[] bind evidence to an individual claim instead of one global list (handoff/v2).",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "heading": {"type": "string"},
+                                "content": {"type": "string"},
+                                "claims": {
+                                    "type": "array",
+                                    "description": "Optional caller-authored claims, each {id, statement, evidence_refs, classification?}. Ids must be unique across the handoff; each claim's refs are attested separately and rendered beside the claim.",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "id": {"type": "string"},
+                                            "statement": {"type": "string"},
+                                            "evidence_refs": {
+                                                "type": "array",
+                                                "items": {"type": "string"},
+                                            },
+                                            "classification": {"type": "string"},
+                                        },
+                                        "required": ["id", "statement", "evidence_refs"],
+                                    },
+                                },
+                            },
+                            "required": ["heading"],
+                        },
+                    },
+                    "evidence_refs": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Symbol ids or file paths retrieved this session; validated against the session retrieval record.",
+                    },
+                    "profile": {
+                        "type": "string",
+                        "default": "general",
+                        "description": "Handoff profile label (e.g. source_audit).",
+                    },
+                    "appendices": {
+                        "type": "array",
+                        "description": "Optional named appendices, each {name, content, content_type?}; names must be unique.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "content": {"type": "string"},
+                                "content_type": {"type": "string"},
+                            },
+                            "required": ["name", "content"],
+                        },
+                    },
+                },
+                "required": ["repo", "task", "sections", "evidence_refs"],
+            },
+        ),
+        Tool(
+            name="digest",
+            description=(
+                "Agent stand-up briefing for a repo. Returns a tight (~200 token) "
+                "markdown digest of (a) what changed since the agent's last session "
+                "(by tracking git HEAD between calls), (b) the current risk surface "
+                "(top hotspots by complexity × churn), and (c) dead-code candidates. "
+                "Each item references symbol_ids the agent can immediately query "
+                "with get_symbol_source / get_call_hierarchy / check_references. "
+                "Designed for session-start context injection: call once when you "
+                "open a repo, get oriented to the load-bearing changes without cold "
+                "exploration."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repo identifier (owner/name, full id, or bare display name).",
+                    },
+                    "since_sha": {
+                        "type": "string",
+                        "description": "Override the last-seen SHA (for re-running a delta).",
+                    },
+                    "max_changed_files": {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "Cap on changed-files list (default 5).",
+                    },
+                    "max_hotspots": {
+                        "type": "integer",
+                        "default": 3,
+                        "description": "Cap on hotspot list (default 3).",
+                    },
+                    "max_dead_code": {
+                        "type": "integer",
+                        "default": 3,
+                        "description": "Cap on dead-code candidates (default 3).",
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="plan_turn",
+            description="Plan the next turn by analyzing query against the codebase. Returns confidence level (high/medium/low), recommended symbols/files, and guidance. Use as opening move for any task.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier.",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "What you're looking for (task description or symbol name).",
+                    },
+                    "max_recommended": {
+                        "type": "integer",
+                        "description": "Maximum number of symbols to recommend.",
+                        "default": 5,
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": (
+                            "Optional. Your active model identifier (e.g. 'claude-haiku-4-5'). "
+                            "When supplied and adaptive_tiering is enabled, plan_turn invokes "
+                            "the tier-switch logic as a side effect — the exposed tool list is "
+                            "narrowed to the tier mapped to this model via config.jsonc:"
+                            "model_tier_map. Prefer this form over calling announce_model "
+                            "separately — it adds zero extra requests."
+                        ),
+                    },
+                },
+                "required": ["repo", "query"],
+            }
+        ),
+        Tool(
+            name="register_edit",
+            description="Register file edits to invalidate caches. Call after editing files to clear BM25 cache and search result cache for the repo.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier.",
+                    },
+                    "file_paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of file paths that were edited.",
+                    },
+                    "reindex": {
+                        "type": "boolean",
+                        "description": "If True, also reindex the files.",
+                        "default": False,
+                    },
+                },
+                "required": ["repo", "file_paths"],
+            }
+        ),
+        Tool(
+            name="test_summarizer",
+            description="Verify AI summarizer config and connectivity.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "timeout_ms": {
+                        "type": "integer",
+                        "description": "Slow-response threshold in ms.",
+                        "default": 15000,
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="audit_agent_config",
+            description=(
+                "Audit agent configuration files (CLAUDE.md, .cursorrules, copilot-instructions.md, etc.) "
+                "for token waste. Reports per-file token cost, stale symbol references, dead file paths, "
+                "redundancy between global and project configs, bloat patterns, and scope leaks. "
+                "Cross-references against the jcodemunch index to catch references to renamed or deleted "
+                "symbols and files that no other linter can detect."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": (
+                            "Repository identifier for cross-referencing symbols and files. "
+                            "If omitted, skips stale-reference and dead-path checks."
+                        ),
+                    },
+                    "project_path": {
+                        "type": "string",
+                        "description": "Project directory to scan for config files. Defaults to cwd.",
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="suggest_corrections",
+            description=(
+                "Mine the ranking telemetry ledger for retrieval regret (re-query churn, "
+                "low confidence, thin/ambiguous results, stale-at-query, vocabulary gaps) "
+                "and return a prioritized, explainable set of SUGGESTED corrections: "
+                "CLAUDE.md routing/glossary lines (as unified-diff previews), index-freshness "
+                "hints, stale-config findings, and a dry-run ranking-weight proposal. "
+                "Read-only by charter — it never writes a user file; applying a patch is your "
+                "keystroke. Requires perf_telemetry_enabled; returns an honest hint when off."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository whose retrieval ledger to analyze.",
+                    },
+                    "project_path": {
+                        "type": "string",
+                        "description": "Project directory holding the config files to target. Defaults to cwd.",
+                    },
+                    "window_days": {
+                        "type": "integer",
+                        "description": "Rolling window of ledger history to mine (default 30).",
+                        "default": 30,
+                    },
+                    "all_time": {
+                        "type": "boolean",
+                        "description": "Ignore the window and analyze the full ledger.",
+                        "default": False,
+                    },
+                    "apply_weights": {
+                        "type": "boolean",
+                        "description": "Persist the ranking-weight proposal to the tuning.jsonc sidecar (NOT user source). User files are never written regardless.",
+                        "default": False,
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="get_dependency_graph",
+            description="Get the file-level dependency graph for a given file. Traverses import relationships up to 3 hops. Use to understand what a file depends on ('imports'), what depends on it ('importers'), or both. Prerequisite for blast radius analysis. Set cross_repo=true to include cross-repository edges.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)"
+                    },
+                    "file": {
+                        "type": "string",
+                        "description": "File path within the repo (e.g. 'src/server.py')"
+                    },
+                    "direction": {
+                        "type": "string",
+                        "description": "'imports' (files this file depends on), 'importers' (files that depend on this file), or 'both'",
+                        "enum": ["imports", "importers", "both"],
+                        "default": "imports"
+                    },
+                    "depth": {
+                        "type": "integer",
+                        "description": "Number of hops to traverse (1–3)",
+                        "default": 1
+                    },
+                    "cross_repo": {
+                        "type": "boolean",
+                        "description": "When true, include cross-repo edges (imports that resolve to packages in other indexed repos). Default: false.",
+                        "default": False,
+                    },
+                },
+                "required": ["repo", "file"]
+            }
+        ),
+        Tool(
+            name="get_symbol_diff",
+            description="Diff symbol sets between two indexed snapshots. Shows added, removed, and changed symbols. Branch workflow: index branch A as repo-main, index branch B as repo-feature, then diff.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo_a": {"type": "string", "description": "First repo identifier (the 'before' snapshot)"},
+                    "repo_b": {"type": "string", "description": "Second repo identifier (the 'after' snapshot)"},
+                },
+                "required": ["repo_a", "repo_b"],
+            },
+        ),
+        Tool(
+            name="get_class_hierarchy",
+            description="Get the full inheritance hierarchy for a class: ancestors (base classes via extends/implements) and descendants (subclasses/implementors). Works across Python, Java, TypeScript, C#, and any language where class signatures contain 'extends' or 'implements'.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier (owner/repo or just repo name)"},
+                    "class_name": {"type": "string", "description": "Name of the class to analyse"},
+                },
+                "required": ["repo", "class_name"],
+            },
+        ),
+        Tool(
+            name="get_related_symbols",
+            description="Find symbols related to a given symbol using heuristic clustering: same-file co-location (weight 3), shared importers (weight 1.5), and name-token overlap (weight 0.5/token). Useful for discovering what else to read when exploring an unfamiliar codebase.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier (owner/repo or just repo name)"},
+                    "symbol_id": {"type": "string", "description": "ID of the symbol to find relatives for"},
+                    "max_results": {"type": "integer", "description": "Maximum results (default 10, max 50)", "default": 10},
+                },
+                "required": ["repo", "symbol_id"],
+            },
+        ),
+        Tool(
+            name="suggest_queries",
+            description="Suggest search queries, entry-point files, and index stats. Good first call on an unfamiliar repo — surfaces most-imported files, top keywords, and ready-to-run example queries.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier (owner/repo or just repo name)"},
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="get_blast_radius",
+            description="Find all files affected by changing a symbol. Returns confirmed files (import + name match) and potential files (import only, e.g. wildcard). Use before renaming or deleting a symbol. Set cross_repo=true to also find consumers in other indexed repos. Set include_source=true to get source snippets at each reference site (fix-ready context in one call). For automated edit plans, use plan_refactoring instead.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)"
+                    },
+                    "symbol": {
+                        "type": "string",
+                        "description": "Symbol name or ID to analyse (e.g. 'calculateScore' or a full symbol ID)"
+                    },
+                    "depth": {
+                        "type": "integer",
+                        "description": "Import hops to traverse (1 = direct importers only, max 3). Default 1.",
+                        "default": 1
+                    },
+                    "include_depth_scores": {
+                        "type": "boolean",
+                        "description": "When true, adds impact_by_depth (files grouped by hop distance) and per-depth risk scores. overall_risk_score and direct_dependents_count are always included. Default false.",
+                        "default": False
+                    },
+                    "cross_repo": {
+                        "type": "boolean",
+                        "description": "When true, also find files in other indexed repos that consume this repo's package. Default: false.",
+                        "default": False,
+                    },
+                    "call_depth": {
+                        "type": "integer",
+                        "description": "When > 0, also find symbols that *call* this symbol (call-level analysis). Returns a callers list alongside the import-level confirmed/potential. Max 3. Default 0 (disabled).",
+                        "default": 0,
+                    },
+                    "fqn": {
+                        "type": "string",
+                        "description": "PHP fully-qualified class name (e.g. 'App\\Models\\User'). Resolves to symbol via PSR-4. Alternative to symbol."
+                    },
+                    "decorator_filter": {
+                        "type": "string",
+                        "description": "Optional: filter confirmed results to only those containing symbols with this decorator (case-insensitive substring match)"
+                    },
+                    "include_source": {
+                        "type": "boolean",
+                        "description": "When true, each confirmed file includes source_snippets (lines referencing the symbol) and symbols_in_file (nearby symbol signatures). Use for fix-ready context without extra tool calls. Default false.",
+                        "default": False,
+                    },
+                    "source_budget": {
+                        "type": "integer",
+                        "description": "Max tokens for source snippets across all files (default 8000). Files are prioritized by reference count.",
+                        "default": 8000,
+                    },
+                    "include_decisions": {
+                        "type": "boolean",
+                        "description": "When true, attach a read-only 'decisions' block: decision-bearing commits (revert/perf/refactor/rename/bugfix) mined from the git history of the focal symbol's file and the confirmed affected files, plus a volatility read ('3 reverts + 2 perf rewrites in 180d — review before changing'). Surfaced from the commit record; nothing is persisted. Default false (spends a few git-log calls).",
+                        "default": False,
+                    },
+                },
+                "required": ["repo", "symbol"]
+            }
+        ),
+        Tool(
+            name="get_call_hierarchy",
+            description=(
+                "Return incoming callers and outgoing callees for a symbol, N levels deep. "
+                "Uses AST-derived call detection: callers = symbols in importing files that "
+                "mention this name; callees = imported symbols mentioned in this symbol's body. "
+                "Useful for understanding how a symbol fits into the call graph before refactoring. "
+                "For a 'what breaks if I delete this?' answer, use get_impact_preview instead."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)"
+                    },
+                    "symbol_id": {
+                        "type": "string",
+                        "description": "Symbol name or full ID to analyse. Use search_symbols to find IDs."
+                    },
+                    "direction": {
+                        "type": "string",
+                        "enum": ["callers", "callees", "both"],
+                        "description": "'callers' = who calls this symbol; 'callees' = what this symbol calls; 'both' (default).",
+                        "default": "both",
+                    },
+                    "depth": {
+                        "type": "integer",
+                        "description": "Maximum hops to traverse (1–5). Default 3.",
+                        "default": 3,
+                    },
+                },
+                "required": ["repo", "symbol_id"],
+            },
+        ),
+        Tool(
+            name="get_impact_preview",
+            description=(
+                "Show what breaks if a symbol is removed or renamed. "
+                "Walks the call graph transitively to find every symbol that calls this one, "
+                "returning affected symbols grouped by file with call-chain paths. "
+                "Use this before deleting or renaming a symbol to understand full impact. "
+                "For a structured caller/callee tree, use get_call_hierarchy instead."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)"
+                    },
+                    "symbol_id": {
+                        "type": "string",
+                        "description": "Symbol name or full ID to analyse. Use search_symbols to find IDs."
+                    },
+                    "include_decisions": {
+                        "type": "boolean",
+                        "description": "When true, attach a read-only 'decisions' block: decision-bearing commits (revert/perf/refactor/rename/bugfix) mined from the git history of the focal symbol's file and the impacted files, plus a volatility read. Surfaced from the commit record; nothing is persisted. Default false (spends a few git-log calls).",
+                        "default": False,
+                    },
+                },
+                "required": ["repo", "symbol_id"],
+            },
+        ),
+        Tool(
+            name="get_symbol_provenance",
+            description=(
+                "Trace the complete authorship lineage and evolution narrative of a symbol "
+                "through git history. Returns every commit that touched the symbol (or its file), "
+                "classified into semantic categories (creation, bugfix, refactor, feature, perf, "
+                "rename, revert, etc.) with extracted commit intent. Includes a human-readable "
+                "narrative summarising who created it, why, how it evolved, and how volatile it is. "
+                "Use before refactoring unfamiliar code to understand the 'why' behind it. "
+                "Requires a locally indexed repo (index_folder)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)",
+                    },
+                    "symbol": {
+                        "type": "string",
+                        "description": "Symbol name or full ID as returned by search_symbols.",
+                    },
+                    "max_commits": {
+                        "type": "integer",
+                        "description": "Maximum commits to analyse (default 25, max 100).",
+                        "default": 25,
+                    },
+                },
+                "required": ["repo", "symbol"],
+            },
+        ),
+        Tool(
+            name="get_pr_risk_profile",
+            description=(
+                "Produce a unified risk assessment for all changes between two git refs (branch, PR, "
+                "or SHA range). Fuses five signals — blast radius, complexity, churn, test gaps, "
+                "and change volume — into a single composite risk_score (0.0–1.0) with actionable "
+                "recommendations. Returns the top-5 riskiest changed symbols, untested symbols, "
+                "and per-signal breakdowns. Designed for CI gating and code review workflows. "
+                "Requires a locally indexed repo (index_folder)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)",
+                    },
+                    "base_ref": {
+                        "type": "string",
+                        "description": "Base SHA/ref to compare from. Defaults to the SHA stored at index time.",
+                    },
+                    "head_ref": {
+                        "type": "string",
+                        "description": "Head SHA/ref to compare to (default 'HEAD').",
+                        "default": "HEAD",
+                    },
+                    "days": {
+                        "type": "integer",
+                        "description": "Churn look-back window in days (default 90).",
+                        "default": 90,
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="get_dependency_cycles",
+            description=(
+                "Detect circular import chains in a repository. "
+                "Returns every strongly-connected component (set of files that mutually import "
+                "each other, directly or transitively). Run this to identify architectural "
+                "problems before a refactor, or to understand why a module is hard to test in isolation."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)"
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="get_coupling_metrics",
+            description=(
+                "Return afferent coupling (Ca), efferent coupling (Ce), and instability score "
+                "for a file/module. Ca = files that import this module (dependents). "
+                "Ce = files this module imports (dependencies). "
+                "Instability I = Ce/(Ca+Ce): 0 = stable, 1 = unstable. "
+                "Use to identify fragile modules and guide refactoring priorities."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)"
+                    },
+                    "module_path": {
+                        "type": "string",
+                        "description": "File path within the repo (e.g. 'src/utils.py')"
+                    },
+                },
+                "required": ["repo", "module_path"],
+            },
+        ),
+        Tool(
+            name="get_layer_violations",
+            description=(
+                "Check whether imports respect declared architectural layer boundaries. "
+                "Reports every import that crosses a forbidden layer boundary. "
+                "Layer rules can be passed directly or defined in .jcodemunch.jsonc under "
+                "'architecture.layers'. Use to enforce clean architecture and detect "
+                "dependency-direction violations (e.g. API layer importing DB layer directly)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)"
+                    },
+                    "rules": {
+                        "type": "array",
+                        "description": (
+                            "Layer definitions. Each entry: {name, paths: [...], may_not_import: [...]}. "
+                            "If omitted, reads from .jcodemunch.jsonc architecture.layers."
+                        ),
+                        "items": {"type": "object"},
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="check_rename_safe",
+            description=(
+                "Check whether renaming a symbol to a new name would cause name collisions. "
+                "Scans the symbol's own file and every file that imports it, "
+                "looking for an existing symbol with the proposed new name. "
+                "Returns safe=true when no collisions are found. "
+                "Run this before any rename/refactor to avoid silent breakage. "
+                "For a full rename plan with edits, use plan_refactoring."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)",
+                    },
+                    "symbol_id": {
+                        "type": "string",
+                        "description": (
+                            "Symbol ID to rename (e.g. 'src/utils.py::helper#function'). "
+                            "Bare name accepted when unambiguous."
+                        ),
+                    },
+                    "new_name": {
+                        "type": "string",
+                        "description": "Proposed new symbol name (not a full ID, just the name).",
+                    },
+                },
+                "required": ["repo", "symbol_id", "new_name"],
+            },
+        ),
+        Tool(
+            name="check_delete_safe",
+            description=(
+                "Composite preflight: can this symbol be deleted safely? Combines find_importers "
+                "(cross-repo), check_references, find_dead_code confidence, runtime evidence "
+                "(Phase 7 traces when available), and entry-point heuristics into a single verdict + "
+                "one-line recommended_action. Verdict tiers: safe_to_delete / test_coverage_only / "
+                "internal_only / internal_uses_blocking / external_uses_blocking / cross_repo_blocking "
+                "/ runtime_observed / entry_point. Top-5 blockers ranked by severity. Read-only — "
+                "never mutates the codebase. "
+                "ALREADY CONSULTED, do not re-run to confirm this verdict: find_dead_code, "
+                "find_importers, check_references. "
+                "Response carries `stop_rule.terminal`: true means no further jcodemunch call "
+                "changes this verdict, so stop checking and decide. It does NOT mean safe — a "
+                "blocking verdict is terminal too. When false, `stop_rule.would_change_verdict` "
+                "names the specific action that would move it."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier"},
+                    "symbol": {
+                        "type": "string",
+                        "description": "Symbol ID or name to evaluate for deletion safety.",
+                    },
+                    "cross_repo": {
+                        "type": "boolean",
+                        "description": "Include other indexed repos in the analysis (default true).",
+                        "default": True,
+                    },
+                    "include_runtime": {
+                        "type": "boolean",
+                        "description": "Consult runtime_calls for production evidence (default true).",
+                        "default": True,
+                    },
+                },
+                "required": ["repo", "symbol"],
+            },
+        ),
+        Tool(
+            name="check_edit_safe",
+            description=(
+                "Composite preflight: can this symbol be edited safely? Where check_delete_safe asks "
+                "who breaks if it disappears, this asks what your regression risk is if you modify it "
+                "and what you must preserve. Fuses signature impact (external/cross-repo importers), "
+                "cyclomatic complexity, test-coverage presence, and runtime traffic into a single "
+                "verdict + one-line recommended_action. Verdict tiers: safe_to_edit / untested / "
+                "complexity_risk / signature_impact / runtime_critical. Top-5 blockers ranked by "
+                "severity. Read-only — never mutates the codebase. "
+                "ALREADY CONSULTED, do not re-run to confirm this verdict: find_importers, "
+                "check_references. "
+                "Response carries `stop_rule.terminal`: true means no further jcodemunch call "
+                "changes this verdict, so stop checking and decide. It does NOT mean safe — a "
+                "blocking verdict is terminal too. When false, `stop_rule.would_change_verdict` "
+                "names the specific action that would move it."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier"},
+                    "symbol": {
+                        "type": "string",
+                        "description": "Symbol ID or name to evaluate for edit safety.",
+                    },
+                    "cross_repo": {
+                        "type": "boolean",
+                        "description": "Include other indexed repos in the analysis (default true).",
+                        "default": True,
+                    },
+                    "include_runtime": {
+                        "type": "boolean",
+                        "description": "Consult runtime_calls for production evidence (default true).",
+                        "default": True,
+                    },
+                },
+                "required": ["repo", "symbol"],
+            },
+        ),
+        Tool(
+            name="find_implementations",
+            description=(
+                "Find concrete implementations of an interface, abstract class, or method. "
+                "Multi-source resolution with confidence scoring: SCIP/LSP evidence (1.0), AST class "
+                "hierarchy (0.85), duck-typed name match (0.65), decorator handler (0.45) — declared "
+                "priors; _meta.confidence_provenance states each channel's basis and measured "
+                "precision/recall. "
+                "Classifies each impl (subclass_override / interface_impl / duck_typed / "
+                "decorator_handler / subclass), ranks by PageRank × byte_length, attaches "
+                "differs_by breakdown. Optional cross_repo=true surfaces impls in other indexed "
+                "repos via the package registry."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier"},
+                    "symbol": {
+                        "type": "string",
+                        "description": "Symbol ID or name of the interface/abstract/method to analyse.",
+                    },
+                    "relationship_kinds": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Optional whitelist: subclass_override, interface_impl, duck_typed, "
+                            "decorator_handler, subclass. Defaults to all."
+                        ),
+                    },
+                    "include_subclasses": {
+                        "type": "boolean",
+                        "description": "Walk class hierarchy for class-kind targets (default true).",
+                        "default": True,
+                    },
+                    "cross_repo": {
+                        "type": "boolean",
+                        "description": "Also search other indexed repos via the package registry (default false).",
+                        "default": False,
+                    },
+                    "rank_by_importance": {
+                        "type": "boolean",
+                        "description": "Sort by confidence then PageRank × byte_length (default true).",
+                        "default": True,
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Cap on returned implementations (default 50).",
+                        "default": 50,
+                    },
+                    "token_budget": {
+                        "type": "integer",
+                        "description": "Hard cap on response payload (default 4000).",
+                        "default": 4000,
+                    },
+                },
+                "required": ["repo", "symbol"],
+            },
+        ),
+        Tool(
+            name="plan_refactoring",
+            description=(
+                "Generate edit-ready refactoring instructions for renaming, moving, extracting, or "
+                "changing the signature of a symbol. Returns {old_text, new_text} blocks for every "
+                "affected file — directly compatible with Edit tool. Handles import rewrites, "
+                "collision detection, new file generation, and multi-file coordination. "
+                "Use BEFORE executing any multi-file refactoring to get a complete edit plan in one call."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)",
+                    },
+                    "symbol": {
+                        "type": "string",
+                        "description": (
+                            "Symbol name or ID to refactor. For extract, comma-separated list "
+                            "(e.g. 'helper,process_data')."
+                        ),
+                    },
+                    "refactor_type": {
+                        "type": "string",
+                        "enum": ["rename", "move", "extract", "signature"],
+                        "description": "Type of refactoring to plan.",
+                    },
+                    "new_name": {
+                        "type": "string",
+                        "description": "New name for rename operations.",
+                    },
+                    "new_file": {
+                        "type": "string",
+                        "description": "Destination file path for move/extract operations.",
+                    },
+                    "new_signature": {
+                        "type": "string",
+                        "description": "New function signature (e.g. 'foo(x, y, z=0)').",
+                    },
+                    "depth": {
+                        "type": "integer",
+                        "description": "Import hops to traverse (1-3, default 2).",
+                        "default": 2,
+                    },
+                },
+                "required": ["repo", "symbol", "refactor_type"],
+            },
+        ),
+        Tool(
+            name="get_dead_code_v2",
+            description=(
+                "Find likely-dead functions and methods using three independent evidence signals: "
+                "(1) the symbol's file is not reachable from any entry point via the import graph "
+                "(filename heuristic + package.json main/module/exports/bin), "
+                "(2) no indexed symbol calls this symbol in the call graph, "
+                "(3) the symbol name is not re-exported from any __init__ or barrel file "
+                "(recursively follows CJS `module.exports = require(...)` and ES `export * from`). "
+                "Each result includes a confidence score (0.33 = 1 signal, 0.67 = 2 signals, 1.0 = all 3). "
+                "More reliable than single-signal dead-code detection. "
+                "Use min_confidence=0.67 for high-confidence results only. "
+                "v1.80.7+ — `max_results` (default 100) caps response size; "
+                "`file_pattern` scopes analysis to a glob like `src/**`."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)",
+                    },
+                    "min_confidence": {
+                        "type": "number",
+                        "description": "Minimum confidence threshold 0.0–1.0 (default 0.5 = at least 2/3 signals).",
+                        "default": 0.5,
+                    },
+                    "include_tests": {
+                        "type": "boolean",
+                        "description": "Include test files in analysis (default false).",
+                        "default": False,
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Cap on returned dead symbols (default 100, 0 = unlimited). _meta.truncated + _meta.total_matches flag when capped.",
+                        "default": 100,
+                        "minimum": 0,
+                    },
+                    "file_pattern": {
+                        "type": "string",
+                        "description": "Optional glob (e.g. `src/**`, `*.py`) — only scopes the RESULTS, not the population the signals are measured over.",
+                    },
+                    "degeneracy_cutoff": {
+                        "type": "number",
+                        "description": "Advanced. Fire rate at or above which a signal is treated as a constant and gets no vote (default 0.90; must be >0.5 and <=1.0). Pass 1.0 for pre-1.108.231 volume.",
+                        "default": 0.90,
+                        "exclusiveMinimum": 0.5,
+                        "maximum": 1.0,
+                    },
+                    "entry_point_patterns": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Glob patterns for files to treat as live roots, for frameworks the filename heuristic cannot see (e.g. 'handlers/*.py' for AWS Lambda, 'route.ts' for Next.js App Router). Matched with fnmatch against the repo-relative path AND against the bare filename, so 'route.ts' catches the file at any depth. NOTE: '**' is NOT recursive here — 'handlers/**/*.py' will not match 'handlers/h.py'. Use 'handlers/*.py' for one level, or a bare filename to match anywhere. Same matcher as find_dead_code.",
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="get_extraction_candidates",
+            description=(
+                "Identify functions in a file that are good candidates for extraction to a shared module. "
+                "A candidate must have high cyclomatic complexity (doing a lot) AND "
+                "be called from multiple other files (already implicitly shared). "
+                "Results are ranked by score = complexity × caller_file_count. "
+                "Requires re-indexing with jcodemunch-mcp >= 1.16 to populate complexity data."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)",
+                    },
+                    "file_path": {
+                        "type": "string",
+                        "description": "Relative file path within the repo (e.g. 'src/utils.py').",
+                    },
+                    "min_complexity": {
+                        "type": "integer",
+                        "description": "Minimum cyclomatic complexity threshold (default 5).",
+                        "default": 5,
+                    },
+                    "min_callers": {
+                        "type": "integer",
+                        "description": "Minimum number of distinct caller files (default 2).",
+                        "default": 2,
+                    },
+                },
+                "required": ["repo", "file_path"],
+            },
+        ),
+        Tool(
+            name="get_symbol_complexity",
+            description=(
+                "Return cyclomatic complexity, nesting depth, and parameter count for a single symbol. "
+                "Complexity data is stored at index time (requires jcodemunch-mcp >= 1.16 / INDEX_VERSION 7). "
+                "assessment field: 'low' (1-4), 'medium' (5-10), 'high' (11+). "
+                "Re-index the repo if all metrics show 0 (pre-1.16 index)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)",
+                    },
+                    "symbol_id": {
+                        "type": "string",
+                        "description": "Full symbol ID as returned by search_symbols or get_file_outline.",
+                    },
+                },
+                "required": ["repo", "symbol_id"],
+            },
+        ),
+        Tool(
+            name="get_churn_rate",
+            description=(
+                "Return git churn metrics for a file or symbol: commit count, unique authors, "
+                "first_seen date, last_modified date, and churn_per_week over a configurable window. "
+                "assessment: 'stable' (<=1/week), 'active' (<=3/week), 'volatile' (>3/week). "
+                "Requires a locally indexed repo (index_folder); GitHub-indexed repos are not supported."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)",
+                    },
+                    "target": {
+                        "type": "string",
+                        "description": "Relative file path (e.g. 'src/utils.py') or a full symbol ID.",
+                    },
+                    "days": {
+                        "type": "integer",
+                        "description": "Look-back window in days (default 90).",
+                        "default": 90,
+                    },
+                },
+                "required": ["repo", "target"],
+            },
+        ),
+        Tool(
+            name="get_delivery_metrics",
+            description=(
+                "Call this when you want a cost-per-outcome read on a codebase — how much "
+                "AI spend produced durable change over a window, not raw commit or token "
+                "volume. "
+                "Quantify durable-change delivery over a window: of the non-merge commits "
+                "in the last window_days, how many landed and stuck (commits_durable) vs were "
+                "reverted or re-touched within rework_horizon_days (churn-back). commits_durable "
+                "is the honest numerator for a cost-per-outcome ratio — divide AI spend over the "
+                "same window by it to show how much got done for how little, instead of rewarding "
+                "raw activity. Hub files co-touched by most commits (CHANGELOG, version, a "
+                "monolithic dispatch module) are excluded from the rework signal (auditable via "
+                "_meta.hub_files_excluded). Durability is trailing: commits inside the horizon are "
+                "flagged commits_provisional (not yet settled). Diagnostic trend, not a score to "
+                "chase. Requires a locally indexed repo (index_folder); GitHub-indexed repos are "
+                "not supported."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)",
+                    },
+                    "window_days": {
+                        "type": "integer",
+                        "description": "Look-back window in days (default 30).",
+                        "default": 30,
+                    },
+                    "rework_horizon_days": {
+                        "type": "integer",
+                        "description": "Days within which a re-touch counts as churn-back; also "
+                                       "defines the provisional tail (default 14).",
+                        "default": 14,
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="get_parity_map",
+            description=(
+                "Use when migrating or porting code from one tree or repo to another and "
+                "you need to know what's already moved, what silently diverged, and what's "
+                "still unported. "
+                "Map migration/port parity between a SOURCE symbol tree and a TARGET tree "
+                "(two subpaths of one repo, or two repos). For each source function/method/class "
+                "it reports: ported (equivalent counterpart exists), ported_diverged (counterpart "
+                "exists but its signature/body drifted — the failure a name-only check reports as "
+                "done), unported (no counterpart), orphaned (unported and no migrated caller — a "
+                "possible intentional drop), or added (target-only surface). Rename-aware: a "
+                "ported-and-renamed symbol is matched by structural+behavioral similarity, not a "
+                "false unported+added pair. When include_port_plan is set, the unported symbols are "
+                "ordered by the source dependency graph (leaves first) with cycles grouped, each "
+                "carrying unblocked + blocking_deps. Read-only and plan-only: it never edits or "
+                "ports anything. parity_pct is a labelled estimate."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "source_repo": {
+                        "type": "string",
+                        "description": "Repo id of the tree being ported FROM.",
+                    },
+                    "target_repo": {
+                        "type": "string",
+                        "description": "Repo id of the tree being ported TO (may equal source_repo).",
+                    },
+                    "source_path": {
+                        "type": "string",
+                        "description": "Optional subtree within source_repo (file-path prefix).",
+                    },
+                    "target_path": {
+                        "type": "string",
+                        "description": "Optional subtree within target_repo (file-path prefix).",
+                    },
+                    "match_threshold": {
+                        "type": "number",
+                        "description": "Similarity floor (0-1) for rename matching (default 0.75).",
+                        "default": 0.75,
+                    },
+                    "divergence": {
+                        "type": "string",
+                        "description": "Divergence policy: 'signature' (default), 'signature+body', "
+                                       "or 'name_only' (presence only, no divergence check).",
+                        "enum": ["signature", "signature+body", "name_only"],
+                        "default": "signature",
+                    },
+                    "rename": {
+                        "type": "boolean",
+                        "description": "Match renamed symbols by similarity (default true). "
+                                       "Auto-disabled past the pair budget on very large scopes.",
+                        "default": True,
+                    },
+                    "include_port_plan": {
+                        "type": "boolean",
+                        "description": "Emit the dependency-ordered plan over unported symbols.",
+                        "default": True,
+                    },
+                },
+                "required": ["source_repo", "target_repo"],
+            },
+        ),
+        Tool(
+            name="get_decorator_census",
+            description=(
+                "Repo-wide census of decorators / annotations / attributes: 'where is every "
+                "@app.route / @Injectable / @pytest.fixture / [Serializable], and how many?' in one "
+                "read-only call. Cross-language by construction (aggregates the decorators the index "
+                "stored on each symbol). Forms are NORMALIZED (leading @, call-arguments, and [] "
+                "brackets stripped) so @app.route('/a') and @app.route('/b') count under one bucket "
+                "instead of scattering; each bucket keeps the distinct raw_forms it collapsed, a "
+                "per-decorator symbol-kind breakdown, and a file count. Filter by name_filter "
+                "(substring on the normalized name), scope_path (subtree), or kind; include_sites "
+                "lists the exact decorated symbols. Pairs with get_signal_chains / get_endpoint_impact "
+                "(this surfaces the decorator surface; those resolve what it wires together)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)",
+                    },
+                    "name_filter": {
+                        "type": "string",
+                        "description": "Case-insensitive substring on the normalized decorator "
+                                       "name (e.g. 'route', 'fixture', 'inject').",
+                    },
+                    "scope_path": {
+                        "type": "string",
+                        "description": "Optional subtree prefix (file-path) to restrict the census.",
+                    },
+                    "kind": {
+                        "type": "string",
+                        "description": "Optional symbol-kind filter (function/method/class/...).",
+                    },
+                    "include_sites": {
+                        "type": "boolean",
+                        "description": "List the decorated symbols per bucket (capped at max_sites_per).",
+                        "default": False,
+                    },
+                    "max_decorators": {
+                        "type": "integer",
+                        "description": "Cap on histogram rows (default 100).",
+                        "default": 100,
+                    },
+                    "max_sites_per": {
+                        "type": "integer",
+                        "description": "Cap on sites listed per decorator when include_sites (default 50).",
+                        "default": 50,
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="get_architecture_metrics",
+            description=(
+                "Structural concentration, dependency depth, and modularity in one read-only "
+                "call, over the file import graph. concentration: Gini coefficient (0 even -> 1 "
+                "hoarded) over per-file symbol count, size, fan-in (importers), and fan-out "
+                "(imports) + the top concentrators — answers 'is complexity/coupling piling up in "
+                "a few files?' which a hotspot list (the peaks) can't. depth: longest dependency "
+                "chain + level distribution (Lakos levelization) over the cycle-condensed DAG. "
+                "modularity: cluster count + the hidden coupling a Design Structure Matrix "
+                "highlights (back-edges = cycle-participating import edges) without the NxN matrix. "
+                "Does not duplicate get_layer_violations (specific violations) or "
+                "get_dependency_cycles (the cycles); does not touch the health-radar composite."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)",
+                    },
+                    "top_n": {
+                        "type": "integer",
+                        "description": "Number of top concentrators to list per Gini metric (default 10).",
+                        "default": 10,
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="get_hotspots",
+            description=(
+                "Return the top-N highest-risk symbols ranked by hotspot score = "
+                "cyclomatic_complexity x log(1 + commits_last_N_days). "
+                "Identifies code that is both complex and frequently changed — the highest "
+                "bug-introduction risk in the codebase. Methodology matches CodeScene/Adam Tornhill. "
+                "Requires jcodemunch-mcp >= 1.16 for complexity data and a locally indexed repo for churn."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)",
+                    },
+                    "top_n": {
+                        "type": "integer",
+                        "description": "Number of results to return (default 20).",
+                        "default": 20,
+                    },
+                    "days": {
+                        "type": "integer",
+                        "description": "Churn look-back window in days (default 90).",
+                        "default": 90,
+                    },
+                    "min_complexity": {
+                        "type": "integer",
+                        "description": "Minimum cyclomatic complexity to include (default 2).",
+                        "default": 2,
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="get_repo_health",
+            description=(
+                "Return a one-call triage snapshot of the entire repository: symbol counts, "
+                "dead code %, average cyclomatic complexity, top 5 hotspots, dependency cycle count, "
+                "and unstable module count. "
+                "Designed to be the first tool called in any new session — one call gives a complete "
+                "picture to guide follow-up analysis."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)",
+                    },
+                    "days": {
+                        "type": "integer",
+                        "description": "Churn look-back window for hotspot calculation (default 90).",
+                        "default": 90,
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="get_untested_symbols",
+            description=(
+                "Find functions and methods with no evidence of being exercised by any test file. "
+                "Uses import-graph reachability + name matching (AST call_references when available, "
+                "word-boundary text heuristic as fallback). Returns symbols classified as 'unreached' "
+                "(no test file imports the source file) or 'imported_not_called' (test imports the "
+                "module but no test references this specific function). "
+                "This is heuristic reachability, NOT runtime coverage — it answers 'does any test "
+                "reference this symbol?' rather than 'what % of lines are covered.' "
+                "Use after get_repo_health for a deeper quality picture."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)",
+                    },
+                    "file_pattern": {
+                        "type": "string",
+                        "description": "Optional glob to narrow which source files are analysed (e.g. 'src/**/*.py').",
+                    },
+                    "min_confidence": {
+                        "type": "number",
+                        "description": "Minimum confidence to include (0.0–1.0, default 0.5).",
+                        "default": 0.5,
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Cap on returned symbols (default 100).",
+                        "default": 100,
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="search_ast",
+            description=(
+                "Cross-language AST pattern matching. Finds structural code patterns "
+                "across all 70+ indexed languages using a single query — no need to know "
+                "language-specific AST node types. Two modes: (1) preset anti-patterns "
+                "(empty_catch, bare_except, deeply_nested, nested_loops, god_function, "
+                "eval_exec, hardcoded_secret, todo_fixme, magic_number, reassigned_param), "
+                "or (2) custom mini-DSL (call:*.unwrap, string:/password/i, comment:/TODO/i, "
+                "nesting:5+, loops:3+, lines:80+). Use category='all' to run every preset "
+                "at once, or category='security'/'error_handling'/'complexity'/'performance'/"
+                "'maintenance' for a focused scan. Every match is attributed to its enclosing "
+                "indexed symbol with complexity metadata. Requires a locally indexed repo."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)",
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": (
+                            "Preset name (empty_catch, bare_except, deeply_nested, nested_loops, "
+                            "god_function, eval_exec, hardcoded_secret, todo_fixme, magic_number, "
+                            "reassigned_param) or custom query (call:NAME, string:/REGEX/i, "
+                            "comment:/REGEX/i, nesting:N+, loops:N+, lines:N+). "
+                            "Mutually exclusive with category."
+                        ),
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": (
+                            "Run all presets in a category: security, error_handling, "
+                            "complexity, performance, maintenance, or all."
+                        ),
+                    },
+                    "language": {
+                        "type": "string",
+                        "description": "Restrict scan to one language (e.g. 'python', 'typescript').",
+                    },
+                    "file_pattern": {
+                        "type": "string",
+                        "description": "Glob filter on file paths (e.g. 'src/**/*.py').",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Cap on total matches returned (default 50).",
+                        "default": 50,
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="get_symbol_importance",
+            description=(
+                "Return the most architecturally important symbols in a repo, ranked by "
+                "PageRank or in-degree centrality on the import graph. Useful for "
+                "orientation: surfaces the symbols that most of the codebase depends on. "
+                "New tool: use after indexing to understand repo architecture at a glance."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier (owner/repo or just repo name)"},
+                    "top_n": {"type": "integer", "description": "Number of top symbols to return (default 20, max 200)", "default": 20},
+                    "algorithm": {
+                        "type": "string",
+                        "enum": ["pagerank", "degree"],
+                        "description": "'pagerank' (default) = full PageRank on import graph; 'degree' = simple in-degree count (faster).",
+                        "default": "pagerank",
+                    },
+                    "scope": {"type": "string", "description": "Limit to a subdirectory prefix (e.g. 'src/core')"},
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="find_similar_symbols",
+            description=(
+                "Find clusters of similar functions/methods/classes — consolidation candidates. "
+                "Blends three signals: semantic (embedding cosine when embed_repo has run), "
+                "structural (signature-token Jaccard + size ratio), and behavioral (callee-set Jaccard). "
+                "Runs union-find clustering, classifies each cluster (near_duplicate / similar_logic / "
+                "parallel_implementation), picks a canonical symbol per cluster (highest PageRank), "
+                "and surfaces 'differs_by' breakdowns so an agent can recommend keep-this/replace-those. "
+                "Pre-filters via BM25 inverted index — sub-N^2 on large repos. Degrades gracefully "
+                "without embeddings (mode='structural'). Skip tests/dunders/generated files by default."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier (owner/repo or just repo name)"},
+                    "threshold": {
+                        "type": "number",
+                        "description": "Minimum combined similarity to form a cluster edge (0.0–1.0). Default 0.80.",
+                        "default": 0.80,
+                    },
+                    "min_size": {
+                        "type": "integer",
+                        "description": "Minimum byte_length per symbol (default 30; filters out getters/wrappers).",
+                        "default": 30,
+                    },
+                    "max_clusters": {
+                        "type": "integer",
+                        "description": "Cap on clusters returned (default 25).",
+                        "default": 25,
+                    },
+                    "include_tests": {
+                        "type": "boolean",
+                        "description": "When False (default), test files are skipped — tests intentionally share shapes.",
+                        "default": False,
+                    },
+                    "scope": {
+                        "type": "string",
+                        "description": "Optional glob to limit to a subdirectory (e.g. 'src/core/*').",
+                    },
+                    "include_kinds": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Symbol kind whitelist. Defaults to ['function', 'method', 'class'].",
+                    },
+                    "semantic_weight": {
+                        "type": "number",
+                        "description": "Embedding weight when embeddings are present (0.0–1.0). Default 0.6.",
+                        "default": 0.6,
+                    },
+                    "token_budget": {
+                        "type": "integer",
+                        "description": "Hard cap on the response's payload (default 4000).",
+                        "default": 4000,
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="get_repo_map",
+            description=(
+                "Query-less, token-budgeted, signature-level overview of a repository. "
+                "Groups symbols by file, ranks files by PageRank on the import graph, and "
+                "greedy-packs signatures (not bodies) under token_budget. Designed for "
+                "cold-start orientation — 'I just cloned this repo, what matters here?'. "
+                "Pair with get_tectonic_map (module topology) "
+                "and get_ranked_context (query-driven) once you know what to ask for."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier (owner/repo or just repo name)"},
+                    "token_budget": {
+                        "type": "integer",
+                        "description": "Hard cap on returned tokens (default 2048).",
+                        "default": 2048,
+                    },
+                    "scope": {
+                        "type": "string",
+                        "description": "Optional glob to limit to a subdirectory (e.g. 'src/core/*').",
+                    },
+                    "max_per_file": {
+                        "type": "integer",
+                        "description": "Max signatures emitted per file (default 5, capped at 50).",
+                        "default": 5,
+                    },
+                    "include_kinds": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of symbol kinds to restrict results (e.g. ['class', 'function']).",
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="find_dead_code",
+            description=(
+                "Find dead code — files and symbols with zero importers and no entry-point role. "
+                "Uses the import graph to identify unreachable code. Returns confidence scores "
+                "(1.0 = provably unreachable, 0.7 = all importers are themselves dead). "
+                "Set granularity='file' for file-level results only."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier (owner/repo or just repo name)"},
+                    "granularity": {
+                        "type": "string",
+                        "enum": ["symbol", "file"],
+                        "description": "'symbol' (default) returns dead symbols; 'file' returns dead files only.",
+                        "default": "symbol",
+                    },
+                    "min_confidence": {
+                        "type": "number",
+                        "description": "Minimum confidence threshold 0.0–1.0. Default 0.8. Use 1.0 for provably unreachable only.",
+                        "default": 0.8,
+                    },
+                    "include_tests": {
+                        "type": "boolean",
+                        "description": "Treat test files as live roots (default false — test files are excluded from dead code candidates).",
+                        "default": False,
+                    },
+                    "entry_point_patterns": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Additional glob patterns to treat as live roots (e.g. 'cli/*.py', 'scripts/*').",
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="get_ranked_context",
+            description=(
+                "Assemble the best-fit context for a query within a token budget. "
+                "Ranks all symbols by relevance (BM25) and/or centrality (PageRank), "
+                "loads source for the top candidates, and packs greedily until token_budget is exhausted. "
+                "Exact symbol names in the query (qualified, CamelCase, snake_case) are pinned ahead "
+                "of the ranking; include identifiers verbatim. "
+                "Use when you want 'the best N tokens of context for this task' without specifying exact symbols."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier (owner/repo or just repo name)"},
+                    "query": {"type": "string", "description": "Natural language or identifier describing the task (max 500 chars)"},
+                    "token_budget": {
+                        "type": "integer",
+                        "description": "Hard cap on returned tokens (default 4000).",
+                        "default": 4000,
+                    },
+                    "strategy": {
+                        "type": "string",
+                        "enum": ["combined", "bm25", "centrality"],
+                        "description": (
+                            "'combined' (default) = BM25 + PageRank weighted sum. "
+                            "'bm25' = pure text relevance. "
+                            "'centrality' = PageRank only, filtered to query-matching symbols."
+                        ),
+                        "default": "combined",
+                    },
+                    "include_kinds": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of symbol kinds to restrict results (e.g. ['class', 'function']).",
+                    },
+                    "scope": {
+                        "type": "string",
+                        "description": "Optional glob pattern to limit search to a subdirectory (e.g. 'src/core/*').",
+                    },
+                    "fusion": {
+                        "type": "boolean",
+                        "description": "Enable multi-signal fusion (Weighted Reciprocal Rank) for ranking. Combines lexical, structural, and identity channels.",
+                        "default": False,
+                    },
+                    "compress": {
+                        "type": "boolean",
+                        "description": "Keystone-protected structural compression: prune low-signal lines from oversized bodies so more relevant symbols fit the budget (control-flow/returns/signatures always kept). Model-free; pruned items carry source_pruned + line counts. Default False.",
+                        "default": False,
+                    },
+                    "receipt": {
+                        "type": "boolean",
+                        "description": _RECEIPT_ARG_DESCRIPTION,
+                        "default": False,
+                    },
+                },
+                "required": ["repo", "query"],
+            },
+        ),
+        Tool(
+            name="assemble_task_context",
+            description=(
+                "Task-aware single-call orchestrator. Auto-classifies task into "
+                "explore/debug/refactor/extend/audit/review intent, runs the right sub-tools, "
+                "returns one source-attributed capsule under token_budget."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier"},
+                    "task": {
+                        "type": "string",
+                        "description": "Natural-language task description. Anchors auto-extracted from task text.",
+                    },
+                    "symbols": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional anchor symbol IDs or names; auto-extracted from task when omitted.",
+                    },
+                    "intent": {
+                        "type": "string",
+                        "enum": ["explore", "debug", "refactor", "extend", "audit", "review"],
+                        "description": "Optional override; auto-detected from task when omitted.",
+                    },
+                    "token_budget": {
+                        "type": "integer",
+                        "description": "End-to-end hard cap on returned tokens (default 8000).",
+                        "default": 8000,
+                    },
+                    "include": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional whitelist of stages to run (e.g. ['anchor', 'blast', 'runtime']).",
+                    },
+                    "cross_repo": {
+                        "type": "boolean",
+                        "description": "When True, layer cross-repo signals (default false).",
+                        "default": False,
+                    },
+                },
+                "required": ["repo", "task"],
+            },
+        ),
+        Tool(
+            name="get_changed_symbols",
+            description=(
+                "Map a git diff to affected symbols: given two commits, returns which symbols "
+                "were added, removed, modified, or renamed. Useful after merging a PR to answer "
+                "'what actually changed?' for code review or regression triage. "
+                "Requires a locally indexed repo (index_folder). "
+                "Defaults to comparing current HEAD against the SHA stored at index time."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository identifier — must be locally indexed with index_folder"},
+                    "since_sha": {
+                        "type": "string",
+                        "description": "Compare from this git SHA or ref. Defaults to the SHA stored at index time.",
+                    },
+                    "until_sha": {
+                        "type": "string",
+                        "description": "Compare to this git SHA or ref (default 'HEAD').",
+                        "default": "HEAD",
+                    },
+                    "include_blast_radius": {
+                        "type": "boolean",
+                        "description": "Also return downstream importers (blast radius) for each changed symbol (default false).",
+                        "default": False,
+                    },
+                    "max_blast_depth": {
+                        "type": "integer",
+                        "description": "Hop limit when include_blast_radius=true (default 3, max 5).",
+                        "default": 3,
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="embed_repo",
+            description=(
+                "Precompute and cache symbol embeddings for semantic search. "
+                "Optional warm-up: search_symbols with semantic=true lazily embeds missing "
+                "symbols on first use, but embed_repo warms the cache upfront so the first "
+                "semantic query returns immediately. "
+                "Requires an embedding provider (JCODEMUNCH_EMBED_MODEL, "
+                "GOOGLE_API_KEY+GOOGLE_EMBED_MODEL, or OPENAI_API_KEY+OPENAI_EMBED_MODEL)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)",
+                    },
+                    "batch_size": {
+                        "type": "integer",
+                        "description": "Symbols per embedding batch (default 50).",
+                        "default": 50,
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": "Recompute all embeddings even if they already exist (default false).",
+                        "default": False,
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="get_cross_repo_map",
+            description=(
+                "Return which indexed repos depend on which other indexed repos at the package level. "
+                "Shows the full cross-repository dependency map based on package names extracted from "
+                "manifest files (pyproject.toml, package.json, go.mod, Cargo.toml, etc.). "
+                "Use to visualize how your indexed repos are interconnected. "
+                "Pass repo to filter to a single repo's perspective."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Optional repo ID to filter. If omitted, returns the full cross-repo map.",
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="get_group_contracts",
+            description=(
+                "Surface the de-facto API contracts across a group of indexed repos. Walks each "
+                "member's named imports, resolves them to symbols in other members via the package "
+                "registry, and classifies each shared symbol into one of four verdict tiers: "
+                "'de_facto_api' (used by ≥min_importers external repos), 'leaky_internal' (underscore-"
+                "prefixed or in _internal/ but imported externally — architecture violation), "
+                "'dead_contract' (declared public but unused externally; opt-in), 'version_skew' "
+                "(same name imported via multiple specifier roots — coordination risk). Attaches "
+                "stability score (churn-weighted), last breaking change (from get_symbol_provenance), "
+                "and runtime hits (when traces have been ingested). Pairs with get_cross_repo_map: "
+                "that gives the repo-level edge graph; this zooms in to the symbol-level surface."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repos": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of indexed repo IDs (owner/name or bare names). Must be ≥2.",
+                    },
+                    "min_importers": {
+                        "type": "integer",
+                        "description": "Minimum distinct external repo importers to surface a contract (default 2).",
+                        "default": 2,
+                    },
+                    "include_internal": {
+                        "type": "boolean",
+                        "description": "Surface leaky_internal contracts (architecture violations). Default true.",
+                        "default": True,
+                    },
+                    "include_dead_contracts": {
+                        "type": "boolean",
+                        "description": "Surface public symbols with zero external importers. Default false.",
+                        "default": False,
+                    },
+                    "classify": {
+                        "type": "boolean",
+                        "description": "Attach verdict tier per contract. Default true.",
+                        "default": True,
+                    },
+                    "churn_days": {
+                        "type": "integer",
+                        "description": "Window for stability scoring (default 90).",
+                        "default": 90,
+                    },
+                    "max_contracts": {
+                        "type": "integer",
+                        "description": "Cap on returned contracts (default 50).",
+                        "default": 50,
+                    },
+                    "token_budget": {
+                        "type": "integer",
+                        "description": "Hard cap on response payload (default 4000).",
+                        "default": 4000,
+                    },
+                },
+                "required": ["repos"],
+            },
+        ),
+        Tool(
+            name="get_tectonic_map",
+            description=(
+                "Discover the logical module topology of a codebase by fusing three coupling signals: "
+                "structural (import edges), behavioral (shared symbol references), and temporal "
+                "(git co-churn). Returns tectonic plates (auto-detected file clusters), each with "
+                "an anchor file, cohesion score, inter-plate coupling, and drifters (files whose "
+                "directory doesn't match their logical module). Detects nexus plates (god-module risk: "
+                "coupled to ≥4 other plates). No k parameter — plate count emerges from the topology. "
+                "Use to find hidden module boundaries, misplaced files, and architectural drift."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)",
+                    },
+                    "days": {
+                        "type": "integer",
+                        "description": "Git co-churn look-back window in days (default 90)",
+                        "default": 90,
+                    },
+                    "min_plate_size": {
+                        "type": "integer",
+                        "description": "Minimum files per plate to include; smaller groups go to isolated_files (default 2)",
+                        "default": 2,
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="get_signal_chains",
+            description=(
+                "Discover how external signals (HTTP requests, CLI commands, scheduled tasks, events) "
+                "propagate through the codebase via the call graph. Each signal chain traces a path "
+                "from a gateway (entry point) through its callees to leaf symbols. "
+                "Two modes: (1) Discovery — omit symbol to map all chains with orphan detection; "
+                "(2) Lookup — pass a symbol name/ID to find which user-facing chains it participates in "
+                "(e.g. 'validate_email sits on POST /api/users and cli:import-users'). "
+                "Detects gateways from route decorators (Flask/FastAPI/Spring/NestJS/ASP.NET), "
+                "CLI commands (@click, @app.command), task queues (@celery, @dramatiq), event handlers, "
+                "and standard entry points (main.py, __main__.py). "
+                "Use before refactoring to understand which user-facing behaviors depend on a symbol."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)",
+                    },
+                    "symbol": {
+                        "type": "string",
+                        "description": "Symbol name or ID for lookup mode. When provided, returns only chains containing that symbol. Omit for discovery mode (all chains).",
+                    },
+                    "kind": {
+                        "type": "string",
+                        "description": "Filter gateways by kind: http, cli, event, task, main, test.",
+                        "enum": ["http", "cli", "event", "task", "main", "test"],
+                    },
+                    "max_depth": {
+                        "type": "integer",
+                        "description": "BFS depth limit per chain (1–8, default 5).",
+                        "default": 5,
+                    },
+                    "include_tests": {
+                        "type": "boolean",
+                        "description": "Include test_* functions as gateways (default false).",
+                        "default": False,
+                    },
+                    "include_flow_edges": {
+                        "type": "boolean",
+                        "description": (
+                            "Resolve framework flow edges the call graph is blind to (default true). "
+                            "String-dispatched handlers (Django path()/re_path(), Express "
+                            "router.get(path, handler), Flask add_url_rule, Rails to:) surface as http "
+                            "gateways even with no route decorator, and templates a chain renders "
+                            "(render/render_template/res.render/view) attach as a per-chain 'views' list. "
+                            "Set false for pure call-graph behavior."
+                        ),
+                        "default": True,
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="get_endpoint_impact",
+            description=(
+                "Endpoint-centric impact analysis: 'what breaks if I change this HTTP endpoint?' "
+                "Given an endpoint (method + URL, e.g. 'GET /users') or a handler symbol, returns "
+                "the handler plus what changing it affects — importing files + callers (blast radius) "
+                "and any templates it renders. Read-only. Resolves string-dispatch routes "
+                "(Django/Express/Flask/Rails) and decorator routes (Flask/FastAPI/Spring) by their "
+                "local path; for prefix-composed FastAPI (APIRouter prefix) or Spring class-level "
+                "mappings whose full URL isn't resolved yet, pass handler_symbol_id instead."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)",
+                    },
+                    "endpoint": {
+                        "type": "string",
+                        "description": "HTTP endpoint to analyse, e.g. 'GET /users' or '/users' (verb optional). One of endpoint / handler_symbol_id is required.",
+                    },
+                    "handler_symbol_id": {
+                        "type": "string",
+                        "description": "Analyse a handler symbol directly instead of by URL (use for prefixed routes whose full path isn't resolved).",
+                    },
+                    "depth": {
+                        "type": "integer",
+                        "description": "Import hops for blast radius (1 = direct importers; max 3).",
+                        "default": 1,
+                    },
+                    "call_depth": {
+                        "type": "integer",
+                        "description": "Call-graph hops for caller detection (0 disables; max 3).",
+                        "default": 2,
+                    },
+                    "include_infra": {
+                        "type": "boolean",
+                        "description": "Attach per-impact infra links: env vars / compose services / Dockerfiles / CI jobs / scripts whose project-intel cross-references land in the endpoint's blast-radius files (downstream), plus what exposes the app (compose ports, K8s Service/Ingress; precision host_port unless an Ingress path rule names the route). File-granular evidence.",
+                        "default": False,
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="render_diagram",
+            description=(
+                "Render any graph-producing tool's output as rich, annotated Mermaid markup. "
+                "Pass the raw output dict from get_call_hierarchy, get_signal_chains, "
+                "get_tectonic_map, get_dependency_cycles, get_impact_preview, "
+                "get_blast_radius, or get_dependency_graph. Auto-detects the source tool "
+                "and picks the optimal diagram type: flowchart TD (call hierarchy, blast radius), "
+                "flowchart BT (impact preview), flowchart LR (tectonic plates, dependency graph, "
+                "cycles), or sequenceDiagram (signal chains). Encodes metadata as visual signals: "
+                "edge colors for resolution confidence, node shapes for symbol kind, subgraph "
+                "grouping by file/plate/depth, risk heat coloring. Themes: 'flow' (blue/purple "
+                "depth gradient), 'risk' (red/yellow/green heat), 'minimal' (monochrome). "
+                "Smart pruning keeps output under max_nodes."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "source": {
+                        "type": "object",
+                        "description": "Raw output dict from any supported graph-producing tool.",
+                    },
+                    "theme": {
+                        "type": "string",
+                        "enum": ["flow", "risk", "minimal"],
+                        "description": "Visual theme: 'flow' (architecture), 'risk' (impact), 'minimal' (docs). Default: flow.",
+                        "default": "flow",
+                    },
+                    "max_nodes": {
+                        "type": "integer",
+                        "description": "Maximum nodes before smart pruning (default 80, range 10–200).",
+                        "default": 80,
+                    },
+                    **({
+                        "open_in_viewer": {
+                            "type": "boolean",
+                            "description": (
+                                "When true, also open the rendered mermaid in the local mmd-viewer. "
+                                "The HTML file is written under <index_storage>/temp/mermaid/. "
+                                "Non-fatal: if the viewer is missing, mermaid is returned anyway."
+                            ),
+                            "default": False,
+                        },
+                    } if config_module.get("render_diagram_viewer_enabled", False) else {}),
+                },
+                "required": ["source"],
+            },
+        ),
+        Tool(
+            name="get_project_intel",
+            description=(
+                "Auto-discover and parse non-code knowledge files (Dockerfiles, CI configs, "
+                "docker-compose, K8s manifests, .env templates, Makefiles, package.json scripts) "
+                "and cross-reference them to indexed code symbols. Returns structured intelligence "
+                "grouped by category: infra, ci, config, deps, api, data. "
+                "For categories already in the index (OpenAPI, Terraform, GraphQL, Protobuf, dbt), "
+                "pulls from the index directly. Requires a local index (index_folder)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or display name).",
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "Category to return: all, infra, ci, config, deps, api, data.",
+                        "default": "all",
+                        "enum": ["all", "infra", "ci", "config", "deps", "api", "data"],
+                    },
+                    "scope_path": {
+                        "type": "string",
+                        "description": "Optional subpath (relative to source_root) to restrict intel discovery to a single workspace member — e.g. 'packages/api'. When omitted, the whole repo is scanned. Use `list_workspaces` to enumerate the available members. Cross-references still consult the global index so a package's container still resolves against repo-level code.",
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="list_workspaces",
+            description=(
+                "Enumerate monorepo workspace members for an indexed repo. Detects "
+                "pnpm (pnpm-workspace.yaml), yarn/npm (package.json workspaces), "
+                "turborepo (turbo.json), lerna (lerna.json), rush (rush.json), "
+                "Go (go.work), and Cargo ([workspace] members). Returns "
+                "[{path, package_name, manager}, ...] plus an `is_monorepo` flag "
+                "and the list of managers that contributed. Use the returned "
+                "`path` values as the `scope_path` argument on get_project_intel "
+                "to retrieve per-package intel (Dockerfile / CI / deps) instead of "
+                "the repo-wide aggregate."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or display name).",
+                    },
+                },
+                "required": ["repo"],
+            },
+        ),
+        Tool(
+            name="winnow_symbols",
+            description=(
+                "Run a multi-axis constraint query against the index in a single round trip. "
+                "Accepts an ordered list of criteria (AND) intersecting signals no other tool "
+                "composes: kind, language, name (regex), file glob, cyclomatic complexity, "
+                "decorator, direct call references, summary/docstring text, and git churn. "
+                "Survivors are ranked by importance (PageRank, default), complexity, churn, "
+                "or name. Use for questions like 'complex untested functions that call db.Exec' "
+                "or 'deprecated methods still churning in the last 30 days' — cases that would "
+                "otherwise require 4-5 separate calls and client-side merging."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "Repository identifier (owner/repo or just repo name)",
+                    },
+                    "criteria": {
+                        "type": "array",
+                        "description": (
+                            "Ordered list of filters. Each item is {axis, op, value}. "
+                            "Supported axes: kind (in/eq), language (in/eq), name (eq/matches), "
+                            "file (matches - glob), complexity (>,<,>=,<=,==), decorator (contains), "
+                            "calls (contains - matches call_references), summary (contains), "
+                            "churn (>,<,>=,<=,== with optional window_days, default 90). "
+                            "All criteria must match (AND)."
+                        ),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "axis": {"type": "string"},
+                                "op": {"type": "string"},
+                                "value": {},
+                                "window_days": {
+                                    "type": "integer",
+                                    "description": "Only used when axis='churn'. Days of git history to scan (default 90).",
+                                },
+                            },
+                            "required": ["axis", "op", "value"],
+                        },
+                    },
+                    "rank_by": {
+                        "type": "string",
+                        "enum": ["importance", "complexity", "churn", "name"],
+                        "default": "importance",
+                        "description": "Ranking axis for survivors.",
+                    },
+                    "order": {
+                        "type": "string",
+                        "enum": ["asc", "desc"],
+                        "default": "desc",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Hard cap on returned results.",
+                    },
+                },
+                "required": ["repo", "criteria"],
+            },
+        ),
         # --- Runtime tier-switch tools (always force-included below) ---------
-                                Tool(name='set_tool_tier', description='Set active tool tier for the session.', inputSchema={'type': 'object', 'properties': {'tier': {'type': 'string', 'enum': ['core', 'standard', 'full']}}, 'required': ['tier']}),
-                                Tool(name='announce_model', description='Register active AI engine tier for current session.', inputSchema={'type': 'object', 'properties': {'model': {'type': 'string', 'description': 'Your active model identifier,.'}}, 'required': ['model']}),
-                                Tool(name='jcodemunch_guide', description='Return current server policy and usage guide.', inputSchema={'type': 'object', 'properties': {}}),
+        Tool(
+            name="set_tool_tier",
+            description=(
+                "Explicit tier override for the current session. "
+                "Narrows or widens the exposed tool list to 'core' / 'standard' / 'full'. "
+                "Prefer plan_turn(model=...) for routine per-task use; use "
+                "set_tool_tier only when you need an explicit override (e.g. escalate "
+                "mid-task to 'full' after a capability-gated failure)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "tier": {
+                        "type": "string",
+                        "enum": ["core", "standard", "full"],
+                    },
+                },
+                "required": ["tier"],
+            },
+        ),
+        Tool(
+            name="announce_model",
+            description=(
+                "Agent self-reports its active model identifier. Server resolves to a "
+                "tier via model_tier_map (fuzzy: normalize → exact → glob → substring "
+                "→ '*' → 'full') and narrows the exposed tool list accordingly. "
+                "Idempotent: a second call with the same model is a cheap no-op. "
+                "Prefer calling plan_turn(model=...) for routine per-task use; use "
+                "announce_model as a fallback when plan_turn is not appropriate for "
+                "the current task."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "model": {"type": "string", "description": "Your active model identifier, e.g. 'claude-haiku-4-5'."},
+                },
+                "required": ["model"],
+            },
+        ),
+        Tool(
+            name="jcodemunch_guide",
+            description=(
+                "Return the version-current CLAUDE.md / AGENT.md policy snippet for "
+                "jcodemunch-mcp — the same text produced by `jcodemunch-mcp claude-md "
+                "--generate`. Lets an agent keep a one-line CLAUDE.md (e.g. \"Call "
+                "jcodemunch_guide and strictly follow its instructions.\") instead of "
+                "pasting a static snippet that drifts from the installed version. "
+                "Idempotent, no repo context required. Matches the active tool "
+                "surface, tier and disabled_tools — list 'jcodemunch_guide' in "
+                "disabled_tools to hide it."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {},
+            },
+        ),
     ]
     # --- The Counter: register the front door + capture the raw catalog ------
     all_tools = all_tools + _counter_front_door_tools()
@@ -1900,31 +4989,14 @@ def _delivery_entries(name: str, result):
 
 
 async def _handle_counter_tool(name: str, arguments: dict) -> list[TextContent]:
-    """Dispatch the Counter front door (order / menu / route / get_tool_details)."""
+    """Dispatch the Counter front door (order / menu / route)."""
     if name == "order":
         return await _handle_order(arguments)
     if name == "menu":
         return _handle_menu(arguments)
     if name == "route":
         return await _handle_route(arguments)
-    if name == "get_tool_details":
-        return _handle_get_tool_details(arguments)
     return [TextContent(type="text", text=json.dumps({"error": f"Unknown front-door tool '{name}'"}))]
-
-
-def _handle_get_tool_details(arguments: dict) -> list[TextContent]:
-    """get_tool_details(name): Fetch full parameter schema and documentation for a tool/action."""
-    tool_name = arguments.get("name") or arguments.get("action")
-    if not tool_name or not isinstance(tool_name, str):
-        return [TextContent(type="text", text=json.dumps({"error": "get_tool_details requires a 'name' string."}, indent=2))]
-
-    for t in _raw_catalog_tools():
-        if t.name == tool_name:
-            details = _counter.get_tool_details(t.name, t.description or "", t.inputSchema or {})
-            return [TextContent(type="text", text=json.dumps(details, indent=2))]
-
-    return [TextContent(type="text", text=json.dumps({"error": f"Unknown tool or action '{tool_name}'."}, indent=2))]
-
 
 
 # Common arg-name aliases agents reach for when ordering an action without the
@@ -1939,14 +5011,11 @@ _ORDER_ARG_ALIASES: dict[str, tuple[str, ...]] = {
     "pattern": ("file_pattern",),
     "text": ("query",),
     "search": ("query",),
-    "symbol": ("symbol_id", "identifier"),
+    "symbol": ("symbol_id",),
     "symbols": ("symbol_ids",),
-    "id": ("symbol_id", "identifier"),
+    "id": ("symbol_id",),
     "ids": ("symbol_ids",),
-    "name": ("symbol_id", "identifier", "class_name"),
-    "class": ("class_name",),
 }
-
 
 
 def _order_action_properties(action: str) -> dict:
@@ -2057,7 +5126,7 @@ def _handle_menu(arguments: dict) -> list[TextContent]:
         "count": len(clean),
         "total_actions": len(_catalog_names()),
         "actions": clean,
-        "hint": "Dispatch with order(action, args). Inspect schema with get_tool_details(name). Get a task->action pick with route(task).",
+        "hint": "Dispatch with order(action, args). Get a task->action pick with route(task).",
     }
     return [TextContent(type="text", text=json.dumps(payload, separators=(",", ":")))]
 
@@ -2355,6 +5424,7 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent] | Cal
                 incremental=arguments.get("incremental", True),
                 extra_ignore_patterns=arguments.get("extra_ignore_patterns"),
                 progress_cb=_progress_cb,
+                max_size=arguments.get("max_size"),
             )
             _result_cache_invalidate()
         elif name == "index_folder":
@@ -2372,6 +5442,7 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent] | Cal
                     paths=arguments.get("paths"),
                     identity_mode=arguments.get("identity_mode", "config"),
                     progress_cb=_progress_cb,
+                    max_size=arguments.get("max_size"),
                 )
             )
             _result_cache_invalidate()
@@ -3069,6 +6140,7 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent] | Cal
                     file_pattern=arguments.get("file_pattern"),
                     storage_path=storage_path,
                     degeneracy_cutoff=arguments.get("degeneracy_cutoff"),
+                    entry_point_patterns=arguments.get("entry_point_patterns"),
                 )
             )
         elif name == "get_extraction_candidates":
@@ -4074,8 +7146,33 @@ async def _run_server_with_watcher(
 async def run_stdio_server():
     """Run the MCP server over stdio (default)."""
     import sys
+
+    import anyio
+
     from mcp.server.stdio import stdio_server
+
+    from .stdio_guard import claim_stdout
+
+    # Suite parity with jdoc#110. Take the real stdout for JSON-RPC and point
+    # fd 1 at stderr BEFORE anything else runs, so no library, thread or child
+    # process can reach the framed stream. `tools/embed_repo.py` builds a
+    # SentenceTransformer inside a tool call, and a first embed on a machine
+    # without the model cached downloads it mid-request.
+    #
+    # ⚠ This does NOT retire the handshake watchdog below. Chatter written by a
+    # launcher BEFORE this process starts — the uvx case that cost a paying
+    # client 5h+ — is already in the pipe and cannot be retracted after exec.
+    _private_stdout, _stdout_swapped = claim_stdout()
+
     print(f"jcodemunch-mcp {__version__} by jgravelle · https://github.com/jgravelle/jcodemunch-mcp", file=sys.stderr)
+    if not _stdout_swapped:
+        # ⚠ Worth saying out loud: this is the configuration where a stray
+        # library write can still corrupt a response.
+        print(
+            "[jcodemunch-mcp] could not isolate stdout for JSON-RPC; library "
+            "output on stdout may corrupt framing",
+            file=sys.stderr,
+        )
     logger.info(
         "startup version=%s transport=stdio storage=%s ai_summaries=%s",
         __version__,
@@ -4133,7 +7230,10 @@ async def run_stdio_server():
     _watchdog_task = asyncio.create_task(_handshake_watchdog())
 
     try:
-        async with stdio_server() as (read_stream, write_stream):
+        _stdout_arg = (
+            anyio.wrap_file(_private_stdout) if _private_stdout is not None else None
+        )
+        async with stdio_server(stdout=_stdout_arg) as (read_stream, write_stream):
             await server.run(
                 read_stream,
                 write_stream,

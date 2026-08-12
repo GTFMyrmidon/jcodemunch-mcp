@@ -1120,6 +1120,62 @@ example of it.
 
 ---
 
+## Split `server.py` — the dispatcher is past every reasonable file limit
+
+`src/jcodemunch_mcp/server.py` is **10,549 lines / ~513 KB**. On 2026-08-08 it
+crossed `DEFAULT_MAX_FILE_SIZE` (512,000 bytes) by **532 bytes**, and this
+project's own MCP entrypoint stopped entering this project's own index. The file
+grew another 1,239 bytes in the day it took to write #429 up.
+
+v1.108.269 shipped the observability and the escape hatch: an oversize file is
+now named in the indexing response instead of surfacing as a counter inside a
+refused verdict, `max_size` is reachable over MCP, and `index_repo` stopped
+hardcoding the cap. **None of that is this entry.** It made the repository
+navigable; the file is still the size it was.
+
+⚠ **Raising a limit is not a fix when the file is the problem.** The cap moved
+once already for this class of file (v1.108.193, then v1.108.197 for the
+per-project key). Moving it again buys the same amount of time and teaches the
+next person to move it a third time. `server.py` will cross whatever ceiling
+replaces 512 KB.
+
+⚠⚠ **This is the highest-blast-radius refactor available in this repository**,
+which is why it is a plan and not an in-flight issue. `server.py` owns tool
+registration, the `call_tool` dispatch chain, CLI subcommand dispatch, auth and
+rate-limit middleware, all three transports, and the Counter front door. Several
+guarantees are load-bearing *because* they sit at a single chokepoint —
+`evidence/producers.py` mints receipts from the `call_tool` chokepoint
+specifically so it is immune to early returns by construction, and the response
+size ceiling (#425) wraps that same dispatcher. A split that relocates a
+chokepoint without relocating its immunity argument silently voids it.
+
+It is also the most-edited file in the project, so any split is a merge-conflict
+event for every branch open at the time.
+
+### Close conditions
+
+- No single module in `src/jcodemunch_mcp/` exceeds `DEFAULT_MAX_FILE_SIZE`, with
+  the default cap **unchanged** — raising the limit does not satisfy this.
+- Indexing this repository reports `too_large: 0` and `complete: true`, so
+  absence is citable across the whole tree including the entrypoint.
+- The `call_tool` chokepoint keeps a single ingress. If dispatch is split, the
+  receipt-minting and response-cap wrappers still see every call, and a test
+  asserts an exit cannot bypass them.
+- Tool count and every `inputSchema` are byte-identical across the split. A
+  schema that changes shape during a file move is a surface change wearing a
+  refactor's clothes.
+
+### Provenance
+
+Found in-house and filed by jjg as
+[#429](https://github.com/jgravelle/jcodemunch-mcp/issues/429) on 2026-08-08,
+alongside the two defects that shipped as v1.108.269. Parked here rather than
+left open per the standing rule that an issue opens when work starts or a user is
+blocked; accepted design with no start date is a plan. #429's close comment
+points here, so the promise that this is tracked resolves to a real entry.
+
+---
+
 ## Conventions
 
 - Entries here are **accepted**, not speculative. A rejected proposal gets a

@@ -1,0 +1,19 @@
+{
+  "_comment": "Task flow for the Codex tool-surface arms. Multi-step with context carried across steps, because the fixed schema cost is paid per request and only compounds over a session. A single-question flow understates it and is not what the r/codex benchmark measured.",
+  "target_repo": {
+    "url": "https://github.com/tiangolo/fastapi",
+    "commit": "a9134f62683a7df133cd901b748169879e53dac4",
+    "_comment": "Pin an exact commit before publishing any number. Indexing whatever main points at today measures a different corpus. Any mid-size repo works; FastAPI is here because benchmarks/results.md already uses it, so corpus characteristics are documented.",
+    "pinned_on": "2026-08-10",
+    "py_files_at_pin": 1136
+  },
+  "steps": [
+    "Which module defines the dependency injection resolution logic, and what is the entry point function?",
+    "Trace how a path operation's dependencies get resolved at request time. Name the functions in call order.",
+    "What happens if two dependencies in the same request declare the same sub-dependency? Point at the code that decides.",
+    "Where is the response model applied to the return value, and what does it do when the returned object has extra fields?",
+    "If I changed the signature of the dependency cache key, what else would need to change? List the files.",
+    "Summarize what you learned about this codebase's request lifecycle in under 200 words."
+  ],
+  "_step_notes": "Steps are read-only comprehension tasks with increasing dependence on earlier context. No edits, so every arm runs under sandbox=read-only and no arm can perturb the tree for another. Deliberately answerable without running the code, so a lane that cannot execute is not penalised."
+}

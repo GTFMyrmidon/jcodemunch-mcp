@@ -65,6 +65,15 @@ ROUTES = ["env_var", "global_config", "project_config"]
 def route(request, monkeypatch, tmp_path):
     """Set the cap the way the docs say to, then undo it."""
     which = request.param
+
+    # ⚠ Pin storage BEFORE any load_config() below (#437). A bare load_config()
+    # resolves to CODE_INDEX_PATH or ~/.code-index/config.jsonc, so it reads the
+    # DEVELOPER's real config straight past conftest's _reset_global_config, and
+    # auto-creates the file when it is missing. @lilubot hit the read half as
+    # three failures on PR #433 and reasonably concluded it was their machine.
+    # Pinned for every route, not just env_var, so no future branch can reopen it.
+    monkeypatch.setenv("CODE_INDEX_PATH", str(tmp_path / "storage"))
+
     project = _make_project(tmp_path)
 
     if which == "env_var":

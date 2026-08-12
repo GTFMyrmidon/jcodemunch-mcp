@@ -205,6 +205,22 @@ def _detect_vocabulary_gap(by_qh: "dict[str, list[tuple]]") -> list[dict]:
     identity matching ran, and ``suggest_corrections`` turns these clusters into
     config patches shown to the user. Rows whose semantic label is not evidence
     cannot support this signal, so they are dropped from it.
+
+    ⚠⚠ v1.108.272 (#440). The same conjunction was satisfied by construction on the
+    semantic ``search_symbols`` exit, and that one the v1.108.186 rule does NOT
+    refuse. That exit passed ``semantic_used=True`` literally while its ledger input
+    carried no identity key, so both halves held on every such row by defect rather
+    than by measurement. The floors keep it from firing on a single row
+    (``VOCAB_CONF_FLOOR``, ``VOCAB_RECUR``), but for any repeated query above the
+    confidence floor the signal was reporting a vocabulary gap it had not tested,
+    and ``suggest_corrections`` turned those clusters into config patches shown to
+    the user.
+
+    Producers now record a measured ``identity_hit`` at both non-fusion exits, so
+    new rows test the condition for real. ⚠ Rows written before v1.108.272 are NOT
+    separable — see ``ledger_trust.identity_label_is_trustworthy`` — so this signal
+    stays contaminated for those until the recency window ages them out. Reported by
+    @rknighton.
     """
     out = []
     for qh, rows in by_qh.items():

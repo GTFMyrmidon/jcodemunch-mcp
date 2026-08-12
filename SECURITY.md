@@ -79,9 +79,20 @@ Secret files are never stored in the index or cached content directory.
 
 ## File Size Limits
 
-* **Default maximum:** 500 KB per file (configurable via `max_file_size`).
-* Files exceeding the limit are skipped during discovery.
+* **Default maximum:** 500 KB per file (configurable via `max_file_size` in config, the `JCODEMUNCH_MAX_FILE_SIZE` environment variable, or the `max_size` argument on a single `index_folder` / `index_repo` call).
+* Files exceeding the limit are skipped during discovery, and the indexing response names them in `warnings`. A skipped file is treated as **withheld**, not excluded: coverage reports `complete: false` and absence claims over the corpus are refused, because "we never read that file" and "that symbol does not exist" are different answers.
 * A configurable **file count limit** (default: 500 files) prevents runaway indexing of extremely large repositories. Can be overridden using the `JCODEMUNCH_MAX_INDEX_FILES` environment variable.
+
+---
+
+## Cache Directories
+
+* jCodeMunch honours the [Cache Directory Tagging Specification](https://bford.info/cachedir/). A directory containing a `CACHEDIR.TAG` file whose first 43 bytes are `Signature: 8a477f597d28d172789f06886806bc55` is pruned from the walk along with everything beneath it.
+* **The signature is verified.** A file merely named `CACHEDIR.TAG` excludes nothing.
+* This is the only exclusion rule declared by the *writer* of a directory rather than listed by us, so a tool that writes derived data into your tree is honoured without jCodeMunch knowing its name, and it applies to cache directories that are not dot-directories.
+* Pruned directories are counted as `cache_dir` in `discovery_skip_counts`. This is an ordinary exclusion, not a withholding: a tagged directory is regenerable derived data by its own declaration, so absence claims over the remaining corpus stay citable.
+* Disable with `respect_cachedir_tag: false` or `JCODEMUNCH_RESPECT_CACHEDIR_TAG=0` if you tag a directory you nonetheless want indexed.
+* Applies to local folder indexing. GitHub repository indexing does not honour the tag, because validating the signature requires the file's content and the tree listing carries only paths and sizes.
 
 ---
 

@@ -104,6 +104,13 @@ class _State:
         self._session_calls: int = 0
         self._session_start: float = time.monotonic()
         self._session_tool_breakdown: dict = {}
+        # Calls per tool, beside tokens per tool. Savings has TWO carriers and
+        # this one was invisible: `baseline = actual x multiplier` is computed
+        # per call, so reported savings rises monotonically with call count.
+        # Without this map, a session that saved tokens per call while tripling
+        # the number of calls reads as a pure win. See arXiv 2608.01347, which
+        # measures tool-borne waste separately from token-borne waste.
+        self._session_tool_calls: dict = {}
         # Session-level tool-result cache (LRU, evicted at _RESULT_CACHE_MAXSIZE)
         self._result_cache: OrderedDict = OrderedDict()  # (tool, repo, key) -> result
         self._cache_hits: dict = {}    # tool_name -> hit count
@@ -176,6 +183,9 @@ class _State:
             if tool_name:
                 self._session_tool_breakdown[tool_name] = (
                     self._session_tool_breakdown.get(tool_name, 0) + delta
+                )
+                self._session_tool_calls[tool_name] = (
+                    self._session_tool_calls.get(tool_name, 0) + 1
                 )
             self._call_count += 1
             if self._call_count >= _FLUSH_INTERVAL:
@@ -482,6 +492,15 @@ class _State:
             "session_response_tokens": self._session_response_tokens,
             "total_tokens_saved": self._total,
             "tool_breakdown": dict(self._session_tool_breakdown),
+            # Sibling of tool_breakdown, not a replacement: tool_breakdown is
+            # tokens per tool and has consumers. Reported savings scales with
+            # call count by construction, so tokens alone cannot distinguish
+            # "did more with less" from "made more calls".
+            "tool_calls": dict(self._session_tool_calls),
+            "savings_per_call": (
+                round(self._session_tokens / self._session_calls, 1)
+                if self._session_calls else 0.0
+            ),
             "result_cache": cache_stats,
             "latency_per_tool": self._latency_stats_locked(),
         }

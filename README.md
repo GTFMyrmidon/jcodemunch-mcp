@@ -136,7 +136,7 @@ Want to skip initial indexing for popular frameworks? Pre-built **starter packs*
 - **Retrieve one symbol instead of loading a file.** `get_symbol_source` returns the exact function body, byte-precise, for the majority of edits that touch one function in a 700-line file (~95% savings on that read).
 - **Assemble a whole task's context in one call.** `assemble_task_context` classifies the task intent, extracts anchor symbols, and runs the right tool sequence under one token budget. `plan_turn` routes the turn before the first read.
 - **Ask structural questions grep can't answer.** `find_importers`, `get_blast_radius`, `get_call_hierarchy`, `find_dead_code`, `get_changed_symbols`, `get_hotspots`, `search_ast` anti-pattern sweeps, and more.
-- **Preflight risky changes.** `check_edit_safe`, `check_delete_safe`, `get_pr_risk_profile`, and `plan_refactoring` with edit-ready `{old_text, new_text}` blocks.
+- **Preflight risky changes, and know when to stop.** `check_edit_safe`, `check_delete_safe`, `get_pr_risk_profile`, and `plan_refactoring` with edit-ready `{old_text, new_text}` blocks. The two safety checks return `stop_rule.terminal`: true means no further jcodemunch call moves the verdict, so re-running `find_importers` or `check_references` to be sure is wasted work. It means final, not safe. False names the specific thing that would change the answer.
 - **Trust the answers.** Calibrated confidence scores, freshness flags, coverage contracts on absence claims, compiler-verified references via SCIP import, and automatic secret redaction before anything reaches the LLM.
 - **Keep the index fresh automatically.** Watch modes, agent hooks, and a VS Code extension close the staleness gap.
 
@@ -145,9 +145,9 @@ That's the highlight reel. The complete tour of 90+ tools, the MUNCH compact wir
 <!-- WHATSNEW:START -->
 #### What's new
 
-- **[v1.108.267](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.267)** (2026-08-08) — Kotlin and Bash constants are extracted, and a declared pattern must now prove itself
-- **[v1.108.266](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.266)** (2026-08-08) — A blank line inside a table cell no longer truncates it
-- **[v1.108.265](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.265)** (2026-08-08) — Retrieval confidence grades ranking quality, not units
+- **[v1.108.273](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.273)** (2026-08-12) — A pattern that names two extensions and matches neither
+- **[v1.108.272](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.272)** (2026-08-12) — A column recorded on the wrong exit is not a measurement
+- **[v1.108.271](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.271)** (2026-08-10) — A stock Nuxt 4 project is not an empty one, and advice you cannot follow is worse than none
 <!-- WHATSNEW:END -->
 
 ---

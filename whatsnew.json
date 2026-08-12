@@ -1,23 +1,23 @@
 {
-  "current": "1.108.267",
+  "current": "1.108.273",
   "entries": [
     {
-      "version": "1.108.267",
-      "date": "2026-08-08",
-      "title": "Kotlin and Bash constants are extracted, and a declared pattern must now prove itself",
-      "summary": "Reported by @mussonking (#428) against Rust, confirmed across six languages."
+      "version": "1.108.273",
+      "date": "2026-08-12",
+      "title": "A pattern that names two extensions and matches neither",
+      "summary": "v1.108.271 fixed [#435](https://github.com/jgravelle/jcodemunch-mcp/issues/435) for the `nuxt` and `nestjs` profiles by rewriting their `entry_point_patterns` as brace alternation (`{ts,js}`, `{ts,js,mjs}`). The consumer is `fnmatch`, which expands no braces: `fnmatch.translate(\"src/main.{ts,js}\")` yields `(?s:src/main\\.\\{ts,js\\})\\Z`,"
     },
     {
-      "version": "1.108.266",
-      "date": "2026-08-08",
-      "title": "A blank line inside a table cell no longer truncates it",
-      "summary": "Silent data corruption in the MUNCH decoder. Found in-house."
+      "version": "1.108.272",
+      "date": "2026-08-12",
+      "title": "A column recorded on the wrong exit is not a measurement",
+      "summary": "Reported by [@rknighton](https://github.com/rknighton), with a reproduction that runs the same query down two exits and prints the two rows side by side: the default path recorded `identity_hit=0` on an exact symbol-name match while `search_symbols_fusion` recorded `1` for the same query and the same top result."
     },
     {
-      "version": "1.108.265",
-      "date": "2026-08-08",
-      "title": "Retrieval confidence grades ranking quality, not units",
-      "summary": "Found while fixing the same defect in jdocmunch ([#106](https://github.com/jgravelle/jdocmunch-mcp/issues/106)) and checking whether the siblings shared it. jcodemunch did. jdatamunch does not \u2014 it has no confidence surface and blends linearly, so this is a two-server defect rather"
+      "version": "1.108.271",
+      "date": "2026-08-10",
+      "title": "A stock Nuxt 4 project is not an empty one, and advice you cannot follow is worse than none",
+      "summary": "Two defects, both found by reading a contributor's pull request rather than by a report."
     }
   ]
 }

@@ -43,12 +43,66 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0    # need full history for index + base checkout
-      - uses: jgravelle/jcodemunch-mcp/.github/actions/health-radar@v1.88.0
+          # Full history. churn_surface is measured from `git log`, so a
+          # shallow checkout changes what the number means. The action
+          # unshallows both sides itself, but doing it here is cheaper.
+          fetch-depth: 0
+      - uses: jgravelle/jcodemunch-mcp/.github/actions/health-radar@health-radar-v1
 ```
 
 That's the whole setup. The action handles install, index, base/branch
 toggling, and comment posting itself.
+
+`@health-radar-v1` is the floating tag, so fixes reach you without a pin
+bump. That is the right default for a suggestion-style action that never
+gates a merge. If you'd rather audit exactly what runs, take an immutable
+pin instead; see [Versioning](#versioning).
+
+## Versioning
+
+The action is tagged in its own `health-radar-vX.Y.Z` namespace, separate
+from the `vX.Y.Z` package release tags. A package release does not imply
+an action change, and this action's behaviour should not shift because
+the Python package shipped a patch.
+
+Two ways to reference it, and the tradeoff is the usual one:
+
+```yaml
+# Floating, and the default in the usage example above. Tracks the newest
+# 1.x, so fixes arrive without a pin bump, and so does anything else that
+# lands.
+- uses: jgravelle/jcodemunch-mcp/.github/actions/health-radar@health-radar-v1
+
+# Immutable. Never changes under you. You update deliberately.
+- uses: jgravelle/jcodemunch-mcp/.github/actions/health-radar@health-radar-v1.0.1
+```
+
+`health-radar-v1` always points at the newest `health-radar-v1.Y.Z`. It is
+the only tag in this namespace that moves, and choosing it is opting into
+that. If you want to audit what you run, take the immutable pin.
+
+⚠ The floating tag is a maintenance obligation, not a free convenience.
+It is worth naming what it costs: it has to be moved by hand on every
+action change, and nothing fails if that is forgotten. Tags are not
+reliably present in a CI checkout, so a guard test would be either
+skippable or flaky, and a guard nobody can see fail is one nobody should
+believe. The instructions live at the top of `action.yml`, where whoever
+changes the file will see them.
+
+⚠ **`@v1.88.0` is superseded and should not be used.** It fetched the base
+branch with `git fetch --depth=1`, which shortens an already complete clone
+rather than merely limiting a download. `churn_surface` is
+`complexity x log(1 + churn)` with churn counted by `git log --since=<N>
+days ago`, so the base saw one commit, scored every file at churn <= 1, and
+came back artificially healthy. Every PR was then charged for the gap.
+Measured at a single commit with identical trees on both sides: shallow
+82.2 (B) against full 75.5 (C), with `churn_surface` the only axis that
+moved. If you pinned `@v1.88.0`, every regression verdict it posted on
+`churn_surface` is suspect.
+
+That tag is deliberately not moved. Repointing a published tag at different
+code is worse than leaving a known-bad one in place, because it breaks the
+one guarantee pinning offers.
 
 ## Inputs
 
@@ -102,6 +156,13 @@ The composite is the arithmetic mean of every scored axis;
 - **`coupling` axis penalises high import fan-out**, which can be
   legitimate in framework-style codebases. Treat the absolute number
   as suggestive; the *delta* is what matters at PR time.
+- **`churn_surface` needs full git history on both sides.** It is
+  `complexity x log(1 + churn)`, and churn is counted by
+  `git log --since=<N> days ago`. A shallow checkout collapses churn to
+  at most 1 per file, so whichever side is shallow scores artificially
+  healthy and the *other* side reads as a regression. The action now
+  unshallows both sides itself, but `fetch-depth: 0` in your checkout
+  step is still the cheaper way to get there.
 
 ## Disabling
 

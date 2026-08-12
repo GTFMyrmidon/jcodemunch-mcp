@@ -115,24 +115,62 @@ class NuxtContextProvider(ContextProvider):
                 return True
         return False
 
+    def _resolve_src_dir(self, folder_path: Path) -> str:
+        """Return the srcDir prefix, relative and slash-normalised ("" = root).
+
+        Nuxt 4 changed the DEFAULT srcDir to `app/`, so a stock Nuxt 4 project
+        keeps pages at `app/pages/` while Nuxt 3 keeps them at `pages/`. Both
+        are defaults of a current major version, and `srcDir` is configurable on
+        top of that, so neither a fixed path nor a two-way probe is sufficient.
+
+        Config wins when it says something, because it is the actual answer.
+        Probing is the fallback and is an APPROXIMATION: it infers the layout
+        from which directories exist. `server/` is deliberately not consulted,
+        because it stays at the project root in the Nuxt 4 default.
+        """
+        for config_name in ("nuxt.config.ts", "nuxt.config.js", "nuxt.config.mjs"):
+            cfg = folder_path / config_name
+            if not cfg.exists():
+                continue
+            try:
+                content = cfg.read_text("utf-8", errors="replace")
+            except OSError:
+                continue
+            m = re.search(r"""\bsrcDir\s*:\s*['"]([^'"]+)['"]""", content)
+            if m:
+                return m.group(1).strip().strip("/").removeprefix("./")
+
+        # Fallback probe. Require a Nuxt-shaped child rather than merely an
+        # `app/` directory: plenty of projects have an unrelated `app/`, and
+        # guessing wrong here relocates the whole parse.
+        app = folder_path / "app"
+        if app.is_dir() and any(
+            (app / child).exists()
+            for child in ("pages", "app.vue", "components", "composables", "layouts")
+        ):
+            return "app"
+        return ""
+
     def load(self, folder_path: Path) -> None:
         if self._folder is None:
             self._folder = folder_path
 
-        self._parse_pages(folder_path)
-        self._parse_server_api(folder_path)
-        self._build_auto_import_map(folder_path)
+        src_dir = self._resolve_src_dir(folder_path)
+        self._parse_pages(folder_path, src_dir)
+        self._parse_server_api(folder_path, src_dir)
+        self._build_auto_import_map(folder_path, src_dir)
         self._build_auto_import_edges(folder_path)
 
-    def _parse_pages(self, folder_path: Path) -> None:
-        """Parse pages/ directory for file-based routing."""
-        pages_dir = folder_path / "pages"
+    def _parse_pages(self, folder_path: Path, src_dir: str = "") -> None:
+        """Parse the pages/ directory (under srcDir) for file-based routing."""
+        prefix = f"{src_dir}/pages" if src_dir else "pages"
+        pages_dir = folder_path / prefix
         if not pages_dir.is_dir():
             return
 
         for vue_file in sorted(pages_dir.rglob("*.vue")):
             rel_path = str(vue_file.relative_to(folder_path)).replace("\\", "/")
-            route = _nuxt_route_from_path(rel_path)
+            route = _nuxt_route_from_path(rel_path, prefix)
 
             # Extract dynamic params
             params = re.findall(r":(\w+)", route)
@@ -155,9 +193,18 @@ class NuxtContextProvider(ContextProvider):
 
         logger.info("Nuxt: parsed %d page routes", len(self._route_metadata))
 
-    def _parse_server_api(self, folder_path: Path) -> None:
-        """Parse server/api/ directory for API route handlers."""
+    def _parse_server_api(self, folder_path: Path, src_dir: str = "") -> None:
+        """Parse server/api/ for API route handlers.
+
+        Root-first, and that is not an oversight: in the Nuxt 4 default layout
+        `server/` stays at the project ROOT while everything else moves under
+        `app/`. The srcDir-relative probe is a strictly additive fallback for
+        layouts that do nest it (Nuxt 3 with a custom srcDir), tried only when
+        the root directory is absent, so it cannot change the Nuxt 4 result.
+        """
         api_dir = folder_path / "server" / "api"
+        if not api_dir.is_dir() and src_dir:
+            api_dir = folder_path / src_dir / "server" / "api"
         if not api_dir.is_dir():
             return
 
@@ -179,10 +226,16 @@ class NuxtContextProvider(ContextProvider):
 
         logger.info("Nuxt: parsed %d server API routes", len(self._api_metadata))
 
-    def _build_auto_import_map(self, folder_path: Path) -> None:
-        """Scan composables/ and utils/ for exported function names."""
+    def _build_auto_import_map(self, folder_path: Path, src_dir: str = "") -> None:
+        """Scan composables/ and utils/ (under srcDir) for exported names.
+
+        Both directories move under `app/` in the Nuxt 4 default layout. When
+        this map comes back empty `_build_auto_import_edges` returns early, so
+        missing it costs every synthetic edge that makes Nuxt's implicit imports
+        visible, not just the symbol names.
+        """
         for auto_dir in ("composables", "utils"):
-            dir_path = folder_path / auto_dir
+            dir_path = folder_path / src_dir / auto_dir if src_dir else folder_path / auto_dir
             if not dir_path.is_dir():
                 continue
             for src_file in sorted(dir_path.rglob("*")):

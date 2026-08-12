@@ -207,6 +207,54 @@ SKIP_DIRECTORIES: list[str] = _SKIP_DIRECTORY_NAMES + [
 SKIP_FILES: list[str] = list(_SKIP_FILE_PATTERNS)
 
 
+# ── Cache Directory Tagging Specification (https://bford.info/cachedir/) ──────
+#
+# A directory declares ITSELF a cache by containing a `CACHEDIR.TAG` whose first
+# 43 bytes are exactly the signature below. This is the one exclusion rule in
+# this file that is not ours: the writer of the cache declares it, and any
+# reader that knows the standard honours it without knowing who wrote it.
+#
+# ⚠⚠ The signature check is the whole point and MUST NOT be reduced to "a file
+# with that name exists". A name-only check is an assertion about one instance
+# of the property rather than the property, which is exactly the mistake that
+# produced the defect this rule was written to answer (#429 and its neighbours:
+# jdoc pinned a `.txt` suffix, we pinned a node type, both read as coverage).
+# The spec says first 43 bytes; anything looser silently excludes a directory
+# that merely has a file by that name.
+CACHEDIR_TAG_FILENAME = "CACHEDIR.TAG"
+CACHEDIR_TAG_SIGNATURE = b"Signature: 8a477f597d28d172789f06886806bc55"
+
+
+def is_cache_directory(path) -> bool:
+    """True when ``path`` declares itself a cache directory per the spec.
+
+    Reads at most 43 bytes and never raises: an unreadable or absent tag means
+    "not a cache", so a permission error can never silently empty a corpus.
+
+    ⚠ Deliberately NOT a withheld exclusion. A tagged directory holds derived,
+    regenerable data BY THE WRITER'S OWN DECLARATION, which puts it in the same
+    class as `gitignore` and `wrong_extension` — the corpus being defined, not
+    a file we refused. Absence claims over the remaining corpus stay citable.
+    ``respect_cachedir_tag: false`` is the opt-out for anyone who tags a
+    directory they nonetheless want indexed.
+    """
+    try:
+        with open(os.path.join(str(path), CACHEDIR_TAG_FILENAME), "rb") as fh:
+            return fh.read(len(CACHEDIR_TAG_SIGNATURE)) == CACHEDIR_TAG_SIGNATURE
+    except (OSError, ValueError):
+        return False
+
+
+def get_respect_cachedir_tag(repo: Optional[str] = None) -> bool:
+    """Whether the walk honours `CACHEDIR.TAG`. Default True.
+
+    Only an explicit false disables it, so a typo or a garbage value keeps the
+    standard honoured rather than silently re-admitting cache trees.
+    """
+    value = _config.get("respect_cachedir_tag", True, repo=repo)
+    return False if value is False else True
+
+
 def _excluded_skip_directories() -> set[str]:
     """Return the set of directory names the user wants to un-skip."""
     raw = _config.get("exclude_skip_directories", [])

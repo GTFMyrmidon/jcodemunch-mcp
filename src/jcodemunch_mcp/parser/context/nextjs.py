@@ -1,9 +1,10 @@
 """Next.js context provider — detects Next.js projects and enriches symbols with framework metadata.
 
 When a Next.js project is detected (via next.config.js/ts/mjs), this provider:
-1. Parses app/ for App Router file-based routing → enriches components with route metadata
-2. Parses app/api/ for API route handlers → enriches with endpoint metadata
-3. Detects middleware.ts at project root
+1. Parses the App Router directory (app/ or src/app/) for file-based routing
+   → enriches components with route metadata
+2. Parses <app dir>/api/ for API route handlers → enriches with endpoint metadata
+3. Detects middleware.ts at the project root (or src/ for src-layout projects)
 4. Exposes route metadata via get_metadata()
 """
 
@@ -75,10 +76,12 @@ def _next_api_methods_from_content(content: str) -> list[str]:
 class NextjsContextProvider(ContextProvider):
     """Context provider for Next.js projects (App Router).
 
-    Detects next.config.js/ts/mjs, then parses:
-    - app/**/page.tsx    → page routes with route metadata
-    - app/**/layout.tsx  → layout nesting
-    - app/api/**/route.ts → API handlers with HTTP methods
+    Detects next.config.js/ts/mjs, then parses (app/ or src/app/ — both
+    official layouts; a root app/ or pages/ directory makes Next.js ignore
+    src/ entirely, and parsing matches):
+    - <app>/**/page.tsx    → page routes with route metadata
+    - <app>/**/layout.tsx  → layout nesting
+    - <app>/api/**/route.ts → API handlers with HTTP methods
     """
 
     def __init__(self) -> None:
@@ -102,14 +105,30 @@ class NextjsContextProvider(ContextProvider):
         if self._folder is None:
             self._folder = folder_path
 
-        self._parse_app_router(folder_path)
-        self._parse_middleware(folder_path)
+        # Root directories win: when app/ or pages/ exists at the project
+        # root, Next.js ignores src/ entirely
+        # (https://nextjs.org/docs/app/api-reference/file-conventions/src-folder).
+        # Resolved once, here, so the router and middleware parsers share one
+        # precedence rule and cannot drift apart.
+        src_ignored = (folder_path / "app").is_dir() or (folder_path / "pages").is_dir()
 
-    def _parse_app_router(self, folder_path: Path) -> None:
-        """Parse app/ directory for pages, layouts, and API routes."""
-        app_dir = folder_path / "app"
-        if not app_dir.is_dir():
-            return
+        self._parse_app_router(folder_path, src_ignored)
+        self._parse_middleware(folder_path, src_ignored)
+
+    def _parse_app_router(self, folder_path: Path, src_ignored: bool) -> None:
+        """Parse the App Router directory (app/ or src/app/)."""
+        # Root app/ wins over src/app. A root pages/ directory (src_ignored
+        # without a root app/) means any src/app tree is dead — publishing
+        # it would invent routes, and inventing routes is a worse failure
+        # than missing them.
+        app_prefix = "app"
+        if not (folder_path / app_prefix).is_dir():
+            if src_ignored:
+                return
+            app_prefix = "src/app"
+            if not (folder_path / app_prefix).is_dir():
+                return
+        app_dir = folder_path / app_prefix
 
         for src_file in sorted(app_dir.rglob("*")):
             if src_file.suffix not in (".tsx", ".ts", ".jsx", ".js"):
@@ -119,7 +138,7 @@ class NextjsContextProvider(ContextProvider):
                 continue
 
             rel_path = str(src_file.relative_to(folder_path)).replace("\\", "/")
-            route = _next_route_from_path(rel_path)
+            route = _next_route_from_path(rel_path, app_prefix)
 
             if stem == "route":
                 # API route handler
@@ -168,9 +187,12 @@ class NextjsContextProvider(ContextProvider):
             len(self._route_metadata), len(self._api_metadata),
         )
 
-    def _parse_middleware(self, folder_path: Path) -> None:
-        """Detect middleware.ts at project root."""
-        for name in ("middleware.ts", "middleware.js"):
+    def _parse_middleware(self, folder_path: Path, src_ignored: bool) -> None:
+        """Detect middleware.ts at the project root (or src/, when src/ is live)."""
+        names = ("middleware.ts", "middleware.js")
+        if not src_ignored:
+            names += ("src/middleware.ts", "src/middleware.js")
+        for name in names:
             mw_path = folder_path / name
             if mw_path.exists():
                 try:

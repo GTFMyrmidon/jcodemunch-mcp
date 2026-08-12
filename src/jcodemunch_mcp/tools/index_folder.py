@@ -32,7 +32,9 @@ from ..security import (
     get_max_file_size,
     get_max_folder_files,
     get_extra_ignore_patterns,
+    get_respect_cachedir_tag,
     get_skip_directories,
+    is_cache_directory,
     SKIP_FILES
 )
 from ..storage import IndexStore
@@ -93,6 +95,7 @@ def _attach_cap_report(result: dict, cap: Optional[dict]) -> None:
         f"from the index. Raise max_folder_files in config.jsonc (or set "
         f"JCODEMUNCH_MAX_FOLDER_FILES) and re-index, or narrow the path."
     )
+
 
 #: Skip reasons where the file is REAL, CURRENT and WANTED, and we refused it
 #: anyway (v1.108.193, reported by @dkiaulakis). Every other reason describes a
@@ -401,6 +404,7 @@ class _IndexFilters:
     skip_dirs_regex: Optional[re.Pattern] = None
     check_binary: bool = True
     check_filename: bool = True
+    respect_cachedir_tag: bool = True
 
 
 def _build_index_filters(
@@ -413,6 +417,7 @@ def _build_index_filters(
     skip_dirs_regex: Optional[re.Pattern] = None,
     check_binary: bool = True,
     check_filename: bool = True,
+    respect_cachedir_tag: bool = True,
 ) -> _IndexFilters:
     """Bundle pre-computed filter config for ``_should_index_file``.
 
@@ -432,6 +437,7 @@ def _build_index_filters(
         skip_dirs_regex=skip_dirs_regex,
         check_binary=check_binary,
         check_filename=check_filename,
+        respect_cachedir_tag=respect_cachedir_tag,
     )
 
 
@@ -526,6 +532,13 @@ def _should_index_file(
             ancestor = ancestor / part
             if is_linked_worktree(ancestor):
                 return False, "nested_worktree", rel_path, None
+            # CACHEDIR.TAG on the fast path. The full walk prunes these in
+            # `os.walk`'s dirnames and never reaches here, exactly like the two
+            # checks above; this branch exists so a watchfiles event for a file
+            # that appeared inside a tagged cache does not enter the index by
+            # the back door. Third entry point, same rule as #429.
+            if cfg.respect_cachedir_tag and is_cache_directory(ancestor):
+                return False, "cache_dir", rel_path, None
 
     # 8. Gitignore (string-prefix specs, walk-order)
     if gitignore_specs and _is_gitignored_fast(resolved_str, gitignore_specs):
@@ -724,6 +737,7 @@ from ._utils import (
     PARSER_UPGRADE_WARNING,
     describe_unloadable_index,
     needs_parser_upgrade as _needs_parser_upgrade,
+    size_cap_warning as _size_cap_warning,
     stamp_incremental_outcome as _stamp_incremental_outcome,
 )
 from .package_registry import extract_package_names as _extract_package_names
@@ -1132,8 +1146,10 @@ def discover_local_files(
     _repo_key = str(root)
     max_size = get_max_file_size(max_size, repo=_repo_key)
     max_files = get_max_folder_files(max_files, repo=_repo_key)
+    respect_cachedir_tag = get_respect_cachedir_tag(repo=_repo_key)
     files = []
     warnings = []
+    oversize: list[str] = []
 
     skip_counts: dict[str, int] = {
         "skip_dir": 0,
@@ -1150,6 +1166,7 @@ def discover_local_files(
         "unreadable": 0,
         "binary": 0,
         "file_limit": 0,
+        "cache_dir": 0,
     }
 
     # Pre-compute string-based gitignore specs — built incrementally during
@@ -1194,6 +1211,7 @@ def discover_local_files(
         skip_dirs_regex=None,
         check_binary=True,
         check_filename=True,
+        respect_cachedir_tag=respect_cachedir_tag,
     )
 
     skip_dirs_regex = _build_skip_dirs_regex()
@@ -1206,15 +1224,23 @@ def discover_local_files(
         # index and burn the max_folder_files cap (#372).
         pruned = []
         worktrees = []
+        caches = []
         kept = []
         for d in dirnames:
             if skip_dirs_regex.match(d):
                 pruned.append(d)
             elif is_linked_worktree(dpath / d):
                 worktrees.append(d)
+            # A directory that declares ITSELF a cache, per the Cache Directory
+            # Tagging Specification. Checked last because it costs an open() and
+            # the two rules above are string/stat work; ordering is behaviour-
+            # neutral since a directory matching an earlier rule is pruned
+            # either way.
+            elif respect_cachedir_tag and is_cache_directory(dpath / d):
+                caches.append(d)
             else:
                 kept.append(d)
-        if pruned or worktrees:
+        if pruned or worktrees or caches:
             rel_dir = os.path.relpath(dirpath, root_str)
             for d in pruned:
                 skip_counts["skip_dir"] += 1
@@ -1224,6 +1250,9 @@ def discover_local_files(
                 logger.debug(
                     "SKIP nested_worktree: %s", os.path.join(rel_dir, d)
                 )
+            for d in caches:
+                skip_counts["cache_dir"] += 1
+                logger.debug("SKIP cache_dir: %s", os.path.join(rel_dir, d))
         dirnames[:] = kept
 
         # Load .gitignore for this directory BEFORE filtering its files so
@@ -1244,6 +1273,12 @@ def discover_local_files(
             )
             if not ok:
                 skip_counts[reason] = skip_counts.get(reason, 0) + 1
+                if reason == "too_large" and rel_path:
+                    # Collected, not warned per file: the aggregate lands once
+                    # after the walk (#429). `_should_index_file` deliberately
+                    # returns no warning here because the watcher fast path
+                    # shares it and fires per event.
+                    oversize.append(rel_path)
                 if warning is not None:
                     warnings.append(warning)
                 logger.debug(
@@ -1260,6 +1295,10 @@ def discover_local_files(
         len(files),
         skip_counts,
     )
+
+    _size_warning = _size_cap_warning(oversize, max_size)
+    if _size_warning is not None:
+        warnings.append(_size_warning)
 
     # File count limit with prioritization
     if len(files) > max_files:
@@ -1299,6 +1338,7 @@ def index_folder(
     progress_cb: "Optional[Callable[[int, int, str], None]]" = None,
     identity_mode: str = "config",
     force_reparse: bool = False,
+    max_size: Optional[int] = None,
 ) -> dict:
     """Index a local folder containing source code.
 
@@ -1329,6 +1369,16 @@ def index_folder(
             and the stored SYMBOLS are the thing that is wrong. It is the whole
             reason `index_folder(paths=[...])` could not be used to slice up a
             generation upgrade before this existed.
+        max_size: Per-file byte cap for this run, overriding config and the
+            default (#429). ``get_max_file_size`` has accepted this override
+            since v1.108.193, but no caller passed one and it reached no tool
+            schema, so over MCP — the transport every actual user is on — the
+            only route to the cap was editing a config file. Left None the
+            resolution order is unchanged: project ``.jcodemunch.jsonc``, then
+            global config / ``JCODEMUNCH_MAX_FILE_SIZE``, then the default.
+
+            ⚠ Per-call, so it does NOT persist. A repo with a permanently
+            oversize file wants the config key; this is for one run.
 
     Returns:
         Dict with indexing results.
@@ -1630,7 +1680,13 @@ def index_folder(
             # `repo=` for the same reason the two walks below take it: this is a
             # third discovery entry point, and a cap the project sets must reach
             # all three or the file appears on one route and vanishes on another.
-            _fast_max_size = get_max_file_size(repo=str(Path(walk_root).resolve()))
+            # `max_size` first for the same reason `repo=` is passed: this is
+            # the third discovery entry point, and a cap that reaches only two
+            # of them makes a file appear on one route and vanish on another
+            # (#429 follows the same rule the comment above states for repo).
+            _fast_max_size = get_max_file_size(
+                max_size, repo=str(Path(walk_root).resolve())
+            )
 
             def _fast_forced_paths() -> set:
                 for _c in changed_paths:
@@ -1653,6 +1709,9 @@ def index_folder(
                 skip_dirs_regex=_build_skip_dirs_regex(),
                 check_binary=False,
                 check_filename=True,
+                respect_cachedir_tag=get_respect_cachedir_tag(
+                    repo=str(Path(walk_root).resolve())
+                ),
             )
 
             # Branch detection for watcher fast-path
@@ -2008,12 +2067,14 @@ def index_folder(
                 walk_root,
                 list(paths),
                 max_files=max_files,
+                max_size=max_size,
                 follow_symlinks=follow_symlinks,
             )
         else:
             source_files, discover_warnings, skip_counts = discover_local_files(
                 walk_root,
                 max_files=max_files,
+                max_size=max_size,
                 extra_ignore_patterns=_merged_ignore or None,
                 follow_symlinks=follow_symlinks,
             )

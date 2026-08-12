@@ -1,3 +1,23 @@
+# ⚠ MAINTENANCE: editing this file creates a release obligation.
+#
+# External consumers pin `@health-radar-vX.Y.Z` or track `@health-radar-v1`.
+# A change here reaches NEITHER until it is tagged, which is how the
+# --depth=1 base fetch stayed live for consumers after it was fixed on main.
+#
+# On any change to this file:
+#   1. git tag -a health-radar-vX.Y.Z -m "..."      (immutable, new version)
+#   2. git tag -f health-radar-v1                    (floating, moves forward)
+#   3. git push origin health-radar-vX.Y.Z && git push -f origin health-radar-v1
+#
+# ⚠ NEVER repoint an existing health-radar-vX.Y.Z. The floating v1 is the only
+# tag here that moves, and consumers opt into that by choosing it. `v1.88.0`
+# is left pointing at the known-bad version deliberately; see README.md.
+#
+# This is a documented habit, not an enforced ratchet. Tags are not reliably
+# present in a CI checkout, so a guard test here would either be skippable
+# (and therefore invisible) or flaky. Treated as weaker than the ratchets in
+# tests/, and named as such rather than pretended otherwise.
+
 name: 'jCodeMunch Health Radar'
 description: >-
   Compute a six-axis code-health radar on the PR branch and the base branch,
@@ -61,6 +81,18 @@ runs:
           echo "base=$BASE" >> "$GITHUB_OUTPUT"
         fi
 
+    - name: Ensure full history on the PR side
+      # Symmetry with the base fetch below. A caller using actions/checkout's
+      # default `fetch-depth: 1` would otherwise hand us a shallow head and a
+      # deep base, which is the same churn asymmetry in the other direction.
+      # Our own caller already sets `fetch-depth: 0`, so this is a no-op here.
+      if: steps.base.outputs.skip != 'true'
+      shell: bash
+      run: |
+        if [ -f "$(git rev-parse --git-dir)/shallow" ]; then
+          git fetch --unshallow
+        fi
+
     - name: Compute radar on PR branch
       if: steps.base.outputs.skip != 'true'
       shell: bash
@@ -81,7 +113,21 @@ runs:
         ORIG_REF=$(git rev-parse HEAD)
         echo "$ORIG_REF" > "$RUNNER_TEMP/orig_ref"
 
-        git fetch origin "$BASE" --depth=1 || git fetch origin "$BASE"
+        # Both sides must see the SAME history depth. `git fetch --depth=1`
+        # does not merely limit what it downloads: run against an already
+        # complete clone it SHORTENS it, writing .git/shallow and dropping the
+        # repo to one reachable commit. `churn_surface` is
+        # complexity x log(1 + churn) with churn counted by
+        # `git log --since=<N> days ago`, so a one-commit base scores every
+        # file at churn <= 1 and the base comes back artificially healthy.
+        # Measured on this repo: 1390 commits / 482 in the last 90 days before
+        # the depth=1 fetch, 1 and 1 after. The same commit then grades B as a
+        # base and C as a head, and every PR is charged for the gap.
+        if [ -f "$(git rev-parse --git-dir)/shallow" ]; then
+          git fetch origin "$BASE" --unshallow
+        else
+          git fetch origin "$BASE"
+        fi
         git checkout "origin/$BASE" --quiet || git checkout "$BASE" --quiet
 
         # Re-index against the base tree.

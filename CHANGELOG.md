@@ -1,5 +1,400 @@
 # Changelog
 
+## [1.108.273] - 2026-08-12 - A pattern that names two extensions and matches neither
+
+### v1.108.271's #435 fix matched nothing ([#445](https://github.com/jgravelle/jcodemunch-mcp/issues/445))
+
+v1.108.271 fixed [#435](https://github.com/jgravelle/jcodemunch-mcp/issues/435) for
+the `nuxt` and `nestjs` profiles by rewriting their `entry_point_patterns` as brace
+alternation (`{ts,js}`, `{ts,js,mjs}`). The consumer is `fnmatch`, which expands no
+braces: `fnmatch.translate("src/main.{ts,js}")` yields `(?s:src/main\.\{ts,js\})\Z`,
+requiring a filename that literally contains `{ts,js}`.
+
+**The change did not add JavaScript coverage. It removed the TypeScript coverage
+that was working.**
+
+```
+profile  file                      v1.108.270  v1.108.271
+nestjs   src/main.ts               True        False
+nestjs   src/app.module.ts         True        False
+nuxt     plugins/a/b.ts            True        False
+nuxt     middleware/x/g.ts         True        False
+```
+
+`nestjs` is the worst case: its entire entry set was those two patterns, so a stock
+NestJS project went from two entry points to zero, and NestJS is TypeScript-first by
+convention. The failure direction is the one that matters here — a lost reachability
+seed does not error, it silently reports a genuine framework root as unreachable.
+
+⚠⚠ **The guard passed, and that is the more useful half of this.** The #435 sweep
+asks which extensions appear in a pattern *string*, and skipped brace patterns
+outright (`if "{" in glob: continue`) as already-covered. A pattern naming both `ts`
+and `js` satisfied a spelling check while matching no file on disk. **A test that
+inspects the shape of a fix cannot tell it from a plausible-looking non-fix.** The
+new tests run patterns against realistic scaffold paths through
+`_matches_any_pattern` — the real matcher both dead-code tools share — so they
+measure effect rather than spelling.
+
+⚠ **A second fnmatch surprise, pre-existing and not part of the regression:** `**/`
+translates to `(?>.*?/)` and therefore *requires* a slash, so `plugins/**/*.ts`
+matches `plugins/a/b.ts` but not `plugins/auth.ts`. Every profile using `**/` was
+missing files sitting directly in the named directory — the commonest layout there
+is. Fixed here too, since fixing braces alone would have left the patterns still
+missing the majority case.
+
+Both constraints now live in `_entry_globs` / `_entry_named`, which emit the flat
+and nested form for each extension, so a profile lists *where* its entry points live
+and never how to spell a glob. Explicit alternatives were chosen over teaching the
+matcher braces: that keeps the semantics of a user-facing parameter unchanged under
+the 1.x no-removal contract. Whether `entry_point_patterns` should *also* accept
+braces is a separate question — a caller copying these out of `context_metadata`
+hits the identical trap — and is not decided here.
+
+`nestjs`'s four `Layer` globs carried the same braces. No in-tree consumer reads
+them (`profile_to_meta` publishes them to callers), so that half is bad published
+data rather than a measured regression, and is corrected on the same reasoning:
+braces are wrong under a glob matcher and meaningless under a prefix one.
+
+### #435 closed: the `next` profile gained its JS/JSX counterparts
+
+The remainder of #435, deferred behind [PR #433](https://github.com/jgravelle/jcodemunch-mcp/pull/433)
+so as not to force a conflict onto a contributor's rebase. That PR merged
+2026-08-11, retiring the deferral, and the work landed here rather than on its own
+because doing it first would have propagated the brace defect to a third profile.
+
+`next` now covers Next.js's own extension sets — `js`/`jsx`/`ts`/`tsx` for pages and
+layouts, `js`/`ts` for route handlers and middleware — across both the root and
+`src/` layouts. Its entry in `_JS_VARIANT_EXEMPT` is deleted; the ratchet added in
+v1.108.271 is what forced the fix and the retirement to land together, and it worked
+exactly as designed.
+
+`tests/test_v1_108_273.py` (11), **6 fail against the shipped v1.108.272 profiles**;
+the 5 passing on both sides pin the `fnmatch` premises and the new helpers. One of
+them asserts a non-entry file is still not an entry point, because every other test
+here would also pass if the patterns had been replaced with `*`.
+
+## [1.108.272] - 2026-08-12 - A column recorded on the wrong exit is not a measurement
+
+### `identity_hit` was 0 on every non-fusion `search_symbols` row ([#440](https://github.com/jgravelle/jcodemunch-mcp/issues/440))
+
+Reported by [@rknighton](https://github.com/rknighton), with a reproduction that
+runs the same query down two exits and prints the two rows side by side: the
+default path recorded `identity_hit=0` on an exact symbol-name match while
+`search_symbols_fusion` recorded `1` for the same query and the same top result.
+
+Both non-fusion exits built a score-only list (`[{"score": s}]`) and handed it to
+`extract_ledger_features`, which reads `identity` / `identity_match` off the rows
+it is given. Neither key was present, so the feature was `False` by construction
+rather than by measurement — whatever the identity channel had actually found.
+
+⚠ **This is the same defect fixed for fusion in v1.108.187, and the comment left
+at that fix asserted the non-fusion paths were already correct.** They were not.
+They carried the value nowhere the reader looks: the lexical path folds it into
+the BM25 total inside `_bm25_score`, and with `debug=True` it appears nested under
+`score_breakdown`. That comment is corrected in place — a fix that misdescribes
+the code around it hides the next instance of its own bug.
+
+Both exits now build a ledger input through `_ledger_identity_rows`.
+
+⚠ **Recomputed rather than threaded out of scoring, and that is deliberate.**
+`semantic_only` skips the identity channel entirely (`idn = 0.0`), so reusing the
+scorer's value would keep recording a default dressed as a measurement — the very
+thing being fixed. Identity is a pure function of the symbol's name/id and the
+query, and only the top three rows are read, so this is three string comparisons.
+
+⚠ **The ledger rows are NOT fed to `attach_confidence`.** `compute_confidence`
+sniffs the same `identity` key when no `has_identity_match` is passed and scores
+it 1.0 known-true / 0.7 unknown, so sharing one input would move the published
+confidence of every non-fusion search. Recording a column must not move a number
+callers already read. A test asserts the published confidence is unchanged, and
+first asserts that feeding it the ledger rows *would* move it — otherwise the
+test proves nothing.
+
+⚠⚠ **The history is NOT repairable and no heuristic was invented for it.** Like
+`search_symbols_fusion`, these exits always passed `top1_score` and only omitted
+the identity key, so a pre-fix row is indistinguishable from an honest post-fix
+`0`. `identity_label_is_trustworthy` keeps returning `True` for them, and now
+says so. **`search_symbols` is the highest-volume producer in the ledger, so the
+contaminated share is far larger than the fusion case that predicate was written
+for** — the recency window is the only remedy, and the column is clean only for
+rows written after this release.
+
+Two consumers were reading it. `analyze_perf.identity_hits` undercounted by
+however many name matches those searches made. `regret`'s vocabulary-gap signal
+is the conjunction `not identity_hit and semantic_used`, and the semantic exit
+passed `semantic_used=True` literally, so **both halves held by defect** on every
+such row; above the confidence floor and the recurrence threshold, a signal that
+feeds user-visible `suggest_corrections` patches was reporting a vocabulary gap
+it had not tested. Both are correct for new rows and both stay contaminated for
+old ones.
+
+`tests/test_v1_108_272.py` (9). Verified non-vacuous by reverting only the two
+call sites against the same tree: 1 fails pre-fix, and the 8 that pass on both
+sides are the unit-level and no-heuristic controls.
+
+## [1.108.271] - 2026-08-10 - A stock Nuxt 4 project is not an empty one, and advice you cannot follow is worse than none
+
+Two defects, both found by reading a contributor's pull request rather than by
+a report.
+
+### Nuxt 4's default layout indexed zero routes ([#434](https://github.com/jgravelle/jcodemunch-mcp/issues/434))
+
+`NuxtContextProvider` probed `folder_path / "pages"` and returned when it was
+absent, while `detect()` passed on `nuxt.config.*` either way. Nuxt 4 changed
+the **default** `srcDir` to `app/`, so pages live at `app/pages/`. Every stock
+Nuxt 4 project therefore reported the framework as detected and **zero routes**,
+silently.
+
+That is the wrong direction of error for this project. A zero that cannot
+distinguish "this project has no routes" from "we looked in the wrong directory"
+is exactly what the absence contract exists to prevent.
+
+**It was found by reviewing [PR #433](https://github.com/jgravelle/jcodemunch-mcp/pull/433)**,
+which fixes the identical defect in the Next.js provider. @lilubot found a
+defect **class**; we had been treating it as one framework's problem. Nobody had
+reported the Nuxt half.
+
+**Three probes were wrong, not one.** `_parse_pages` and `_build_auto_import_map`
+(`composables/`, `utils/`) both move under `app/`. The auto-import one carries
+the knock-on cost: an empty map makes `_build_auto_import_edges` return early,
+so every synthetic edge that makes Nuxt's implicit imports visible disappears.
+
+⚠ **`_parse_server_api` was already correct and is untouched.** `server/` stays
+at the project root in the Nuxt 4 layout. Its srcDir-relative probe is a strictly
+additive fallback, tried only when the root directory is absent, so it cannot
+change the Nuxt 4 result.
+
+`_resolve_src_dir` reads `srcDir` from `nuxt.config.*` first, because that is the
+actual answer and `srcDir` is configurable beyond either default. Probing is the
+documented fallback, and it requires a **Nuxt-shaped child** (`pages`, `app.vue`,
+`components`, `composables`, `layouts`) rather than a bare `app/` directory:
+plenty of projects have an unrelated one, and guessing wrong relocates the entire
+scan, which is a worse failure than the one being fixed.
+
+The `nuxt` framework profile carried the same root assumption and now names both
+layouts, with `server/` deliberately not mirrored. `nestjs` gained the JavaScript
+variants it was missing across its entry points and all four layer globs
+([#435](https://github.com/jgravelle/jcodemunch-mcp/issues/435)).
+
+⚠ **The `next` profile is deliberately NOT included**, though #435 covers it. PR
+#433 edits those exact lines, and changing them underneath an open contributor
+pull request forces a conflict onto the rebase its author was asked for.
+`test_ts_patterns_carry_js_variants` exempts `next` **by name**, so the exemption
+is a visible thing to delete when #433 lands rather than a gap nobody notices.
+
+### `get_dead_code_v2` advised a parameter it did not accept ([#436](https://github.com/jgravelle/jcodemunch-mcp/issues/436))
+
+Two warnings told the caller to pass `entry_point_patterns`. The function had no
+such parameter, the MCP schema exposed none, and the dispatcher forwarded
+nothing. The parameter was real, but it belonged to `find_dead_code`; the text
+had been carried across without it.
+
+**Both warnings fire on the degenerate path**, which is the moment the tool is
+telling the caller its own answer is untrustworthy. `signal_warning` can be
+accompanied by "nothing can be returned" and then offer two remedies of which one
+did not exist. Remediation advice on the failure path is the last thing a caller
+can fall back on.
+
+The parameter now exists at all three layers and does real work: matched files
+join `extra_entries`, the same hook `package.json` roots already use, so Signal 1
+genuinely discriminates. Both warnings became conditional, so a caller who took
+the advice is not handed it again.
+
+⚠ `_matches_any_pattern` is **imported from `find_dead_code`**, never
+reimplemented. Two definitions of what a pattern means would be this defect in a
+new costume, and a test asserts the two are the identical object.
+
+⚠⚠ **`fnmatch` does not treat `**` as recursive.** `handlers/**/*.py` does **not**
+match `handlers/h.py`. Use `handlers/*.py` for one level, or a bare filename to
+match at any depth. The schema description says so, because its first draft used
+exactly the pattern that does not work as its example.
+
+**The general guard is worth more than the instance.**
+`test_advised_parameter_exists_on_the_tool_that_advises_it` walks every tool
+module's AST, extracts each `Pass <name>` from a string inside a function, and
+asserts the name is one of that function's parameters. No docstring review
+catches this class, because the sentence is correct English about a real feature
+belonging to a different tool.
+
+### Also in this release
+
+`benchmarks/codex_surface/` measures jCodeMunch's net token effect on Codex CLI
+across four arms. ⚠⚠ **Its first full run is a NEGATIVE result and its arm
+numbers must not be quoted**: every arm difference was smaller than the
+baseline's own run-to-run spread, and the directions were incoherent. The
+hypothesis is untested, not disproven.
+
+⚠ **One measurement did survive, and it corrects a claim made in this
+repository.** 86% of baseline input is cached, so the tool-schema block is paid
+at full rate roughly once and at cache-read rates thereafter. Any framing of
+"24,007 tokens in every request" is wrong. `--surface-only` still measures the
+schema exactly and needs no API credits; what it does not measure is what that
+costs in practice.
+
+### Tests
+
+`tests/test_nuxt_srcdir.py` (18; 15 fail pre-fix) and
+`tests/test_v1_108_271.py` (106; 8 fail pre-fix, with the general guard failing
+on `get_dead_code_v2.py` specifically while passing on 98 other tool modules).
+
+## [1.108.270] - 2026-08-09 - A directory that declares itself a cache is not corpus
+
+jCodeMunch now honours the [Cache Directory Tagging Specification](https://bford.info/cachedir/):
+a directory containing a `CACHEDIR.TAG` whose **first 43 bytes** are
+`Signature: 8a477f597d28d172789f06886806bc55` is pruned from the walk, along
+with everything beneath it.
+
+**This arrived from outside, and the route is the point.** A sibling tool wrote
+a derived projection into a directory inside an indexed tree. jCodeMunch walked
+in and indexed its JSON as source, so content that was never project source came
+back from `search_symbols` and `search_text`. That tool then adopted
+`CACHEDIR.TAG` to declare the directory derived — and we ignored the
+declaration, because we had no notion of one. The containment it built did
+nothing for us.
+
+⚠⚠ **Why a tag rather than another denylist entry.** Three fixes were available
+and two are traps. `_SKIP_DIRECTORY_NAMES` already lists `.git`, `.venv`,
+`.tox` — every dotted directory somebody thought of in advance — so adding the
+offender re-arms the same trap for the next tool. jdocmunch fixed its half with
+a dotted-directory *rule* (jdoc#113), which is better but keys on a naming
+convention and cannot see a cache that is not dotted. The tag is a declaration
+by the **writer**: the only one of the three that does not require every reader
+to know about every writer in advance.
+
+⚠⚠ **The signature is verified, and that is the whole design.** A file merely
+*named* `CACHEDIR.TAG` excludes nothing. A name-only check asserts one instance
+of the property instead of the property, which is precisely the defect class
+this answers — the sibling tool's own test pinned its sidecar suffix as `.txt`
+and stayed green while a `.json` beside it was ingested; v1.108.267 keyed a
+constant branch on node type alone and it read as coverage while returning
+`None` for every Kotlin input. Five lookalike tags (empty, wrong hash, signature
+not first, truncated by one byte, wrong case) are parametrized controls, and a
+name-only implementation fails all five.
+
+⚠ **`cache_dir` is an ordinary exclusion, NOT a withheld reason.** A tagged
+directory holds regenerable derived data by its writer's own declaration, which
+puts it in the same class as `gitignore` and `wrong_extension`: the corpus being
+defined, not a file we refused. Coverage stays `complete` and absence claims
+over the remainder stay citable. Contrast `too_large`, where the file is real,
+current and wanted and only our limit kept it out.
+
+⚠ Reaches the full walk and the watcher fast path — the third entry point,
+`resolve_explicit_paths`, **deliberately bypasses it**, and there is a test
+saying so. That route already opts past `gitignore` and skip-directory rules by
+design so a caller can name a generated file on purpose; it keeps only the
+security filters. A caller naming a file inside a cache is asking for it by name.
+
+⚠ **Local walks only.** `index_repo` is deliberately uncovered: validating the
+signature needs the blob's content, and the GitHub tree listing carries only
+paths and sizes, so honouring it there costs a fetch per candidate directory. A
+filename-only check is the one thing this release exists to reject, so the
+GitHub walk gets nothing rather than a lookalike. A test pins the absence so it
+stays a known gap instead of surfacing later as a silent inconsistency.
+
+Config key `respect_cachedir_tag` (default true, only an explicit `false`
+disables it) / `JCODEMUNCH_RESPECT_CACHEDIR_TAG`. Pruned directories are counted
+as `cache_dir` in `discovery_skip_counts`.
+
+`tests/test_v1_108_270.py`, 31 tests. Non-vacuous against unmodified HEAD in an
+isolated worktree: **27 fail before the fix**, and the 4 that pass on both sides
+are the controls.
+
+## [1.108.269] - 2026-08-09 - A withheld oversize file says so, and the cap is reachable
+
+[#429](https://github.com/jgravelle/jcodemunch-mcp/issues/429). Found when this
+repository's own `src/jcodemunch_mcp/server.py` crossed `DEFAULT_MAX_FILE_SIZE`
+by **532 bytes (0.10%)** and the MCP entrypoint stopped entering its own index.
+
+The size cap itself is working as designed. v1.108.193 made `too_large` a
+**withheld** reason precisely so a corpus missing a real, current, wanted file
+refuses to certify absence, and that refusal is correct. Two things around it
+were not.
+
+**The exclusion was silent on the path that matters.** `resolve_explicit_paths`
+warned per entry; the `os.walk` path bumped a counter and said nothing. Same
+limit, same repository, and whether you were told depended on whether you had
+passed `paths=`. The counter surfaced only as `coverage.excluded.too_large`
+inside a verdict block, and only when a later query happened to ask about
+absence and got refused — so a user with a 600 KB generated client received
+quietly incomplete answers with no signal that anything had been withheld.
+Indexing now emits one aggregate warning naming the withheld files, the
+effective cap, and both routes to raise it. It names at most five and then
+reports a remainder: a repository of generated clients turning one warning into
+a wall of them is its own kind of silence.
+
+**The per-call override was unreachable over MCP.** `get_max_file_size` has
+accepted a `max_size` argument since .193, but no caller passed one and it
+reached no tool schema, so over the transport every actual user is on, editing
+a config file was the only route. `index_folder` and `index_repo` now take
+`max_size` and declare it. It is hidden under `compact_schemas` like its
+neighbours and honoured all the same — an escape hatch is not worth core-tier
+schema tokens, and the warning now tells a caller it exists at the moment it
+becomes relevant.
+
+⚠⚠ **Found alongside, and the more serious half: `index_repo.discover_source_files`
+carried a hardcoded `max_size: int = 500 * 1024`** that consulted neither config
+nor env. A **fourth** copy of the limit, so .193's escape hatch and .197's
+per-project key both applied to `index_folder` and did nothing whatsoever for a
+GitHub repository, on any route. It dropped the file with a bare `continue` and
+no counter anywhere, so unlike the local walk the exclusion was not merely
+under-reported — it was unobservable from every surface. A cap fixed on one
+discovery path is not fixed.
+
+⚠ The local walk has **three** discovery entry points (full walk, explicit
+paths, watcher fast path) and `max_size` reaches all three, for the same reason
+`repo=` was threaded to all three in .197: a cap that reaches some of them makes
+a file appear on one route and vanish on another.
+
+⚠ `max_size` is per-call and does not persist. #429's own repository wants the
+config key; the argument is for one run.
+
+**Not addressed here:** `server.py` is 10,549 lines and will cross the next
+ceiling too. Splitting it is the actual fix; this only makes the repository
+navigable in the meantime. Parked in `ROADMAP.md` with close conditions, per the
+rule that an issue opens when work starts or a user is blocked. ⚠ Raising the
+limit again is explicitly not one of those close conditions — the cap already
+moved once for this class of file, and moving it a second time buys the same
+amount of time and teaches the next person to move it a third.
+
+`tests/test_v1_108_269.py`, 34 tests. Proven non-vacuous against unmodified
+HEAD in an isolated worktree: **26 fail before the fix**, and the 8 that pass on
+both sides are the controls.
+
+## [1.108.268] - 2026-08-09 - JSON-RPC gets a private stdout
+
+Suite parity with jdocmunch-mcp 1.129.0 ([jdoc#110](https://github.com/jgravelle/jdocmunch-mcp/issues/110)).
+Found by auditing the siblings after fixing it there, not by a report.
+
+The MCP stdio transport writes framed JSON to stdout, so any other write to
+that stream breaks a response. jcodemunch already carries scar tissue from
+this: the handshake watchdog in `run_stdio_server` exists because a paying
+client on Codex/rmcp waited 5h+ for a frame that never came, after `uvx`
+package-resolution chatter landed on stdout.
+
+⚠⚠ `contextlib.redirect_stdout` never closed this. It rebinds `sys.stdout` and
+nothing more, so it does not cover a C extension calling `write(1, ...)`
+(tqdm, tokenizers, torch), a subprocess that inherited fd 1, or another thread.
+`tools/embed_repo.py:128` builds a `SentenceTransformer` **inside a tool call**,
+so a first embed on a machine without the model cached downloads it mid-request
+and its native progress output goes straight at the JSON-RPC stream. There is
+no startup warmup here to pull that load off the request path.
+
+`stdio_guard.claim_stdout()` duplicates the real stdout, points fd 1 at stderr,
+and hands the duplicate to `stdio_server(stdout=...)`, which already accepts
+one. Afterwards fd 1 **is** stderr for the whole process and the framed stream
+is reachable only through the transport's handle.
+
+⚠ **The handshake watchdog stays, and this does not fix the uvx case.** Chatter
+written by a launcher *before* this process starts is already in the pipe and
+cannot be retracted after exec. This closes everything written from our own
+process onward — a different half of the same problem.
+
+⚠ Fails open under pythonw or a replaced `sys.stderr`: the swap is skipped, the
+server starts as before, and says so on stderr.
+
+`tests/test_stdio_guard.py`, 8 tests, driven through real subprocesses — an
+in-process test of a descriptor-level swap would be testing the mock.
+
 All notable changes to jcodemunch-mcp are documented here.
 
 ## [1.108.267] - 2026-08-08 - Kotlin and Bash constants are extracted, and a declared pattern must now prove itself

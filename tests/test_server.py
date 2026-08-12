@@ -141,6 +141,10 @@ async def test_call_tool_defaults_index_repo_incremental_true():
         incremental=True,
         extra_ignore_patterns=None,
         progress_cb=ANY,
+        # v1.108.269 (#429): forwarded unconditionally, None when the caller
+        # omits it, so the resolution order (project config, then global, then
+        # default) stays with `get_max_file_size` rather than being frozen here.
+        max_size=None,
     )
 
 
@@ -160,6 +164,7 @@ async def test_call_tool_defaults_index_folder_incremental_true():
         paths=None,
         identity_mode="config",
         progress_cb=ANY,
+        max_size=None,  # v1.108.269 (#429), see index_repo above
     )
 
 

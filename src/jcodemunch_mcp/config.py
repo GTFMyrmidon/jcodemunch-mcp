@@ -35,6 +35,7 @@ ENV_VAR_MAPPING = {
     "JCODEMUNCH_TRUSTED_FOLDERS": "trusted_folders",
     "JCODEMUNCH_TRUSTED_FOLDERS_WHITELIST_MODE": "trusted_folders_whitelist_mode",
     "JCODEMUNCH_MAX_FILE_SIZE": "max_file_size",
+    "JCODEMUNCH_RESPECT_CACHEDIR_TAG": "respect_cachedir_tag",
     "JCODEMUNCH_RESPONSE_MAX_BYTES": "response_max_bytes",
     "JCODEMUNCH_MAX_FOLDER_FILES": "max_folder_files",
     "JCODEMUNCH_MAX_INDEX_FILES": "max_index_files",
@@ -340,6 +341,7 @@ DEFAULTS = {
     "trusted_folders": [],
     "trusted_folders_whitelist_mode": True,
     "max_file_size": 512000,
+    "respect_cachedir_tag": True,
     "response_max_bytes": 1048576,
     "max_folder_files": 2000,
     "max_index_files": 10000,
@@ -498,6 +500,7 @@ CONFIG_TYPES = {
     "trusted_folders": list,
     "trusted_folders_whitelist_mode": bool,
     "max_file_size": int,
+    "respect_cachedir_tag": bool,
     "response_max_bytes": int,
     "max_folder_files": int,
     "max_index_files": int,
@@ -2045,6 +2048,19 @@ def generate_template() -> str:
   //   prove absence -- the file is real, current and wanted, it just never
   //   entered the index. The default is deliberately conservative; raise it if
   //   your repo has large legitimate source files, and re-index.
+
+  // "respect_cachedir_tag": true,
+  //   Honour the Cache Directory Tagging Specification
+  //   (https://bford.info/cachedir/): prune any directory holding a
+  //   `CACHEDIR.TAG` whose first 43 bytes are the spec signature. The
+  //   signature is verified -- a file merely NAMED CACHEDIR.TAG does not
+  //   exclude anything.
+  //   Unlike every other exclusion here, this one is declared by whoever WROTE
+  //   the directory rather than listed by us, so a tool that drops a cache into
+  //   your tree is honoured without jcodemunch knowing its name, and it works
+  //   for caches that are not dotted. Pruned directories are counted as
+  //   `cache_dir` in `discovery_skip_counts`. Set false if you tag a directory
+  //   you nonetheless want indexed; only an explicit false disables it.
 
   // "response_max_bytes": 1048576,
   //   Ceiling on a SINGLE MCP tool response, in bytes, enforced at the

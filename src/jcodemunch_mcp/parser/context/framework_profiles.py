@@ -62,26 +62,87 @@ _LARAVEL = FrameworkProfile(
     ],
 )
 
+# Extension sets, named once so a profile lists WHERE its entry points live and
+# not how to spell a glob.
+_JS_EXTS = ("ts", "js", "mjs")
+_NEXT_PAGE_EXTS = ("tsx", "jsx", "ts", "js")
+_NEXT_ROUTE_EXTS = ("ts", "js")
+
+
+def _entry_globs(directory: str, *exts: str) -> list[str]:
+    """Entry-point globs for every file of each extension under ``directory``.
+
+    v1.108.273 (#445). Emits TWO patterns per extension, and both are load-bearing,
+    because the consumer is ``fnmatch`` (``find_dead_code._matches_any_pattern``)
+    rather than a shell glob. ``fnmatch`` differs from shell globbing in two ways
+    that each silently produce a pattern matching nothing:
+
+    ⚠⚠ **No brace expansion.** ``plugins/**/*.{ts,js}`` matches a file whose name
+    literally contains ``{ts,js}`` and nothing else — ``fnmatch.translate`` yields
+    ``\\.\\{ts,js\\}``. v1.108.271 spelled the #435 fix that way, which did not add
+    JS coverage; it **removed** the TS coverage that worked. One pattern per
+    extension is the only spelling that does anything.
+
+    ⚠⚠ **``**/`` requires a slash.** It translates to ``(?>.*?/)``, so
+    ``plugins/**/*.ts`` matches ``plugins/a/b.ts`` but NOT ``plugins/auth.ts``. The
+    flat form is not redundant with the nested one — without it the commonest
+    layout in every one of these frameworks misses.
+
+    Neither failure raises. A missing reachability seed just reports a genuine
+    framework root as unreachable, so it has to be impossible to spell wrong rather
+    than merely documented.
+    """
+    globs: list[str] = []
+    for ext in exts:
+        globs.append(f"{directory}/*.{ext}")
+        globs.append(f"{directory}/**/*.{ext}")
+    return globs
+
+
+def _entry_named(directory: str, stem: str, *exts: str) -> list[str]:
+    """Globs for a specific FILENAME under ``directory``, flat and nested.
+
+    The framework-convention counterpart of :func:`_entry_globs` — Next.js keys on
+    the file's name (``page``, ``route``, ``layout``) rather than on every file in
+    the directory. Same two fnmatch constraints apply; see that docstring.
+    """
+    globs: list[str] = []
+    for ext in exts:
+        globs.append(f"{directory}/{stem}.{ext}")
+        globs.append(f"{directory}/**/{stem}.{ext}")
+    return globs
+
+
 _NUXT = FrameworkProfile(
     name="nuxt",
     ignore_patterns=[
         "node_modules/", ".nuxt/", ".output/", "dist/", ".nitro/",
     ],
+    # Both layouts are listed because both are defaults of a current major
+    # version: Nuxt 3 keeps these at the root, Nuxt 4 moves them under `app/`
+    # (see NuxtContextProvider._resolve_src_dir). `server/` stays at the root in
+    # both, so it is deliberately NOT mirrored. A profile cannot read srcDir, so
+    # naming both is the honest static approximation.
     entry_point_patterns=[
-        "pages/**/*.vue",
-        "server/api/**/*.ts",
-        "plugins/**/*.ts",
-        "middleware/**/*.ts",
+        *_entry_globs("pages", "vue"),
+        *_entry_globs("plugins", *_JS_EXTS),
+        *_entry_globs("middleware", *_JS_EXTS),
+        *_entry_globs("app/pages", "vue"),
+        *_entry_globs("app/plugins", *_JS_EXTS),
+        *_entry_globs("app/middleware", *_JS_EXTS),
+        *_entry_globs("server/api", *_JS_EXTS),
     ],
     layer_definitions=[
-        Layer("pages",       ["pages/"]),
-        Layer("components",  ["components/"]),
-        Layer("composables", ["composables/"]),
-        Layer("stores",      ["stores/"]),
+        Layer("pages",       ["pages/", "app/pages/"]),
+        Layer("components",  ["components/", "app/components/"]),
+        Layer("composables", ["composables/", "app/composables/"]),
+        Layer("stores",      ["stores/", "app/stores/"]),
         Layer("server",      ["server/"]),
-        Layer("plugins",     ["plugins/"]),
+        Layer("plugins",     ["plugins/", "app/plugins/"]),
     ],
-    high_value_paths=["pages/", "composables/", "server/api/"],
+    high_value_paths=[
+        "pages/", "composables/", "app/pages/", "app/composables/", "server/api/",
+    ],
 )
 
 _NEXT = FrameworkProfile(
@@ -89,19 +150,30 @@ _NEXT = FrameworkProfile(
     ignore_patterns=[
         "node_modules/", ".next/", "out/", "dist/",
     ],
+    # v1.108.273 closes the #435 remainder. The JS/JSX counterparts were deferred
+    # behind PR #433 (which added the src/app layout below) and that merged
+    # 2026-08-11, retiring the sequencing note that stood here.
+    # Extensions are Next.js's own: pages take js/jsx/ts/tsx, route handlers and
+    # middleware take js/ts only.
     entry_point_patterns=[
-        "app/**/page.tsx",
-        "app/**/route.ts",
-        "app/layout.tsx",
-        "middleware.ts",
+        *_entry_named("app", "page", *_NEXT_PAGE_EXTS),
+        *_entry_named("app", "route", *_NEXT_ROUTE_EXTS),
+        *_entry_named("app", "layout", *_NEXT_PAGE_EXTS),
+        *_entry_named("src/app", "page", *_NEXT_PAGE_EXTS),
+        *_entry_named("src/app", "route", *_NEXT_ROUTE_EXTS),
+        *_entry_named("src/app", "layout", *_NEXT_PAGE_EXTS),
+        *(f"middleware.{ext}" for ext in _NEXT_ROUTE_EXTS),
+        *(f"src/middleware.{ext}" for ext in _NEXT_ROUTE_EXTS),
     ],
     layer_definitions=[
-        Layer("pages",      ["app/"]),
-        Layer("components", ["components/"]),
-        Layer("lib",        ["lib/"]),
-        Layer("api",        ["app/api/"]),
+        Layer("pages",      ["app/", "src/app/"]),
+        Layer("components", ["components/", "src/components/"]),
+        Layer("lib",        ["lib/", "src/lib/"]),
+        Layer("api",        ["app/api/", "src/app/api/"]),
     ],
-    high_value_paths=["app/", "lib/", "components/"],
+    high_value_paths=[
+        "app/", "src/app/", "lib/", "src/lib/", "components/", "src/components/",
+    ],
 )
 
 _VUE_SPA = FrameworkProfile(
@@ -203,12 +275,25 @@ _SPRING_BOOT = FrameworkProfile(
 _NESTJS = FrameworkProfile(
     name="nestjs",
     ignore_patterns=["node_modules/", "dist/", ".next/", ".nuxt/", "coverage/"],
-    entry_point_patterns=["src/main.ts", "src/app.module.ts"],
+    # Exact paths, not globs — NestJS fixes both filenames by convention. Listed
+    # per extension because fnmatch expands no braces; see `_entry_globs`.
+    entry_point_patterns=[
+        "src/main.ts", "src/main.js",
+        "src/app.module.ts", "src/app.module.js",
+    ],
     layer_definitions=[
-        Layer("controllers", ["src/**/*controller.ts"]),
-        Layer("services",   ["src/**/*service.ts"]),
-        Layer("modules",   ["src/**/*.module.ts"]),
-        Layer("guards",    ["src/**/*guard.ts"]),
+        # ⚠ No in-tree consumer reads these — `profile_to_meta` publishes them to
+        # callers. Spelled per extension anyway: braces are wrong under a glob
+        # matcher and meaningless under a prefix one, so they cannot be right for
+        # whatever a caller uses. Flat + nested for the same reason as entry globs.
+        Layer("controllers", ["src/*controller.ts", "src/**/*controller.ts",
+                              "src/*controller.js", "src/**/*controller.js"]),
+        Layer("services",    ["src/*service.ts", "src/**/*service.ts",
+                              "src/*service.js", "src/**/*service.js"]),
+        Layer("modules",     ["src/*.module.ts", "src/**/*.module.ts",
+                              "src/*.module.js", "src/**/*.module.js"]),
+        Layer("guards",      ["src/*guard.ts", "src/**/*guard.ts",
+                              "src/*guard.js", "src/**/*guard.js"]),
     ],
     high_value_paths=["src/", "modules/", "controllers/", "services/"],
 )
