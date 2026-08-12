@@ -1,5 +1,62 @@
 # Changelog
 
+## [1.108.275] - 2026-08-12 - A pattern that matches nothing now says so
+
+### `entry_point_patterns` failed silently ([#446](https://github.com/jgravelle/jcodemunch-mcp/issues/446))
+
+`entry_point_patterns` is documented as glob patterns and matched with `fnmatch`,
+which supports only `*`, `?` and `[seq]`. Two constructs that work in every shell
+do not work here, and neither fails loudly: **brace alternation is not expanded**,
+and **`**` does not match zero directories** (`plugins/**/*.ts` misses
+`plugins/auth.ts`).
+
+⚠⚠ **A pattern that matches nothing is indistinguishable from a repo that genuinely
+has no such entry points** — same output, same confidence, no marker. The caller
+gets more symbols reported unreachable and no reason to doubt it. We made the first
+mistake ourselves, in shipped framework profiles, and did not notice for a release
+([#445](https://github.com/jgravelle/jcodemunch-mcp/issues/445)).
+
+Both dead-code tools now name the patterns that matched nothing, and the message
+explains both `fnmatch` surprises rather than only reporting the outcome. Reporting
+covers every cause at once — braces, `**`, a typo, the wrong path root — instead of
+the one spelling we happened to get wrong.
+
+⚠ **It reports; it never refuses.** A pattern matching nothing is legitimate: a
+caller may pass one pattern set across several repos.
+
+### Two gaps found while implementing it
+
+⚠⚠ **`get_dead_code_v2`'s existing message was correct and almost never fired.** It
+already said "entry_point_patterns was supplied but matched no indexed file" — gated
+on `entry_point_count == 0`. Any repo carrying one ordinary `main.py` made the count
+non-zero, so the caller heard nothing. **A correct warning behind the wrong gate
+reads as "no problem found".** It is now ungated and names the offenders.
+
+⚠⚠ **`get_dead_code_v2`'s call-graph-only exit ignored the parameter entirely.**
+When a repo has no import graph the tool returns early through
+`_call_graph_only_dead_code`, which never received `entry_point_patterns` and still
+does not use them — that mode has no file-level entry-point concept, so there is
+nothing for a path pattern to seed. That is defensible; **silently accepting a
+parameter and discarding it is not.** That exit now says so.
+
+This was found because the new end-to-end test landed on the fallback by accident,
+which is the argument for testing through the tool rather than the helper: the
+helper-level tests all passed while a whole exit ignored the feature.
+
+### Not decided here
+
+Whether `entry_point_patterns` should *also* accept brace expansion remains open on
+[#446](https://github.com/jgravelle/jcodemunch-mcp/issues/446). Implementing the
+warning surfaced an argument for keeping it separate: a pattern containing literal
+`{}` matches such filenames today, so expanding braces would **change** existing
+behaviour rather than being purely additive — a real decision under the 1.x
+no-removal contract, and one that immediately raises whether `**` should gain real
+recursive semantics too. The harm is closed either way.
+
+`tests/test_v1_108_275.py` (14), **4 fail against the v1.108.274 call sites**; the
+10 passing on both sides are helper unit tests and controls, including one asserting
+the tools stay silent when every pattern matches.
+
 ## [1.108.274] - 2026-08-12 - A disclosure that is true when written is not yet a control
 
 Two `SECURITY.md` accuracy items from [@elfrost](https://github.com/elfrost)'s QA

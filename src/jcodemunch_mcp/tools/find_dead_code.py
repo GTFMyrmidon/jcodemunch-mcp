@@ -70,6 +70,36 @@ def _matches_any_pattern(file_path: str, patterns: list[str]) -> bool:
     return False
 
 
+def unmatched_patterns(patterns: Optional[list[str]], source_files) -> list[str]:
+    """Which caller-supplied patterns matched no indexed file.
+
+    v1.108.275 (#446). ``entry_point_patterns`` is documented as glob patterns and
+    matched with ``fnmatch``, which supports only ``*``, ``?`` and ``[seq]``. Two
+    constructs that work in every shell do not work here and neither fails loudly:
+
+    * **Brace alternation.** ``src/main.{ts,js}`` needs a filename literally
+      containing ``{ts,js}``. We shipped this mistake ourselves in v1.108.271 and
+      did not notice for a release (#445).
+    * **``**`` as "zero or more directories".** ``**/`` becomes ``(?>.*?/)``, which
+      REQUIRES a slash, so ``plugins/**/*.ts`` misses ``plugins/auth.ts``.
+
+    ⚠⚠ **A pattern that matches nothing is indistinguishable from a repo that
+    genuinely has no such entry points** — same output, same confidence, no marker.
+    The caller gets more symbols reported unreachable and no reason to doubt it.
+    Naming the patterns that did nothing is what turns that into a signal, and it
+    covers every cause at once (braces, ``**``, a typo, the wrong path root)
+    rather than the one spelling we happened to get wrong.
+
+    ⚠ Deliberately NOT a rejection. A pattern matching nothing is legitimate — a
+    caller may pass one set of patterns across several repos. This reports; it
+    never refuses.
+    """
+    if not patterns:
+        return []
+    files = list(source_files)
+    return [p for p in patterns if not any(_matches_any_pattern(f, [p]) for f in files)]
+
+
 def _package_json_entries(index, store, owner: str, repo_name: str) -> set[str]:
     """Return source files referenced by any ``package.json``'s ``main`` /
     ``module`` / ``exports`` / ``bin`` field. JS-library equivalent of the
@@ -333,4 +363,22 @@ def find_dead_code(
         "analysis_notes": analysis_notes,
         "_meta": {"timing_ms": round(elapsed, 1)},
     }
+
+    # v1.108.275 (#446). Until now this tool reported NOTHING when a caller's
+    # patterns matched no file, at any confidence — the sibling `get_dead_code_v2`
+    # at least had a message, though gated. Silence here is the worse half: the
+    # answer looks the same as an honest one.
+    _unmatched = unmatched_patterns(entry_point_patterns, index.source_files)
+    if _unmatched:
+        result["entry_point_patterns_unmatched"] = _unmatched
+        result["warning"] = (
+            f"{len(_unmatched)} of {len(entry_point_patterns)} entry_point_patterns "
+            f"matched no indexed file, so they contributed no live roots: "
+            f"{', '.join(_unmatched[:5])}"
+            + (f" (+{len(_unmatched) - 5} more)" if len(_unmatched) > 5 else "")
+            + ". Patterns are matched with fnmatch against repo-relative paths: "
+            "brace alternation ({ts,js}) is NOT expanded, and ** does not match "
+            "zero directories (plugins/**/*.ts misses plugins/auth.ts). "
+            "List each extension separately and add the flat form."
+        )
     return result
