@@ -1,5 +1,85 @@
 # Changelog
 
+## [1.108.274] - 2026-08-12 - A disclosure that is true when written is not yet a control
+
+Two `SECURITY.md` accuracy items from [@elfrost](https://github.com/elfrost)'s QA
+pass ([#444](https://github.com/jgravelle/jcodemunch-mcp/issues/444), split into
+[#448](https://github.com/jgravelle/jcodemunch-mcp/issues/448) and
+[#449](https://github.com/jgravelle/jcodemunch-mcp/issues/449)), and a test so the
+class stops recurring.
+
+The method is worth naming, because it is not one we run against ourselves:
+**diffing a controls document against the tree, treating its named functions,
+defaults and guarantees as checkable assertions.** Neither finding is a
+vulnerability. Both are the document falling behind the code.
+
+### Response-level redaction was absent from `SECURITY.md` entirely (#448)
+
+The document described the secret classifier as deciding from filename and
+directory shape only — accurate — and then said nothing about response-level
+redaction anywhere. `SECURITY.md` contained exactly one occurrence of the string
+`redact`, and it was a filename used as a false-positive example.
+
+So a shipped, **on-by-default** control was undocumented, the Summary of Controls
+table did not list it, and the exemption for `get_file_content`,
+`get_symbol_source` and `get_context_bundle` was undiscoverable by a reader
+auditing against the document.
+
+⚠ **The exemption itself is unchanged and is not a defect.** A per-byte regex sweep
+over payloads of hundreds of KB is latency for no gain, and what those tools return
+is the user's own checked-in code being read back to them. What was missing was
+saying so. The new section states the consequence directly — a credential hardcoded
+in an ordinary source file is caught by neither control, and the mitigations are CI
+secret scanning and pre-commit hooks, because the credential is in the repository
+regardless of what this server does with it.
+
+⚠ **An on-by-default control that is undocumented is a disclosure problem in its own
+right**, not merely a missing nicety. The reader this document is written for cannot
+attest to what it does not say.
+
+### `/org/report` was described as the only remote-write route (#449)
+
+`make_runtime_routes()` mounts three more `POST` routes — `/runtime/otel`,
+`/runtime/sql`, `/runtime/stack` — in both transport builders. The section now
+enumerates all four with their separate gates, and states the property @elfrost
+singled out as good: with `JCODEMUNCH_HTTP_TOKEN` unset these routes return **503
+rather than running unauthenticated**, so a missing token disables the endpoint
+instead of opening it.
+
+The posture never changed. The sentence did not keep up.
+
+### The part that will outlast both: `tests/test_security_disclosure.py`
+
+⚠⚠ **This is the second time this exact failure mode has shipped.** v1.108.261 fixed
+a sentence claiming the telemetry ping sends "**only** an integer delta plus an
+anonymous UUID" while the payload also carried a lifetime `total`. Both sentences
+were true when written and were not revisited as the code grew. **Prose cannot
+notice that happening.**
+
+The section promises that its enumeration is *complete*, so the enumeration is now
+checked against the code: route paths and the declared count are read from
+`make_org_routes()` / `make_runtime_routes()`, and the redaction exemptions from
+`_SOURCE_DUMP_TOOLS`, rather than restated in the test. A route or exemption added
+later is covered by construction. Assertions are about enumerations and defaults,
+never wording, so editing the document stays cheap.
+
+⚠ **It fired on its first run, against this release's own text** — a historical note
+quoting the retired sentence verbatim tripped the check that refuses that claim. The
+note was paraphrased rather than the test loosened: a guard that allows the exact
+phrase in some contexts would pass the moment someone reintroduced it about a
+different route.
+
+6 tests, **all 6 fail against the v1.108.273 document** — so the guard catches the
+two defects it was written for rather than merely agreeing with the text shipped
+beside it.
+
+### Not in this release
+
+Item 1 of the QA pass — the `install-pack` archive guard missing drive-absolute
+member names — is [#447](https://github.com/jgravelle/jcodemunch-mcp/issues/447),
+with @elfrost's [PR #443](https://github.com/jgravelle/jcodemunch-mcp/pull/443)
+open against it.
+
 ## [1.108.273] - 2026-08-12 - A pattern that names two extensions and matches neither
 
 ### v1.108.271's #435 fix matched nothing ([#445](https://github.com/jgravelle/jcodemunch-mcp/issues/445))
