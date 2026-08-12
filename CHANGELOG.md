@@ -1,5 +1,64 @@
 # Changelog
 
+## [1.108.272] - 2026-08-12 - A column recorded on the wrong exit is not a measurement
+
+### `identity_hit` was 0 on every non-fusion `search_symbols` row ([#440](https://github.com/jgravelle/jcodemunch-mcp/issues/440))
+
+Reported by [@rknighton](https://github.com/rknighton), with a reproduction that
+runs the same query down two exits and prints the two rows side by side: the
+default path recorded `identity_hit=0` on an exact symbol-name match while
+`search_symbols_fusion` recorded `1` for the same query and the same top result.
+
+Both non-fusion exits built a score-only list (`[{"score": s}]`) and handed it to
+`extract_ledger_features`, which reads `identity` / `identity_match` off the rows
+it is given. Neither key was present, so the feature was `False` by construction
+rather than by measurement — whatever the identity channel had actually found.
+
+⚠ **This is the same defect fixed for fusion in v1.108.187, and the comment left
+at that fix asserted the non-fusion paths were already correct.** They were not.
+They carried the value nowhere the reader looks: the lexical path folds it into
+the BM25 total inside `_bm25_score`, and with `debug=True` it appears nested under
+`score_breakdown`. That comment is corrected in place — a fix that misdescribes
+the code around it hides the next instance of its own bug.
+
+Both exits now build a ledger input through `_ledger_identity_rows`.
+
+⚠ **Recomputed rather than threaded out of scoring, and that is deliberate.**
+`semantic_only` skips the identity channel entirely (`idn = 0.0`), so reusing the
+scorer's value would keep recording a default dressed as a measurement — the very
+thing being fixed. Identity is a pure function of the symbol's name/id and the
+query, and only the top three rows are read, so this is three string comparisons.
+
+⚠ **The ledger rows are NOT fed to `attach_confidence`.** `compute_confidence`
+sniffs the same `identity` key when no `has_identity_match` is passed and scores
+it 1.0 known-true / 0.7 unknown, so sharing one input would move the published
+confidence of every non-fusion search. Recording a column must not move a number
+callers already read. A test asserts the published confidence is unchanged, and
+first asserts that feeding it the ledger rows *would* move it — otherwise the
+test proves nothing.
+
+⚠⚠ **The history is NOT repairable and no heuristic was invented for it.** Like
+`search_symbols_fusion`, these exits always passed `top1_score` and only omitted
+the identity key, so a pre-fix row is indistinguishable from an honest post-fix
+`0`. `identity_label_is_trustworthy` keeps returning `True` for them, and now
+says so. **`search_symbols` is the highest-volume producer in the ledger, so the
+contaminated share is far larger than the fusion case that predicate was written
+for** — the recency window is the only remedy, and the column is clean only for
+rows written after this release.
+
+Two consumers were reading it. `analyze_perf.identity_hits` undercounted by
+however many name matches those searches made. `regret`'s vocabulary-gap signal
+is the conjunction `not identity_hit and semantic_used`, and the semantic exit
+passed `semantic_used=True` literally, so **both halves held by defect** on every
+such row; above the confidence floor and the recurrence threshold, a signal that
+feeds user-visible `suggest_corrections` patches was reporting a vocabulary gap
+it had not tested. Both are correct for new rows and both stay contaminated for
+old ones.
+
+`tests/test_v1_108_272.py` (9). Verified non-vacuous by reverting only the two
+call sites against the same tree: 1 fails pre-fix, and the 8 that pass on both
+sides are the unit-level and no-heuristic controls.
+
 ## [1.108.271] - 2026-08-10 - A stock Nuxt 4 project is not an empty one, and advice you cannot follow is worse than none
 
 Two defects, both found by reading a contributor's pull request rather than by

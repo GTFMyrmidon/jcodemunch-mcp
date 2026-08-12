@@ -99,6 +99,20 @@ def identity_label_is_trustworthy(row: Sequence) -> bool:
     rows that genuinely had no identity match. There is no version or timestamp
     column to bound it by, so its history is unseparable: the recency window is the
     only remedy, and inventing a heuristic here would be worse than the gap.
+
+    ⚠ **v1.108.272 (#440): `search_symbols` is NOT covered either, for the same
+    reason and over a much larger share of the table.** Both non-fusion exits — the
+    default path and the semantic one — built the same score-only ledger input, so
+    every ``tool = "search_symbols"`` row written before v1.108.272 carries
+    ``identity_hit = 0`` whatever the identity channel found. They too always passed
+    ``top1_score``, so nothing on the row separates them from an honest post-fix 0.
+
+    Two things follow, and the second is the uncomfortable one. The recency window
+    is again the only remedy. And because ``search_symbols`` is the highest-volume
+    producer in the ledger, the affected share is far larger than the fusion case
+    this predicate was written for — a reader must not take "the fusion rows are
+    handled" as "the ``identity_hit`` column is now clean". It is clean only for
+    rows written after v1.108.272.
     """
     try:
         tool = row[_TOOL]

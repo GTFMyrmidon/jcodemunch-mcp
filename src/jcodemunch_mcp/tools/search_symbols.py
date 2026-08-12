@@ -407,6 +407,44 @@ def _identity_score(sym: dict, query_joined: str, raw_query: str = "") -> float:
     return 0.0
 
 
+def _ledger_identity_rows(
+    scores: list[float],
+    entries: list[dict],
+    query_terms: list[str],
+    raw_query: str,
+) -> list[dict]:
+    """Ledger input pairing each ranking score with the identity channel's verdict.
+
+    v1.108.272 (#440). ``extract_ledger_features`` reads ``identity`` off the rows it
+    is handed, and the non-fusion exits handed it score-only rows — so ``identity_hit``
+    was recorded 0 on every ``search_symbols`` row whatever the identity channel found.
+
+    Identity is recomputed here rather than threaded out of scoring. It is a pure
+    function of the symbol's name/id and the query, the lexical path folds it into the
+    BM25 total inside ``_bm25_score`` where it is no longer separable, and only the top
+    three rows are ever read — so this is three string comparisons, not a second pass.
+
+    ⚠ Recomputing also makes ``semantic_only`` honest. That mode skips the identity
+    channel entirely (``idn = 0.0``), so reusing its value would keep recording a
+    default dressed as a measurement — the very thing being fixed.
+
+    ⚠ For the LEDGER only. ``compute_confidence`` sniffs the same key when no
+    ``has_identity_match`` is passed and scores it 1.0 known-true / 0.7 unknown / 0.6
+    known-false, so feeding these rows to ``attach_confidence`` would move the
+    confidence of every non-fusion search. That is its own change with its own
+    justification, not a side effect of recording a column.
+    """
+    query_joined = " ".join(query_terms)
+    rows: list[dict] = []
+    for i, score in enumerate(scores):
+        row: dict = {"score": score}
+        # Only the top three are read; below that the lookup is pure cost.
+        if i < 3 and i < len(entries):
+            row["identity"] = _identity_score(entries[i], query_joined, raw_query)
+        rows.append(row)
+    return rows
+
+
 def _bm25_score(sym: dict, query_terms: list[str], idf: dict[str, float], avgdl: float,
                 centrality: Optional[dict] = None, raw_query: str = "") -> float:
     """BM25 score for a single symbol.
@@ -1184,7 +1222,14 @@ def search_symbols(
         result, _conf_input, is_stale=_probe.repo_is_stale,
         score_ceiling=_conf_ceiling,
     )
-    _feat = _ledger_feats(_conf_input)
+    # v1.108.272 (#440). Pre-packing entries, matching `_conf_scores` and the fusion
+    # exit: the packer can drop rows the ranking did produce, and `identity_hit`
+    # describes what the ranking found.
+    _feat = _ledger_feats(
+        _ledger_identity_rows(
+            _conf_scores, [e for _, _, e in _sorted_heap], query_terms, query
+        )
+    )
     _record_ranking_event(
         # v1.108.188: the store this call was told to use, not whichever one the
         # first savings write of the process happened to pin.
@@ -1594,7 +1639,11 @@ def _search_symbols_semantic(
         result, _conf_input, is_stale=_probe.repo_is_stale,
         score_ceiling=_COSINE_CEILING,
     )
-    _feat = _ledger_feats(_conf_input)
+    # v1.108.272 (#440). `top` is pre-packing and already ordered, so its symbols line
+    # up with `_conf_scores` positionally.
+    _feat = _ledger_feats(
+        _ledger_identity_rows(_conf_scores, [s for _, s in top], query_terms, query)
+    )
     _record_ranking_event(
         # v1.108.188: the store this call was told to use, not whichever one the
         # first savings write of the process happened to pin.
@@ -1973,10 +2022,14 @@ def _search_symbols_fusion(
         meta["runtime_freshness"] = _runtime_summary
     # v1.108.187. `_ledger_feats` reads `identity`/`identity_match` off these rows and
     # this input carried neither, so `identity_hit` was recorded False on every fusion
-    # row regardless of what the identity channel found. Unlike the non-fusion paths,
-    # whose rows carry `identity` from `_identity_score`, the fused rows never get
-    # that key. The channel's own `raw_scores` is the answer, and it admits only
-    # symbols scoring above zero.
+    # row regardless of what the identity channel found. The channel's own `raw_scores`
+    # is the answer, and it admits only symbols scoring above zero.
+    #
+    # ⚠ v1.108.272 (#440). This comment used to say the non-fusion paths' rows "carry
+    # `identity` from `_identity_score`", as though fusion were the lone offender. That
+    # was wrong: they carried the key nowhere `extract_ledger_features` looks, and had
+    # the same defect for the same reason. Fixed at both exits via
+    # `_ledger_identity_rows`. Reported by @rknighton.
     #
     # ⚠ Fed to the LEDGER only, not to `attach_confidence`. `compute_confidence`
     # sniffs the same key when no `has_identity_match` is passed and scores it 1.0
