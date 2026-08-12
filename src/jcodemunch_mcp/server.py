@@ -363,6 +363,20 @@ def _counter_front_door_tools() -> list:
                 "required": ["task"],
             },
         ),
+        Tool(
+            name="get_tool_details",
+            description=(
+                "Fetch full parameter schema, docstring, required args, and "
+                "usage examples for a specific catalog action: get_tool_details(name)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Name of the catalog tool or action to inspect."},
+                },
+                "required": ["name"],
+            },
+        ),
     ]
 
 
@@ -4989,14 +5003,30 @@ def _delivery_entries(name: str, result):
 
 
 async def _handle_counter_tool(name: str, arguments: dict) -> list[TextContent]:
-    """Dispatch the Counter front door (order / menu / route)."""
+    """Dispatch the Counter front door (order / menu / route / get_tool_details)."""
     if name == "order":
         return await _handle_order(arguments)
     if name == "menu":
         return _handle_menu(arguments)
     if name == "route":
         return await _handle_route(arguments)
+    if name == "get_tool_details":
+        return _handle_get_tool_details(arguments)
     return [TextContent(type="text", text=json.dumps({"error": f"Unknown front-door tool '{name}'"}))]
+
+
+def _handle_get_tool_details(arguments: dict) -> list[TextContent]:
+    """get_tool_details(name): Fetch full parameter schema and documentation for a tool/action."""
+    tool_name = arguments.get("name") or arguments.get("action")
+    if not tool_name or not isinstance(tool_name, str):
+        return [TextContent(type="text", text=json.dumps({"error": "get_tool_details requires a 'name' string."}, indent=2))]
+
+    for t in _raw_catalog_tools():
+        if t.name == tool_name:
+            details = _counter.get_tool_details(t.name, t.description or "", t.inputSchema or {})
+            return [TextContent(type="text", text=json.dumps(details, indent=2))]
+
+    return [TextContent(type="text", text=json.dumps({"error": f"Unknown tool or action '{tool_name}'."}, indent=2))]
 
 
 # Common arg-name aliases agents reach for when ordering an action without the
@@ -5011,10 +5041,12 @@ _ORDER_ARG_ALIASES: dict[str, tuple[str, ...]] = {
     "pattern": ("file_pattern",),
     "text": ("query",),
     "search": ("query",),
-    "symbol": ("symbol_id",),
+    "symbol": ("symbol_id", "identifier"),
     "symbols": ("symbol_ids",),
-    "id": ("symbol_id",),
+    "id": ("symbol_id", "identifier"),
     "ids": ("symbol_ids",),
+    "name": ("symbol_id", "identifier", "class_name"),
+    "class": ("class_name",),
 }
 
 
@@ -5126,7 +5158,7 @@ def _handle_menu(arguments: dict) -> list[TextContent]:
         "count": len(clean),
         "total_actions": len(_catalog_names()),
         "actions": clean,
-        "hint": "Dispatch with order(action, args). Get a task->action pick with route(task).",
+        "hint": "Dispatch with order(action, args). Inspect schema with get_tool_details(name). Get a task->action pick with route(task).",
     }
     return [TextContent(type="text", text=json.dumps(payload, separators=(",", ":")))]
 
