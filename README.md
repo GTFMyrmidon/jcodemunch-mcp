@@ -145,9 +145,9 @@ That's the highlight reel. The complete tour of 90+ tools, the MUNCH compact wir
 <!-- WHATSNEW:START -->
 #### What's new
 
+- **[v1.108.273](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.273)** (2026-08-12) — A pattern that names two extensions and matches neither
 - **[v1.108.272](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.272)** (2026-08-12) — A column recorded on the wrong exit is not a measurement
 - **[v1.108.271](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.271)** (2026-08-10) — A stock Nuxt 4 project is not an empty one, and advice you cannot follow is worse than none
-- **[v1.108.270](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.270)** (2026-08-09) — A directory that declares itself a cache is not corpus
 <!-- WHATSNEW:END -->
 
 ---
