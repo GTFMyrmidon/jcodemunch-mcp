@@ -15816,7 +15816,7 @@ Thanks to **@MariusAdrian88** for this contribution (#244).
 - **`cross_repo_default` config key** — boolean default for the `cross_repo` parameter across all import graph tools. Env var: `JCODEMUNCH_CROSS_REPO_DEFAULT`. Default: `false`.
 - **53 new tests** (1431 total, 9 skipped).
 
-## [1.12.9] — docs patch 2026-03-30
+## Docs patch — 2026-03-30 (no version bump)
 
 ### Changed
 - **QUICKSTART.md Step 3** — upgraded AGENT_HOOKS.md footnote to an `[!IMPORTANT]` callout naming the "pressure bypass" failure mode (agent sees CLAUDE.md rule, ignores it under load) and explaining why hooks are needed for hard enforcement.
