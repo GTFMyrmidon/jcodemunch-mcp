@@ -290,6 +290,41 @@ not measure is what that costs in practice.
 a RESUMED conversation counts accumulated context on every step, so the total is
 dominated by how much the agent read early on, which compounds.
 
+**In flight 2026-08-13: #441 + #442 (@rknighton), ranking-ledger write path.**
+Same path .272 touched. Unreleased; see CHANGELOG `[Unreleased]`.
+⚠⚠ **The reusable lesson is that measuring the SAFE fix first is what chose the
+risky one.** #442 has an obvious low-risk shape — remember the schema is ready,
+skip the eight `IF NOT EXISTS` statements, keep the per-write open/close, no
+connection lifetime to manage. **Measured: it captures 2% of the available
+saving.** The other 98% is the open/close itself. Had that not been measured, the
+cheap fix would have shipped, looked principled, and delivered nothing.
+⚠ Shipped path is **3.455ms vs 16.615ms**, a **79%** cut, agreeing with his 82%
+(absolutes are machine-local; the ratio transfers). ⚠ `check_same_thread=False` is
+REQUIRED (searches dispatch via `asyncio.to_thread`, so a cached connection
+outlives its opening thread) and SAFE only because every caller holds
+`_State._lock` — recorded at the call site because a future edit could quietly
+invalidate it.
+⚠⚠ **Caching a connection introduces TWO silent failure modes the report did not
+name, and the benchmark found the first by crashing**: a stray `close()` poisons
+the cache so every later caller gets a dead handle (telemetry off, every write
+still reporting success), and a DELETED db file gets written into an unlinked
+inode forever (pre-caching, the next event just recreated it). A liveness probe
+catches only the first; the `exists()` check is what catches the second. Together
+**0.344ms, 2.1%** of the pre-fix write. ⚠ **Windows cannot produce the orphan case
+at all** (it refuses to unlink a file with an open handle) — the end-to-end test
+is POSIX-only and says so, with a portable unit test for the predicate. **Do not
+read that skip as cross-platform coverage.**
+⚠ Suite at this point: **7763 passed, 9 skipped, 0 failed** + `ruff check src/`
+clean. Reconciled by same-tree collect: 7772 total, 7753 with
+`test_v1_108_276.py` ignored (= its 19), so nothing else moved. The 9th skip is
+the POSIX-only orphan test. **Fold this into the `Tests:` line at release**, not
+before — it is not a released count yet.
+⚠ #441 pre-existing rows keep `NULL` = UNKNOWN and are NOT backfilled; inferring
+`count == len(returned_ids)` is the defect itself. ⚠ **He filed it against his own
+earlier claim** in Discussion #430 and caught it on re-verification. ⚠ Severity
+checked and it is genuinely analysis-only: `regret` and `ledger_trust` read
+`returned_ids` only for emptiness/>1, and truncation starts above 50.
+
 **Merged 2026-08-13: #439 (@JayceeB1) Windows drive-root child Git repos, closing
 #438** — plus **#453 fixed on top, test-only.** Both ride the next release; no
 version bump. ⚠⚠ **The reusable lesson is one sentence and it cost most of a day:
