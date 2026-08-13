@@ -14,6 +14,24 @@ The Windows regression coverage keeps the positive repository case beside both
 negative cases and mocks the filesystem probes, so the runner's drive layout
 cannot decide the result.
 
+⚠⚠ **Review note, recorded because the wrong version of this nearly shipped on
+maintainer advice.** The first review asked for the UNC scope predicate to be
+dropped as redundant with the shared depth helper. It is not, and the two are
+not the same kind of rule: `_path_safety_part_count` measures DEPTH, while
+`not drive.startswith("\\")` bounds SCOPE. A UNC share root has one real part
+and the depth helper adds one for the `\\server\share` anchor, so it computes to
+**exactly two -- the same depth as `C:\repo`**. With the predicate gone, a share
+root holding a `.git` would have been admitted, handing a whole file server to
+the indexer through the guard that exists to prevent it (#321/#322).
+
+⚠ **The regression test for it was ALSO wrong on its first run, in a way that
+passed.** It patched `os.path.exists` to a blanket `True`, which answers
+`_is_container()`'s `/.dockerenv` probe as well -- that drops `_MIN_PATH_PARTS`
+from three to two, so `2 < 2` skips the guard and the assertion never reaches
+the code under test. The probe is narrowed to the `.git` path and the reason is
+recorded at the patch site. **A mock broad enough to satisfy the assertion can
+be broad enough to bypass what the assertion is about.**
+
 ## [1.108.275] - 2026-08-12 - A pattern that matches nothing now says so
 
 ### `entry_point_patterns` failed silently ([#446](https://github.com/jgravelle/jcodemunch-mcp/issues/446))

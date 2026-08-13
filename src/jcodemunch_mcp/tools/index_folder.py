@@ -329,12 +329,21 @@ def _is_shallow_windows_git_root(path: Path) -> bool:
     selected a working-tree root rather than the drive itself or a broad parent.
     The corresponding POSIX case was considered and intentionally left unchanged
     so this exception remains scoped to the reported Windows drive-root behavior.
+
+    ⚠ The depth check and the UNC check answer different questions and neither
+    is redundant with the other. ``_path_safety_part_count`` is a DEPTH rule;
+    ``not drive.startswith("\\\\")`` is a SCOPE rule. A UNC share root has one
+    real part and the depth helper adds one for the ``\\server\share`` anchor,
+    so it computes to exactly two -- the same value as ``C:\repo``. Dropping the
+    UNC test would therefore admit ``\\server\share`` itself, which #321/#322
+    classify as too broad whatever it happens to contain.
     """
     drive = str(path.drive)
     return (
         os.name == "nt"
         and _path_safety_part_count(path) == 2
         and bool(drive)
+        and not drive.startswith("\\\\")
         and os.path.exists(path / ".git")
     )
 
