@@ -32,7 +32,10 @@ def telemetry_on():
 
 
 @pytest.fixture
-def state():
+def tracker():
+    # ⚠ NOT named `state`: that collides with the `_State` replay query and
+    # outranks the real class (see jcm #458). Renamed to unblock; the ranking
+    # behaviour is filed, not fixed.
     st = token_tracker._State()
     try:
         yield st
@@ -76,27 +79,27 @@ def _write(state, store, ids, **kw):
 
 
 class TestReturnedCount:
-    def test_column_exists(self, telemetry_on, state, tmp_path):
-        _write(state, tmp_path, ["a"])
+    def test_column_exists(self, telemetry_on, tracker, tmp_path):
+        _write(tracker, tmp_path, ["a"])
         assert "returned_count" in _columns(tmp_path)
 
-    def test_truncated_row_records_the_true_size(self, telemetry_on, state, tmp_path):
+    def test_truncated_row_records_the_true_size(self, telemetry_on, tracker, tmp_path):
         """The defect in one assertion: 60 results in, 50 stored, 60 recorded."""
-        _write(state, tmp_path, [f"id{i}" for i in range(60)])
+        _write(tracker, tmp_path, [f"id{i}" for i in range(60)])
         (stored, count), = _rows(tmp_path, "returned_ids, returned_count")
         assert len(json.loads(stored)) == 50, "the id cap itself is unchanged"
         assert count == 60
 
     def test_a_complete_row_is_distinguishable_from_a_truncated_one(
-        self, telemetry_on, state, tmp_path
+        self, telemetry_on, tracker, tmp_path
     ):
         """⚠ THE point of #441. Both rows store 50 ids; only the count separates them.
 
         Without this column the two are byte-identical in every stored field, so
         an analysis could neither exclude the truncated row nor say what it lost.
         """
-        _write(state, tmp_path, [f"a{i}" for i in range(50)], query="exactly-fifty")
-        _write(state, tmp_path, [f"b{i}" for i in range(500)], query="five-hundred")
+        _write(tracker, tmp_path, [f"a{i}" for i in range(50)], query="exactly-fifty")
+        _write(tracker, tmp_path, [f"b{i}" for i in range(500)], query="five-hundred")
 
         rows = _rows(tmp_path, "query, returned_ids, returned_count")
         by_query = {q: (json.loads(ids), n) for q, ids, n in rows}
@@ -107,35 +110,35 @@ class TestReturnedCount:
         assert by_query["exactly-fifty"][1] != by_query["five-hundred"][1]
 
     def test_untruncated_row_count_equals_stored_length(
-        self, telemetry_on, state, tmp_path
+        self, telemetry_on, tracker, tmp_path
     ):
-        _write(state, tmp_path, ["a", "b", "c"])
+        _write(tracker, tmp_path, ["a", "b", "c"])
         (stored, count), = _rows(tmp_path, "returned_ids, returned_count")
         assert count == len(json.loads(stored)) == 3
 
     def test_empty_result_set_records_zero_not_null(
-        self, telemetry_on, state, tmp_path
+        self, telemetry_on, tracker, tmp_path
     ):
         """0 is a measurement; NULL means "not recorded". They must not collide,
         because NULL is what pre-fix rows carry."""
-        _write(state, tmp_path, [])
+        _write(tracker, tmp_path, [])
         (count,), = _rows(tmp_path, "returned_count")
         assert count == 0
         assert count is not None
 
     def test_a_generator_is_not_consumed_by_counting_it(
-        self, telemetry_on, state, tmp_path
+        self, telemetry_on, tracker, tmp_path
     ):
         """⚠ returned_ids is typed as an iterable. Counting before serialising
         would exhaust a generator and store [], which regret and ledger_trust
         both read as a genuine "returned nothing"."""
-        _write(state, tmp_path, (f"g{i}" for i in range(5)))
+        _write(tracker, tmp_path, (f"g{i}" for i in range(5)))
         (stored, count), = _rows(tmp_path, "returned_ids, returned_count")
         assert json.loads(stored) == ["g0", "g1", "g2", "g3", "g4"]
         assert count == 5
 
     def test_preexisting_rows_keep_null_and_are_not_backfilled(
-        self, telemetry_on, state, tmp_path
+        self, telemetry_on, tracker, tmp_path
     ):
         """⚠⚠ A pre-fix row must read UNKNOWN, never "count == len(returned_ids)".
 
@@ -163,7 +166,7 @@ class TestReturnedCount:
         finally:
             conn.close()
 
-        _write(state, tmp_path, ["new"], query="post-fix")
+        _write(tracker, tmp_path, ["new"], query="post-fix")
 
         rows = _rows(tmp_path, "query, returned_ids, returned_count")
         legacy = [r for r in rows if r[0] == "legacy"][0]
@@ -172,10 +175,10 @@ class TestReturnedCount:
         fresh = [r for r in rows if r[0] == "post-fix"][0]
         assert fresh[2] == 1
 
-    def test_migration_is_idempotent(self, telemetry_on, state, tmp_path):
+    def test_migration_is_idempotent(self, telemetry_on, tracker, tmp_path):
         for i in range(3):
-            _write(state, tmp_path, ["a"], query=f"q{i}")
-            state.close_perf_dbs()  # force reopen, re-running the migration path
+            _write(tracker, tmp_path, ["a"], query=f"q{i}")
+            tracker.close_perf_dbs()  # force reopen, re-running the migration path
         assert _columns(tmp_path).count("returned_count") == 1
         assert len(_rows(tmp_path)) == 3
 
@@ -187,7 +190,7 @@ class TestReturnedCount:
 
 class TestConnectionReuse:
     def test_second_event_opens_no_new_connection(
-        self, telemetry_on, state, tmp_path, monkeypatch
+        self, telemetry_on, tracker, tmp_path, monkeypatch
     ):
         """The measurable claim, asserted as a COUNT rather than as a duration.
 
@@ -204,13 +207,13 @@ class TestConnectionReuse:
         monkeypatch.setattr(token_tracker.sqlite3, "connect", counting)
 
         for i in range(10):
-            _write(state, tmp_path, ["a"], query=f"q{i}")
+            _write(tracker, tmp_path, ["a"], query=f"q{i}")
 
         assert len(opens) == 1, f"expected one open for ten events, got {len(opens)}"
         assert len(_rows(tmp_path)) == 10
 
     def test_no_ddl_replay_after_the_first_event(
-        self, telemetry_on, state, tmp_path, monkeypatch
+        self, telemetry_on, tracker, tmp_path, monkeypatch
     ):
         ddl = []
         real_connect = token_tracker.sqlite3.connect
@@ -226,16 +229,16 @@ class TestConnectionReuse:
 
         monkeypatch.setattr(token_tracker.sqlite3, "connect", tracing)
 
-        _write(state, tmp_path, ["a"], query="first")
+        _write(tracker, tmp_path, ["a"], query="first")
         after_first = len(ddl)
         for i in range(5):
-            _write(state, tmp_path, ["a"], query=f"more{i}")
+            _write(tracker, tmp_path, ["a"], query=f"more{i}")
 
         assert after_first > 0, "the first event must still create the schema"
         assert len(ddl) == after_first, "later events must replay no DDL"
 
     def test_distinct_base_paths_get_distinct_connections(
-        self, telemetry_on, state, tmp_path
+        self, telemetry_on, tracker, tmp_path
     ):
         """⚠ base_path selects a different database per call, so the cache is
         keyed by resolved path. A single cached connection would send one store's
@@ -243,29 +246,29 @@ class TestConnectionReuse:
         a, b = tmp_path / "a", tmp_path / "b"
         a.mkdir()
         b.mkdir()
-        _write(state, a, ["a1"], query="to-a")
-        _write(state, b, ["b1"], query="to-b")
+        _write(tracker, a, ["a1"], query="to-a")
+        _write(tracker, b, ["b1"], query="to-b")
 
         assert [r[0] for r in _rows(a, "query")] == ["to-a"]
         assert [r[0] for r in _rows(b, "query")] == ["to-b"]
-        assert len(state._perf_conns) == 2
+        assert len(tracker._perf_conns) == 2
 
     def test_a_closed_cached_connection_does_not_poison_the_cache(
-        self, telemetry_on, state, tmp_path
+        self, telemetry_on, tracker, tmp_path
     ):
         """⚠⚠ Found by the benchmark, not by design. Before validation, closing a
         cached connection left a dead handle that every later caller received --
         so one stray close() disabled telemetry for the process while every write
         still reported success."""
-        _write(state, tmp_path, ["a"], query="first")
-        for conn in state._perf_conns.values():
+        _write(tracker, tmp_path, ["a"], query="first")
+        for conn in tracker._perf_conns.values():
             conn.close()  # simulate a stray close, e.g. an old-contract caller
 
-        _write(state, tmp_path, ["b"], query="after-close")
+        _write(tracker, tmp_path, ["b"], query="after-close")
         assert [r[0] for r in _rows(tmp_path, "query")] == ["first", "after-close"]
 
     def test_missing_file_makes_a_cached_connection_unusable(
-        self, telemetry_on, state, tmp_path
+        self, telemetry_on, tracker, tmp_path
     ):
         """The orphan guard as a unit, portable to every platform.
 
@@ -273,12 +276,12 @@ class TestConnectionReuse:
         healthy, it is the FILE that is gone. Only the exists() half returns
         False here, so this test fails if that half is removed as redundant.
         """
-        _write(state, tmp_path, ["a"])
+        _write(tracker, tmp_path, ["a"])
         db = tmp_path / "telemetry.db"
-        (conn,) = list(state._perf_conns.values())
+        (conn,) = list(tracker._perf_conns.values())
 
-        assert state._perf_conn_usable(conn, db) is True
-        assert state._perf_conn_usable(conn, tmp_path / "gone.db") is False
+        assert tracker._perf_conn_usable(conn, db) is True
+        assert tracker._perf_conn_usable(conn, tmp_path / "gone.db") is False
 
     @pytest.mark.skipif(
         os.name == "nt",
@@ -290,45 +293,45 @@ class TestConnectionReuse:
         ),
     )
     def test_a_deleted_database_is_recreated_rather_than_written_into_the_void(
-        self, telemetry_on, state, tmp_path
+        self, telemetry_on, tracker, tmp_path
     ):
         """⚠⚠ The regression caching would otherwise introduce. On POSIX, SQLite
         keeps writing happily to an unlinked inode, so rows land nowhere and
         nothing raises. Pre-caching, the next event simply recreated the file."""
-        _write(state, tmp_path, ["a"], query="before-delete")
+        _write(tracker, tmp_path, ["a"], query="before-delete")
         assert (tmp_path / "telemetry.db").exists()
 
         for leftover in sorted(tmp_path.glob("telemetry.db*")):
             leftover.unlink()
 
-        _write(state, tmp_path, ["c"], query="after-orphan")
+        _write(tracker, tmp_path, ["c"], query="after-orphan")
         assert (tmp_path / "telemetry.db").exists(), "the file must come back"
         assert [r[0] for r in _rows(tmp_path, "query")] == ["after-orphan"]
 
-    def test_close_perf_dbs_reports_and_clears(self, telemetry_on, state, tmp_path):
+    def test_close_perf_dbs_reports_and_clears(self, telemetry_on, tracker, tmp_path):
         a, b = tmp_path / "a", tmp_path / "b"
         a.mkdir()
         b.mkdir()
-        _write(state, a, ["x"])
-        _write(state, b, ["y"])
-        assert state.close_perf_dbs() == 2
-        assert state._perf_conns == {}
-        assert state.close_perf_dbs() == 0, "closing twice must be safe"
+        _write(tracker, a, ["x"])
+        _write(tracker, b, ["y"])
+        assert tracker.close_perf_dbs() == 2
+        assert tracker._perf_conns == {}
+        assert tracker.close_perf_dbs() == 0, "closing twice must be safe"
 
     def test_writes_still_work_from_another_thread(
-        self, telemetry_on, state, tmp_path
+        self, telemetry_on, tracker, tmp_path
     ):
         """⚠ check_same_thread=False is required because searches dispatch via
         asyncio.to_thread, so a cached connection outlives its opening thread.
         It is safe only because every caller holds _State._lock."""
         import threading
 
-        _write(state, tmp_path, ["main"], query="from-main")
+        _write(tracker, tmp_path, ["main"], query="from-main")
         errors = []
 
         def worker():
             try:
-                _write(state, tmp_path, ["other"], query="from-thread")
+                _write(tracker, tmp_path, ["other"], query="from-thread")
             except BaseException as exc:  # noqa: BLE001 - recorded, re-raised below
                 errors.append(exc)
 
@@ -343,13 +346,13 @@ class TestConnectionReuse:
         ]
 
     def test_telemetry_disabled_writes_nothing_and_opens_nothing(
-        self, state, tmp_path
+        self, tracker, tmp_path
     ):
         """Scope control: the whole change is unreachable on a default install."""
         _config._GLOBAL_CONFIG["perf_telemetry_enabled"] = False
-        _write(state, tmp_path, ["a"])
+        _write(tracker, tmp_path, ["a"])
         assert not (tmp_path / "telemetry.db").exists()
-        assert state._perf_conns == {}
+        assert tracker._perf_conns == {}
 
 
 class TestPublicSurface:

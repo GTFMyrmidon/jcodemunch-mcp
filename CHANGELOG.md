@@ -169,6 +169,22 @@ flush.
 sites**; the 7 passing both sides are the schema, the migration's idempotence, the
 telemetry-disabled control and the public surface.
 
+⚠⚠ **Writing these tests exposed an unrelated ranking defect, filed as
+[#458](https://github.com/jgravelle/jcodemunch-mcp/issues/458).** The
+`Retrieval-quality gate` failed on this branch -- a telemetry-only change that
+cannot affect ranking -- because the replay harness indexes **this repo itself**,
+so a new test file changes the corpus. Isolated by removing the file from the same
+tree and re-indexing: `mrr 1.0` becomes `0.95` when it is present.
+
+The displacement is real: a fixture named `state` scored `identity_type: "exact"`
+for the query `_State`, identically to the class literally named `_State`, and won
+the tie on field length and having a docstring. **`identity_type` graded a
+normalised match as exact** -- the same shape as #440, a column reporting a grade
+it did not measure. ⚠ The fixture is renamed here so the gate passes; **that
+unblocks a PR and fixes nothing**, and the test file says so at the rename site.
+⚠ The gate's self-indexing sensitivity will produce false reds on ordinary
+test-adding PRs. It also caught this. Both are true; neither is addressed here.
+
 ## [1.108.275] - 2026-08-12 - A pattern that matches nothing now says so
 
 ### `entry_point_patterns` failed silently ([#446](https://github.com/jgravelle/jcodemunch-mcp/issues/446))
