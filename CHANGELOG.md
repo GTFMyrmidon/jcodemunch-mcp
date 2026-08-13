@@ -32,6 +32,56 @@ the code under test. The probe is narrowed to the `.git` path and the reason is
 recorded at the patch site. **A mock broad enough to satisfy the assertion can
 be broad enough to bypass what the assertion is about.**
 
+### A path-safety test that let the network decide its verdict ([#453](https://github.com/jgravelle/jcodemunch-mcp/issues/453))
+
+Test-only, no behaviour change. `TestWindowsUNCPathSafety` names a UNC path that
+does not exist, and **it was not fully isolated from the real filesystem**, so its
+result depended on the runner's network rather than on the code under test. It
+failed two releases in one day (.272 on `windows-latest/3.10`, .275 on 3.11),
+both times passing on re-run of the identical SHA.
+
+⚠⚠ **The cause is one unpatched probe, and the mechanism explains why it was
+intermittent rather than simply broken.** `resolve_index_identity` calls
+`folder_path.is_file()` (`storage/git_root.py:160`); the test patched `Path.exists`
+and `Path.is_dir` but never `Path.is_file`, so `os.stat` went to the network.
+`Path.is_file()` **swallows ENOENT-class errors** -- what a box with no such share
+returns, which is why it passes everywhere locally -- but **propagates
+`WinError 64` (`ERROR_NETNAME_DELETED`)**, which is what a runner with
+live-but-failing networking returns. Same code, same test, opposite outcomes,
+decided by whose network answered.
+
+⚠ **The false-green half is the same test class and the more expensive one.**
+`test_unc_share_root_remains_too_broad` let the runner's lack of a
+`\\server\share\.git` decide the #438 probe. So the boundary it defends could move
+without the test noticing -- and it did, in #439, where a UNC share root would have
+been admitted as narrow. It now answers that probe TRUE, which proves the UNC scope
+predicate excludes a share root **on its own** rather than by accident of the
+runner's drive layout.
+
+⚠ **Fixed by isolation, deliberately not by a retry or a flaky marker.** A retry
+would have hidden the false red while leaving the false green fully intact -- and
+the false green is what let a real regression through.
+
+**The durable half is `_no_real_access_under()`**, a tripwire wrapping `Path.stat`
+/ `read_text` / `open` that fails loudly if a test touches the fake root at all.
+Two details are load-bearing and were both found by measurement rather than
+design:
+
+- ⚠⚠ **It raises a `BaseException` subclass, not `AssertionError`.** Every read
+  site it covers is wrapped in a bare `except Exception` in production
+  (`_composer_requires` and friends). The first version derived from `Exception`,
+  was silently swallowed, and **a deliberately re-broadened mock passed cleanly
+  with the guard in place** -- a tripwire that cannot fire is worse than none,
+  because it reads as coverage.
+- An audit hook showed the blanket `Path.exists=True` also convinced
+  `detect_framework` that seven manifests existed, so a unit test did seven
+  network round trips reading `composer.json`, `package.json`, `pyproject.toml`,
+  `pom.xml`, `build.gradle`, `Gemfile` and `requirements.txt`. Those never failed
+  anything, because production swallows them. Narrowed anyway.
+
+Proven non-vacuous by removing the `is_file` patch: the guard fires and names the
+call, rather than the run going red somewhere else an hour later.
+
 ## [1.108.275] - 2026-08-12 - A pattern that matches nothing now says so
 
 ### `entry_point_patterns` failed silently ([#446](https://github.com/jgravelle/jcodemunch-mcp/issues/446))

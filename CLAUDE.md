@@ -290,6 +290,61 @@ not measure is what that costs in practice.
 a RESUMED conversation counts accumulated context on every step, so the total is
 dominated by how much the agent read early on, which compounds.
 
+**Merged 2026-08-13: #439 (@JayceeB1) Windows drive-root child Git repos, closing
+#438** — plus **#453 fixed on top, test-only.** Both ride the next release; no
+version bump. ⚠⚠ **The reusable lesson is one sentence and it cost most of a day:
+a mock broad enough to satisfy an assertion can be broad enough to bypass what the
+assertion is about.** It fired three times in three different costumes.
+
+⚠⚠ **My own review advice on #439 was WRONG and nearly shipped a hole.** I told
+them `_path_safety_part_count(path) == 2` subsumed `not drive.startswith("\\\\")`.
+It does not: the helper is a **DEPTH** rule and the UNC clause is a **SCOPE** rule.
+A UNC share root has ONE real part and the helper adds one for the
+`\\server\share` anchor, so it computes to **exactly 2 — the same as `C:\repo`**.
+With the clause gone, `\\server\share` holding a `.git` is admitted, handing the
+indexer a whole file server through the guard that exists to stop that (#321/#322).
+⚠ **`len(path.parts)` genuinely WAS a redundant depth notion — that half was
+right.** The error was concluding that a second condition mentioning the same
+variable must therefore be redundant too. **Check what a predicate is FOR, not what
+it reads.** Restored with both clauses, the reason recorded in the docstring, and
+the bad advice corrected in the CHANGELOG rather than deleted
+([[feedback_a_fix_comment_is_not_evidence_about_its_siblings]] — same reason).
+
+⚠⚠ **The regression test for it was ALSO wrong, in a way that PASSED.** It patched
+`os.path.exists` to a blanket `True`, which also answers `_is_container()`'s
+`/.dockerenv` probe — that drops `_MIN_PATH_PARTS` from three to two, so `2 < 2`
+skips the guard entirely and `_is_shallow_windows_git_root` **was never called**
+(proven by spying on it: zero invocations). ⚠ **The tell was that it failed
+IDENTICALLY with and without the fix.** A test failing on both sides is as
+uninformative as one passing on both sides, and it is the cheaper tell to notice
+because you are already looking at a red. **Run the non-vacuity pass even when the
+test is currently failing.**
+
+⚠⚠ **#453's tripwire had the same disease a third time: it could not fire.**
+`_no_real_access_under` raised `AssertionError`, and every read site it guards is
+wrapped in a bare `except Exception` in production, so a deliberately re-broadened
+mock **passed cleanly with the guard installed**. Now derives from
+`BaseException`. **A guard that cannot fire is worse than no guard, because it
+reads as coverage.** Always prove a new guard fires by breaking the thing it
+watches.
+
+⚠ **#453's actual root cause was NOT the one I inferred**, and the difference
+mattered. I traced seven network `read_text` calls (`detect_framework` probing
+manifests under a blanket `Path.exists=True`) and took them for the culprit; they
+are real network I/O in a unit test but are **swallowed by production's
+`except Exception` and never failed anything**. The failure was
+`resolve_index_identity` → `folder_path.is_file()` (`storage/git_root.py:160`),
+never patched. **Only pulling the real CI traceback settled it** — attempt 1 of a
+rerun run, via `gh api .../runs/<id>/attempts/1/jobs`, because **a rerun flips the
+run's conclusion to success and hides the failure from `gh run list`**.
+`Path.is_file()` swallows ENOENT-class errors (a box with no such share) but
+propagates `WinError 64` (a runner with live-but-failing networking) — same test,
+opposite outcomes, decided by whose network answered.
+
+⚠ **Process note: `git checkout -- <file>` destroyed uncommitted work TWICE**
+during the non-vacuity passes, because the falsification edit and the fix lived in
+the same file. Copy the fixed file to the scratchpad first and restore from that.
+
 **Merged 2026-07-25: #379 (@oderwat) Gleam import extraction** — Gleam was already
 in `LANGUAGE_REGISTRY`, so symbols extracted but the import graph stayed EMPTY,
 leaving `find_importers`/`get_blast_radius`/`get_dependency_graph` silently blind
