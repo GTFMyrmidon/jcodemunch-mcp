@@ -1,5 +1,63 @@
 # Changelog
 
+## [Unreleased] - Two subsystems reading one index disagreed, and the wrong one had no hedge
+
+### `find_dead_code` reported a rendered template as dead at confidence 1.0 ([#461](https://github.com/jgravelle/jcodemunch-mcp/issues/461))
+
+A template is never *imported*. It is reached by a render edge — a string
+argument (`render(request, "page.html")`) that `flow_edges` resolves to a file.
+`find_dead_code` classified purely from the import graph, so an actively
+rendered template came back `zero_importers` while
+`flow_edges._resolve_template` resolved that same file from the same index in
+the same process.
+
+Resolved render edges now contribute live roots, surfaced separately as
+`render_reachable_count` and an analysis note: a file kept alive by an inbound
+render edge is reachable for a *different reason* than one that looks like an
+entry point, and a caller auditing the verdict could not otherwise tell them
+apart from a single count.
+
+⚠⚠ **The confidence value is the sharp part, not the misclassification.** `1.0`
+is reserved for "no importers and not a test file" — a test file gets `0.9`, a
+cascading case `0.7`. So the one file class indexed *because* another subsystem
+can prove it reachable was reported dead with no hedge attached, above the
+default `min_confidence` of `0.8`, meaning it could not be filtered out without
+discarding genuine findings too. **A wrong answer delivered at maximum certainty
+is worse than the same wrong answer delivered tentatively**, because the
+confidence is exactly what a caller uses to decide whether to look.
+
+⚠ **Deliberately NOT an extension exemption**, and two tests exist to fail
+against one. A template that nothing renders **is** dead and is still reported;
+`.html` is not special, having an inbound render edge is. An exemption would
+trade a false positive for a false negative — the worse direction, because
+silence reads as "nothing found" — and would not generalise to the other edge
+families `resolve_flow_edges` already emits.
+
+⚠ **This is not a regression from [#459](https://github.com/jgravelle/jcodemunch-mcp/pull/459) and that PR is not the cause.** Before the HTML
+file class, `.html` was not indexed, so it could not be reported dead — it also
+could not be resolved, which is the silent degradation
+[#452](https://github.com/jgravelle/jcodemunch-mcp/issues/452) was accepted to
+fix. The trade was made knowingly and stated in a comment at `HTML_SPEC`.
+
+⚠ **Two corrections to the issue's own text, made rather than quietly
+contradicted.** It claimed this would newly introduce content scanning to a tool
+that "reads only the import graph"; `find_dead_code` already reads file content
+at two sites (`_package_json_entries`, the `__main__` guard), so the fix is
+always-on and the design question the issue raised does not arise. It also
+flagged the observatory-grade question as unmeasured; measured, templates emit no
+symbols and `dead_symbol_count` is 0, so the symbol-driven `dead_code` radar axis
+does not move.
+
+⚠ Scope checked rather than assumed: **`get_dead_code_v2` does not share this
+defect.** It returns symbols only and templates emit none — 0 template-derived
+entries on the reproduction. Worth stating because
+[#446](https://github.com/jgravelle/jcodemunch-mcp/issues/446) went the other
+way, where both dead-code tools needed the same fix and doing one would have been
+half a job.
+
+The resolver call degrades to the previous behaviour and logs at debug on
+failure: a flow-edge resolution problem must never fail this tool.
+
 ## [1.108.276] - 2026-08-13 - A Windows drive-root child can prove it is a repository
 
 ### Exact Git working trees no longer trip the broad-root guard ([#438](https://github.com/jgravelle/jcodemunch-mcp/issues/438))
