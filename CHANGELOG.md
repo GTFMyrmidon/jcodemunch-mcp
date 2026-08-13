@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+### `.html` / `.htm` are indexable as a text-searchable file class ([#452](https://github.com/jgravelle/jcodemunch-mcp/issues/452), [PR #459](https://github.com/jgravelle/jcodemunch-mcp/pull/459) by [@phantom-man](https://github.com/phantom-man))
+
+`.html` and `.htm` register on the bundled `html` grammar — the one `RAZOR_SPEC`
+already rides, so no new dependency — with **empty `symbol_node_types`**. An
+indexed template contributes **zero** entries to `index.symbols`, so every
+symbol-driven consumer (`find_dead_code`'s per-symbol sweep, the health-radar
+axes, `get_symbol_importance`, the Gini concentration maths) is unaffected. What
+changes is that the file enters `index.source_files`.
+
+That is the point of the change, not a side effect. `flow_edges._resolve_template`
+resolves a `render(request, "page.html")` string to its template **only when that
+file is indexed**, so before this it returned `None` on every Django, Flask,
+Express and Rails repo we touch — the `views` annotation on `get_signal_chains`
+and the render edges in `get_endpoint_impact` were degraded, silently, for
+exactly that reason.
+
+⚠ **The markdown half of #452 was declined**, and not on scope grounds:
+`find_dead_code` is file-driven with no language filter, nothing imports a `.md`
+file, and on the reporter's own numbers 2,410 new section symbols would have
+landed in dead code — collapsing the `dead_code` radar axis and the composite
+grade we publish weekly for third-party repos. **A repo would have received a
+worse public grade for being well documented.** Section-level doc retrieval is
+[jdocmunch](https://github.com/jgravelle/jdocmunch-mcp)'s product and ships today.
+
+⚠ **The known interaction shipped stated rather than discovered**, in a comment at
+`HTML_SPEC`: an indexed `.html` with no importers was still a dead *file* under
+the file-level rule. **That caveat is closed in this same unreleased window** by
+the #461 fix below, which teaches `find_dead_code` that a resolved render edge is
+a reachability edge.
+
 ### `find_dead_code` reported a rendered template as dead at confidence 1.0 ([#461](https://github.com/jgravelle/jcodemunch-mcp/issues/461))
 
 A template is never *imported*. It is reached by a render edge — a string
