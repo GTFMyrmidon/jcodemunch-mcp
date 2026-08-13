@@ -23,10 +23,10 @@ from jcodemunch_mcp.storage import process_locks as locks
 IDENTITY_PLATFORMS = ("win32", "linux")
 
 
-# --- process_create_time ---------------------------------------------------
+# --- _process_create_time ---------------------------------------------------
 
 def test_own_create_time_is_sane():
-    ct = locks.process_create_time(os.getpid())
+    ct = locks._process_create_time(os.getpid())
     if sys.platform not in IDENTITY_PLATFORMS:
         pytest.skip("creation-time identity not implemented on this platform")
     assert ct is not None
@@ -43,14 +43,14 @@ def test_own_create_time_is_sane():
 def test_create_time_stable_across_reads():
     if sys.platform not in IDENTITY_PLATFORMS:
         pytest.skip("creation-time identity not implemented on this platform")
-    a = locks.process_create_time(os.getpid())
-    b = locks.process_create_time(os.getpid())
+    a = locks._process_create_time(os.getpid())
+    b = locks._process_create_time(os.getpid())
     assert a is not None and b is not None
     assert abs(a - b) < 0.5
 
 
 def test_create_time_of_dead_pid_is_none():
-    assert locks.process_create_time(999999999) is None
+    assert locks._process_create_time(999999999) is None
 
 
 # --- registry: recycled-PID rows are pruned --------------------------------
@@ -91,7 +91,7 @@ def test_register_records_matching_create_time(tmp_path):
         entries = registry.live_processes(str(tmp_path))
         assert [e.pid for e in entries] == [os.getpid()]
         if sys.platform in IDENTITY_PLATFORMS:
-            own = locks.process_create_time(os.getpid())
+            own = locks._process_create_time(os.getpid())
             assert entries[0].create_time is not None
             assert abs(entries[0].create_time - own) < 2.0
     finally:
@@ -142,3 +142,13 @@ def test_lock_roundtrip_with_identity(tmp_path):
         assert locks.acquire("testscope", "rt/target", str(tmp_path)) is False
     finally:
         locks.release("testscope", "rt/target", str(tmp_path))
+
+def test_unreadable_create_time_treats_alive_pid_as_live(monkeypatch):
+    """The permission-denied fallback, pinned: PID alive but creation time
+    unreadable must resolve LIVE. This is the branch that decides "treat as
+    live", and the conservative direction is the point - the alternative is
+    reclaiming a lock from a running process. Hard to provoke naturally
+    (PROCESS_QUERY_LIMITED_INFORMATION reads even protected processes), so
+    the unreadable path is simulated."""
+    monkeypatch.setattr(locks, "_process_create_time", lambda pid: None)
+    assert locks._is_live_holder(os.getpid(), 12345.0) is True

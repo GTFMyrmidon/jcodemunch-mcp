@@ -218,7 +218,7 @@ def _is_pid_alive(pid: int) -> bool:
 _FILETIME_EPOCH_DELTA = 11644473600
 
 
-def process_create_time(pid: int) -> Optional[float]:
+def _process_create_time(pid: int) -> Optional[float]:
     """OS creation time of an arbitrary PID as Unix-epoch seconds, or None.
 
     jcm#450: ``_is_pid_alive`` answers "is this PID taken?", not "is my process
@@ -328,7 +328,7 @@ def _is_live_holder(pid: int, expected_create_time: object) -> bool:
         return False
     if not isinstance(expected_create_time, (int, float)):
         return True
-    actual = process_create_time(pid)
+    actual = _process_create_time(pid)
     if actual is None:
         return True
     return abs(actual - float(expected_create_time)) <= _CREATE_TIME_TOLERANCE_S
@@ -385,7 +385,7 @@ def acquire(scope: str, target: str, storage_path: Optional[str] = None) -> bool
         # Identity anchor against PID reuse (jcm#450); None on platforms
         # without a creation-time source, which readers treat as "no identity
         # recorded" (liveness-only).
-        "create_time": process_create_time(os.getpid()),
+        "create_time": _process_create_time(os.getpid()),
     }
     payload = json.dumps(metadata).encode("utf-8")
 

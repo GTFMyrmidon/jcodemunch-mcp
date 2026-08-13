@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from .process_locks import _client_id, _is_live_holder, process_create_time
+from .process_locks import _client_id, _is_live_holder, _process_create_time
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,7 @@ def register(transport: str, version: str, storage_path: Optional[str] = None) -
             "version": version,
             "started_at": datetime.now(timezone.utc).isoformat(),
             # Identity anchor against PID reuse (jcm#450).
-            "create_time": process_create_time(os.getpid()),
+            "create_time": _process_create_time(os.getpid()),
         }
         tmp = path.with_suffix(f".tmp.{os.getpid()}")
         tmp.write_text(json.dumps(payload), encoding="utf-8")
