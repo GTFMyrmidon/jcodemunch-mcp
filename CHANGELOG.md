@@ -82,6 +82,93 @@ design:
 Proven non-vacuous by removing the `is_file` patch: the guard fires and names the
 call, rather than the run going red somewhere else an hour later.
 
+### A stored list of 50 could mean 50 or 500 ([#441](https://github.com/jgravelle/jcodemunch-mcp/issues/441))
+
+`ranking_events.returned_ids` keeps the first 50 ids and the row carried nothing
+saying how many there really were, so **a complete result set and a truncated one
+were byte-identical in every stored field**. An analysis could neither exclude the
+truncated rows nor say how many it dropped.
+
+Rows now carry `returned_count`: the true size, recorded before the cap. The id
+list stays bounded — only the count is added.
+
+⚠⚠ **Pre-existing rows keep `NULL`, which means UNKNOWN and must never be read as
+"the count equals `len(returned_ids)`".** That inference is the defect, not the
+fix, and no heuristic backfills it — the same treatment `ledger_trust` gives its
+unseparable history. ⚠ `0` is a measurement and `NULL` is an absence; the test
+pins that they do not collide.
+
+⚠ **Blast radius is analysis, not runtime, and that was checked rather than
+assumed.** `regret` only asks whether `returned_ids` is empty or holds more than
+one entry (`regret.py:122`, `:138-144`) and `ledger_trust` only whether it is
+empty (`:112-115`) — truncation begins above 50, so none of them is reached.
+
+⚠ **@rknighton filed this against his own earlier claim.** In Discussion #430 he
+described six rows as having "hit the 50-item cap", an assertion he had inferred
+from the stored length rather than measured, and he caught it on re-verification.
+The defect and the mistake it invites are the same shape.
+
+### ~79% of a telemetry write was reopening the database ([#442](https://github.com/jgravelle/jcodemunch-mcp/issues/442))
+
+With `perf_telemetry_enabled` on — off by default, so this reaches opt-in installs
+only — every event opened a fresh connection and replayed all eight
+`IF NOT EXISTS` statements before inserting one row. Connections are now cached
+per resolved path for the process.
+
+⚠⚠ **The schema replay was NOT the expensive part, and measuring that is what
+killed the cheap fix.** The obvious low-risk change — remember the schema is ready
+and skip the DDL, needing no connection lifetime at all — was measured first,
+across 400 interleaved events:
+
+| arm | median |
+|---|---:|
+| connect + `PRAGMA` + 8 DDL + insert | 15.441ms |
+| connect + insert, schema ensured once | 15.166ms |
+| cached connection + insert | 3.214ms |
+
+Skipping the DDL captures **2%** of the available saving. The other 98% is the
+open/close itself, so caching the connection is the only thing that works. The
+shipped path measures **3.455ms against a 16.615ms pre-fix baseline, a 79%
+reduction**. (Absolute figures are this machine's and slower than the reporter's
+3.99ms/0.74ms; the ratio is what transfers, and it agrees with his 82%.)
+
+⚠ `check_same_thread=False` is **required**, because searches dispatch through
+`asyncio.to_thread` and a cached connection outlives the thread that opened it. It
+is **safe** because every caller holds `_State._lock` — the serialisation the flag
+would otherwise enforce is already there. That reasoning is recorded at the call
+site, because it is the thing a future edit could quietly invalidate.
+
+### Two ways a process-lifetime connection goes bad, both silent
+
+Neither was in the report; the first surfaced when the benchmark crashed.
+
+⚠⚠ **A closed cached connection poisoned the cache.** The old contract had callers
+closing after every write, so any missed call site — or third-party caller — left
+a dead handle that every later caller received. Telemetry would be off for the
+process while every write still reported success.
+
+⚠⚠ **A deleted database file would be written into the void.** SQLite keeps
+writing happily to an unlinked inode; rows land nowhere and nothing raises. Before
+caching, the next event simply recreated the file, so caching would have
+introduced this. ⚠ A liveness probe cannot catch it — the connection is perfectly
+healthy, it is the file that is gone — so the guard checks `exists()` too.
+⚠ **Windows cannot produce this case at all** (it refuses to unlink a file with an
+open handle), so the end-to-end test is POSIX-only and a portable unit test covers
+the predicate. Stating that rather than implying cross-platform coverage.
+
+Both checks together cost **0.344ms, 2.1% of the pre-fix write**, against the 79%
+saved. Paying 2 to keep 79, where the alternative failure is silent.
+
+`close_perf_dbs()` is public because the connections now outlive a write: on
+Windows an open handle blocks removal of the directory holding the database.
+⚠ It is registered with `atexit` **before** `flush` on purpose — `atexit` runs
+LIFO, so registering it second would close the database out from under the final
+flush.
+
+`tests/test_v1_108_276.py` (19, 1 skipped), **11 fail against the pre-fix call
+sites**; the 7 passing both sides are the schema, the migration's idempotence, the
+telemetry-disabled control and the public surface.
+
 ## [1.108.275] - 2026-08-12 - A pattern that matches nothing now says so
 
 ### `entry_point_patterns` failed silently ([#446](https://github.com/jgravelle/jcodemunch-mcp/issues/446))
