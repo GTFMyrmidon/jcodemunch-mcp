@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import logging
 import re
 import time
 from typing import Optional
@@ -12,6 +13,8 @@ from ..storage import IndexStore
 from ..parser.imports import resolve_specifier
 from ._utils import index_status_to_tool_error, resolve_repo
 from ..parser.context._route_utils import ENTRY_POINT_DECORATOR_RE
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +253,42 @@ def find_dead_code(
     live_roots.update(pkg_entries)
 
     # -----------------------------------------------------------------------
+    # Phase 1b: render-edge reachability (#461)
+    # -----------------------------------------------------------------------
+    # A template is never IMPORTED. It is reached by a render edge — a string
+    # argument (`render(request, "page.html")`) that `flow_edges` resolves to a
+    # file. Classifying from the import graph alone therefore reports an
+    # actively-rendered template as `zero_importers` at confidence 1.0, the
+    # value reserved for "no importers and not a test file", while
+    # `_resolve_template` resolves that same file from the same index in the
+    # same process. Two subsystems disagreeing is bad; the one that was wrong
+    # being the one with no hedge is worse.
+    #
+    # ⚠ This is deliberately NOT an extension exemption. A template that
+    # nothing renders IS dead and must still be reported — `.html` is not
+    # special, having an inbound render edge is. An exemption would suppress
+    # the true positives with the false ones and would not generalise to the
+    # other edge families `resolve_flow_edges` already emits.
+    #
+    # ⚠ Always-on rather than behind a parameter: this tool ALREADY reads file
+    # content in two places (package.json entries above, the `__main__` guard
+    # in Phase 2), so consulting a content-scanning resolver introduces no new
+    # class of work. The issue text originally claimed otherwise and was wrong.
+    render_reachable: set[str] = set()
+    try:
+        from .flow_edges import resolve_flow_edges
+
+        for edge in resolve_flow_edges(index, store, owner, name, kinds=("render",)):
+            if edge.get("resolution") != "resolved":
+                continue
+            dst = edge.get("dst_file")
+            if dst and dst in source_files:
+                render_reachable.add(dst)
+    except Exception:  # pragma: no cover - resolver must never fail the tool
+        logger.debug("render-edge reachability pass failed", exc_info=True)
+    live_roots.update(render_reachable)
+
+    # -----------------------------------------------------------------------
     # Phase 2: content check for `if __name__ == "__main__"` (Python only,
     # only for files not yet classified as live and with zero importers)
     # -----------------------------------------------------------------------
@@ -350,6 +389,14 @@ def find_dead_code(
     ]
     if sample_roots:
         analysis_notes.append(f"Sample entry points: {', '.join(sample_roots)}")
+    # Surfaced separately from the entry-point total (#461): a file kept alive by
+    # an inbound render edge is reachable for a different reason than a file that
+    # looks like an entry point, and a caller auditing this tool's verdict cannot
+    # tell them apart from a single count.
+    if render_reachable:
+        analysis_notes.append(
+            f"Reachable via render edges (not imports): {len(render_reachable)}"
+        )
 
     result: dict = {
         "repo": f"{owner}/{name}",
@@ -360,6 +407,7 @@ def find_dead_code(
         "dead_file_count": len(dead_files),
         "dead_symbol_count": len(dead_symbols),
         "live_root_count": len(live_roots),
+        "render_reachable_count": len(render_reachable),
         "analysis_notes": analysis_notes,
         "_meta": {"timing_ms": round(elapsed, 1)},
     }
