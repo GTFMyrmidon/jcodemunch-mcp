@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.108.277] - 2026-08-13 - Reachability is not only the import graph, and liveness is not only the PID
 
 ### `.html` / `.htm` are indexable as a text-searchable file class ([#452](https://github.com/jgravelle/jcodemunch-mcp/issues/452), [PR #459](https://github.com/jgravelle/jcodemunch-mcp/pull/459) by [@phantom-man](https://github.com/phantom-man))
 
