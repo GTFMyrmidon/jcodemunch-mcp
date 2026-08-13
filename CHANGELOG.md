@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] - A Windows drive-root child can prove it is a repository
+## [1.108.276] - 2026-08-13 - A Windows drive-root child can prove it is a repository
 
 ### Exact Git working trees no longer trip the broad-root guard ([#438](https://github.com/jgravelle/jcodemunch-mcp/issues/438))
 

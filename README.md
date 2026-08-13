@@ -146,9 +146,9 @@ That's the highlight reel. The complete tour of 90+ tools, the MUNCH compact wir
 <!-- WHATSNEW:START -->
 #### What's new
 
+- **[v1.108.276](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.276)** (2026-08-13) — A Windows drive-root child can prove it is a repository
 - **[v1.108.275](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.275)** (2026-08-12) — A pattern that matches nothing now says so
 - **[v1.108.274](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.274)** (2026-08-12) — A disclosure that is true when written is not yet a control
-- **[v1.108.273](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.273)** (2026-08-12) — A pattern that names two extensions and matches neither
 <!-- WHATSNEW:END -->
 
 ---
