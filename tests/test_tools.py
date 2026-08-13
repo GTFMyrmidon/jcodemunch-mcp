@@ -1161,6 +1161,193 @@ class TestWindowsUNCPathSafety:
         assert "too broad to index safely" in result["error"]
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows drive path semantics only")
+class TestWindowsDriveRootPathSafety:
+    """Exact Git roots directly below a Windows drive root are project-scoped."""
+
+    def test_drive_root_child_git_repo_is_not_too_broad(self, tmp_path):
+        from jcodemunch_mcp.tools import index_folder as index_folder_module
+
+        drive_root_repo = Path(r"F:\repo")
+
+        with (
+            patch.object(
+                index_folder_module._config, "load_project_config", return_value=None
+            ),
+            patch.object(
+                index_folder_module._config,
+                "get",
+                side_effect=lambda key, default=None, repo=None: (
+                    [] if key == "trusted_folders" else default
+                ),
+            ),
+            patch(
+                "jcodemunch_mcp.tools.index_folder.Path.resolve",
+                return_value=drive_root_repo,
+            ),
+            patch("jcodemunch_mcp.tools.index_folder.Path.exists", return_value=True),
+            patch("jcodemunch_mcp.tools.index_folder.Path.is_dir", return_value=True),
+            patch(
+                "jcodemunch_mcp.tools.index_folder.os.path.exists",
+                side_effect=lambda candidate: Path(candidate) == drive_root_repo / ".git",
+            ),
+            patch.object(
+                index_folder_module, "discover_local_files", return_value=([], [], {})
+            ),
+        ):
+            result = index_folder_module.index_folder(
+                str(tmp_path / "repo"),
+                use_ai_summaries=False,
+                storage_path=str(tmp_path / "store"),
+            )
+
+        assert "too broad" not in result.get("error", "")
+        assert result["error"] == "No source files found"
+
+    def test_drive_root_remains_too_broad(self, tmp_path):
+        from jcodemunch_mcp.tools import index_folder as index_folder_module
+
+        drive_root = Path("F:/")
+
+        with (
+            patch.object(
+                index_folder_module._config, "load_project_config", return_value=None
+            ),
+            patch.object(
+                index_folder_module._config,
+                "get",
+                side_effect=lambda key, default=None, repo=None: (
+                    [] if key == "trusted_folders" else default
+                ),
+            ),
+            patch(
+                "jcodemunch_mcp.tools.index_folder.Path.resolve",
+                return_value=drive_root,
+            ),
+            patch("jcodemunch_mcp.tools.index_folder.Path.exists", return_value=True),
+            patch("jcodemunch_mcp.tools.index_folder.Path.is_dir", return_value=True),
+        ):
+            result = index_folder_module.index_folder(
+                str(tmp_path / "drive"),
+                use_ai_summaries=False,
+                storage_path=str(tmp_path / "store"),
+            )
+
+        assert result["success"] is False
+        assert "too broad to index safely" in result["error"]
+
+    def test_shallow_non_git_directory_remains_too_broad(self, tmp_path):
+        from jcodemunch_mcp.tools import index_folder as index_folder_module
+
+        shallow_directory = Path(r"F:\Users")
+
+        with (
+            patch.object(
+                index_folder_module._config, "load_project_config", return_value=None
+            ),
+            patch.object(
+                index_folder_module._config,
+                "get",
+                side_effect=lambda key, default=None, repo=None: (
+                    [] if key == "trusted_folders" else default
+                ),
+            ),
+            patch(
+                "jcodemunch_mcp.tools.index_folder.Path.resolve",
+                return_value=shallow_directory,
+            ),
+            patch(
+                "jcodemunch_mcp.tools.index_folder.Path.exists",
+                autospec=True,
+                side_effect=lambda candidate: candidate == shallow_directory,
+            ),
+            patch("jcodemunch_mcp.tools.index_folder.Path.is_dir", return_value=True),
+            patch(
+                "jcodemunch_mcp.tools.index_folder.os.path.exists",
+                return_value=False,
+            ),
+        ):
+            result = index_folder_module.index_folder(
+                str(tmp_path / "users"),
+                use_ai_summaries=False,
+                storage_path=str(tmp_path / "store"),
+            )
+
+        assert result["success"] is False
+        assert "too broad to index safely" in result["error"]
+
+    def test_unc_share_root_with_git_remains_too_broad(self, tmp_path):
+        r"""A UNC share root is out of scope even when it holds a ``.git``.
+
+        ⚠ This is NOT covered by the depth check. ``_path_safety_part_count``
+        adds one for the ``\\server\share`` anchor, so a share root computes to
+        exactly two — the same depth as ``C:\repo``. Only the explicit UNC scope
+        predicate keeps it out, so removing that predicate makes this admit a
+        whole file server. See #321/#322.
+        """
+        from jcodemunch_mcp.tools import index_folder as index_folder_module
+
+        share_root = Path(r"\\server\share")
+        assert index_folder_module._path_safety_part_count(share_root) == 2, (
+            "premise: a UNC share root is depth-equivalent to C:\\repo, so the "
+            "depth check alone cannot exclude it"
+        )
+
+        with (
+            patch.object(
+                index_folder_module._config, "load_project_config", return_value=None
+            ),
+            patch.object(
+                index_folder_module._config,
+                "get",
+                side_effect=lambda key, default=None, repo=None: (
+                    [] if key == "trusted_folders" else default
+                ),
+            ),
+            patch(
+                "jcodemunch_mcp.tools.index_folder.Path.resolve",
+                return_value=share_root,
+            ),
+            patch("jcodemunch_mcp.tools.index_folder.Path.exists", return_value=True),
+            patch("jcodemunch_mcp.tools.index_folder.Path.is_dir", return_value=True),
+            patch(
+                "jcodemunch_mcp.tools.index_folder.os.path.exists",
+                # ⚠ Narrow, NOT return_value=True. A blanket True also answers
+                # _is_container()'s /.dockerenv probe, which drops
+                # _MIN_PATH_PARTS to 2 so `2 < 2` skips the guard entirely and
+                # the test passes without ever reaching the code under test.
+                side_effect=lambda candidate: Path(candidate) == share_root / ".git",
+            ),
+            patch.object(
+                index_folder_module, "discover_local_files", return_value=([], [], {})
+            ),
+        ):
+            result = index_folder_module.index_folder(
+                str(tmp_path / "share"),
+                use_ai_summaries=False,
+                storage_path=str(tmp_path / "store"),
+            )
+
+        assert result["success"] is False
+        assert "too broad to index safely" in result["error"]
+
+    def test_unc_repository_below_share_root_is_unaffected(self, tmp_path):
+        r"""``\\server\share\repo`` never reaches the exception at all.
+
+        Its safety depth is three, so it clears the guard on depth alone. Pinned
+        so a future widening of the exception cannot be justified by "UNC repos
+        need it" — they do not.
+        """
+        from jcodemunch_mcp.tools import index_folder as index_folder_module
+
+        unc_repo = Path(r"\\server\share\repo")
+        assert index_folder_module._path_safety_part_count(unc_repo) == 3
+        with patch(
+            "jcodemunch_mcp.tools.index_folder.os.path.exists", return_value=True
+        ):
+            assert index_folder_module._is_shallow_windows_git_root(unc_repo) is False
+
+
 class TestIndexFolderGitignoreWarning:
     """index_folder should warn when no root .gitignore exists and file count is large."""
 
