@@ -229,10 +229,13 @@ def process_create_time(pid: int) -> Optional[float]:
     PID, never our holder.
 
     Windows: OpenProcess + GetProcessTimes (same primitive runtime_identity
-    uses for self; here against a foreign PID). ``argtypes``/``restype`` are
-    REQUIRED — see the warning on ``_is_pid_alive``.
-    Linux: /proc/<pid>/stat starttime (field 22, clock ticks since boot) plus
-    /proc/stat btime.
+    uses for self; here against a foreign PID) — seconds since the Unix epoch.
+    ``argtypes``/``restype`` are REQUIRED — see the warning on ``_is_pid_alive``.
+    Linux: /proc/<pid>/stat starttime (field 22) — SECONDS SINCE BOOT, not
+    epoch. The two platforms deliberately do not share an epoch; values are
+    only ever compared against ones produced by this same function on the same
+    machine, so the domain only has to be internally stable (see the Linux
+    branch comment for why boot-relative is the safe choice there).
     Other platforms: None (identity check degrades to liveness-only).
     """
     if sys.platform == "win32":
@@ -289,20 +292,26 @@ def process_create_time(pid: int) -> Optional[float]:
             # After the comm field: fields[0] is stat field 3; starttime is
             # stat field 22 -> index 19.
             start_ticks = int(fields[19])
-            with open("/proc/stat", "rb") as fh:
-                btime = next(
-                    int(line.split()[1]) for line in fh if line.startswith(b"btime")
-                )
-            return btime + start_ticks / os.sysconf("SC_CLK_TCK")
-        except (OSError, ValueError, IndexError, StopIteration):
+            # ⚠ Deliberately NOT converted to wall clock. /proc/stat's btime is
+            # derived from the current wall clock, so a settimeofday-class step
+            # (suspend/resume, VM restore, first NTP sync) moves every recorded
+            # value at once and reads live holders as recycled. This value is
+            # only ever compared against one produced by this same function on
+            # this same machine, so the epoch is irrelevant to the comparison
+            # and seconds-since-boot is strictly safer than seconds-since-epoch.
+            # (A lock file surviving a reboot degrades to bare-PID matching —
+            # exactly pre-fix behavior, and far rarer than a clock step.)
+            return start_ticks / os.sysconf("SC_CLK_TCK")
+        except (OSError, ValueError, IndexError):
             return None
     return None
 
 
-# Both sides derive the value with the same code from the same OS constant, so
-# a real match is near-exact; the tolerance only absorbs float rounding and
-# /proc btime jitter (btime can shift ~1s under clock sync). A recycled PID's
-# mismatch is minutes-to-weeks, never within this window.
+# Both sides derive the value with the same code from the same OS constant
+# (Windows: absolute FILETIME; Linux: boot-relative starttime ticks — neither
+# moves under wall-clock adjustment), so a real match is near-exact and the
+# tolerance only absorbs float rounding. A recycled PID's mismatch is
+# minutes-to-weeks, never within this window.
 _CREATE_TIME_TOLERANCE_S = 2.0
 
 

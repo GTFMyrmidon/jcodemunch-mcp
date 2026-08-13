@@ -30,8 +30,14 @@ def test_own_create_time_is_sane():
     if sys.platform not in IDENTITY_PLATFORMS:
         pytest.skip("creation-time identity not implemented on this platform")
     assert ct is not None
-    # Created after 2020 and not in the future (small skew tolerance).
-    assert 1577836800.0 < ct <= time.time() + 5.0
+    if sys.platform == "win32":
+        # Windows is epoch-domain: created after 2020, not in the future.
+        assert 1577836800.0 < ct <= time.time() + 5.0
+    else:
+        # Linux is boot-relative (jcm#450: immune to clock steps): the sane
+        # bound is [0, uptime].
+        uptime = float(open("/proc/uptime").read().split()[0])
+        assert 0.0 <= ct <= uptime + 5.0
 
 
 def test_create_time_stable_across_reads():

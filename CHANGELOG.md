@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased]
+
+### Process liveness now verifies identity, not just PID occupancy ([#450](https://github.com/jgravelle/jcodemunch-mcp/issues/450))
+
+`_is_pid_alive` answered "is this PID taken?", not "is my process still there?"
+After the OS recycles a PID, a process-registry row or coordination-lock file
+naming a long-dead holder read as live indefinitely — observed in the field as
+two-week-old registry rows resolving to a Chrome renderer and an AMD service,
+and a recycled PID could equally "hold" a watcher or index-write lock forever.
+
+`register()` and `acquire()` now record the holder's OS creation time
+(Windows: `GetProcessTimes`, absolute FILETIME; Linux: `/proc/<pid>/stat`
+starttime, deliberately kept boot-relative so `settimeofday`-class clock steps
+— suspend/resume, VM restore, first NTP sync — cannot move every recorded
+value at once). Readers (`live_processes`, `inspect`, `acquire` stale-recovery)
+treat alive-PID-but-mismatched-creation-time as dead → stale → prune/reclaim.
+Rows and locks written by earlier versions carry no `create_time` and keep
+liveness-only behavior, so mixed-version stores degrade instead of
+mass-pruning. The watcher's `_is_pid_alive` wrapper, which bypassed the
+identity check and had no production caller, is removed.
+
 ## [1.108.276] - 2026-08-13 - A Windows drive-root child can prove it is a repository
 
 ### Exact Git working trees no longer trip the broad-root guard ([#438](https://github.com/jgravelle/jcodemunch-mcp/issues/438))
@@ -320,8 +341,7 @@ beside it.
 Item 1 of the QA pass — the `install-pack` archive guard missing drive-absolute
 member names — is [#447](https://github.com/jgravelle/jcodemunch-mcp/issues/447),
 with @elfrost's [PR #443](https://github.com/jgravelle/jcodemunch-mcp/pull/443)
-open against it.
-## [1.108.273] - 2026-08-12 - A pattern that names two extensions and matches neither
+open against it.## [1.108.273] - 2026-08-12 - A pattern that names two extensions and matches neither
 
 ### v1.108.271's #435 fix matched nothing ([#445](https://github.com/jgravelle/jcodemunch-mcp/issues/445))
 

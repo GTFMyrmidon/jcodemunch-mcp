@@ -9,10 +9,12 @@ We cannot reap another program's children. What we can do is stop the sprawl
 being invisible, which is the part that let it reach 25.
 
 Each server writes one small file on startup and removes it on clean exit.
-Readers filter by PID liveness and prune what they find dead, so a killed
-process leaves no lasting trace and there is no daemon to keep the registry
-honest. This deliberately reuses ``process_locks._is_pid_alive`` rather than
-inventing a second liveness notion.
+Readers filter by PID liveness AND creation-time identity (jcm#450: a recycled
+PID is pruned like a dead one, not mistaken for the old server) and prune what
+they find dead, so a killed process leaves no lasting trace and there is no
+daemon to keep the registry honest. This deliberately reuses
+``process_locks._is_live_holder`` rather than inventing a second liveness
+notion.
 
 Contains no repo paths, no queries, and no file contents. Written under the
 index store, disclosed in the README's background-behavior section alongside the
