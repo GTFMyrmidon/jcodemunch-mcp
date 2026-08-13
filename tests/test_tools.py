@@ -1,5 +1,6 @@
 """Tests for tools module."""
 
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -1089,6 +1090,65 @@ class TestContainerDetection:
         assert "too broad to index safely" in result["error"]
 
 
+class _RealFilesystemReached(BaseException):
+    r"""Raised when a path-safety test touches the real filesystem (#453).
+
+    ⚠⚠ Derives from ``BaseException``, NOT ``Exception``, and that is the whole
+    point. Every read site this guard covers is wrapped in a bare
+    ``except Exception`` in production (``_composer_requires`` and friends in
+    ``parser/context/framework_profiles.py``), so an ``AssertionError`` tripwire
+    is swallowed and reports nothing. Measured: a deliberately re-broadened mock
+    passed cleanly with an ``Exception``-derived guard in place.
+    """
+
+
+@contextlib.contextmanager
+def _no_real_access_under(fake_root: Path):
+    r"""Fail loudly if anything stats or reads a path under ``fake_root``.
+
+    These tests name a UNC path that does not exist. Any unpatched probe of it
+    goes to the NETWORK, and the verdict then depends on the runner rather than
+    on the code under test. That produced both halves of #453, in opposite
+    directions:
+
+    * **False red.** ``resolve_index_identity`` calls ``folder_path.is_file()``
+      (``storage/git_root.py:160``), which was never patched. ``Path.is_file``
+      swallows ENOENT-class errors -- what a box with no such share returns --
+      but PROPAGATES ``WinError 64`` (``ERROR_NETNAME_DELETED``), which is what a
+      runner with live-but-failing networking returns. Same code, same test,
+      opposite outcomes, decided by the network. Two releases lost to it.
+    * **False green.** ``test_unc_share_root_remains_too_broad`` let the runner's
+      lack of a ``\\server\share\.git`` decide the ``#438`` probe, so the guard
+      it defends could move without the test noticing. It did move, in #439.
+
+    This is a tripwire, not a mock: narrowing the patches is what makes the tests
+    pass. This exists so that re-broadening one fails with a message naming the
+    cause, instead of intermittently and somewhere else.
+    """
+    needle = str(fake_root).lower()
+    originals = {name: getattr(Path, name) for name in ("stat", "read_text", "open")}
+
+    def _guard(name):
+        real = originals[name]
+
+        def wrapper(self, *args, **kwargs):
+            if needle in str(self).lower():
+                raise _RealFilesystemReached(
+                    f"Path.{name}() reached the real filesystem at {str(self)!r}. "
+                    f"A patch is broad enough to make this fake path look real, "
+                    f"or a probe of it is unpatched -- narrow or add one rather "
+                    f"than letting the runner decide the result (see #453)."
+                )
+            return real(self, *args, **kwargs)
+
+        return wrapper
+
+    with contextlib.ExitStack() as stack:
+        for name in originals:
+            stack.enter_context(patch.object(Path, name, _guard(name)))
+        yield
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows UNC path semantics only")
 class TestWindowsUNCPathSafety:
     """Windows UNC roots should be treated as server/share plus descendants."""
@@ -1113,11 +1173,31 @@ class TestWindowsUNCPathSafety:
                 "jcodemunch_mcp.tools.index_folder.Path.resolve",
                 return_value=unc_repo,
             ),
-            patch("jcodemunch_mcp.tools.index_folder.Path.exists", return_value=True),
+            # ⚠ Narrow, NOT return_value=True. A blanket True convinces
+            # detect_framework that composer.json / package.json / pyproject.toml
+            # / pom.xml / build.gradle / Gemfile / requirements.txt all exist
+            # here, and it read_text()s all seven over the network. Those are
+            # swallowed by production's `except Exception`, so they never failed
+            # the test -- they just made a unit test do seven network round
+            # trips. Measured with an audit hook.
+            patch(
+                "jcodemunch_mcp.tools.index_folder.Path.exists",
+                autospec=True,
+                side_effect=lambda candidate: candidate == unc_repo,
+            ),
+            patch(
+                "jcodemunch_mcp.tools.index_folder.os.path.exists",
+                return_value=False,
+            ),
             patch("jcodemunch_mcp.tools.index_folder.Path.is_dir", return_value=True),
+            # ⚠⚠ THIS is the one that lost two releases. resolve_index_identity
+            # calls folder_path.is_file() (storage/git_root.py:160) and nothing
+            # patched it, so os.stat went to the network and raised WinError 64.
+            patch("jcodemunch_mcp.tools.index_folder.Path.is_file", return_value=False),
             patch.object(
                 index_folder_module, "discover_local_files", return_value=([], [], {})
             ),
+            _no_real_access_under(unc_repo),
         ):
             result = index_folder_module.index_folder(
                 str(tmp_path / "repo"),
@@ -1148,8 +1228,24 @@ class TestWindowsUNCPathSafety:
                 "jcodemunch_mcp.tools.index_folder.Path.resolve",
                 return_value=unc_share_root,
             ),
-            patch("jcodemunch_mcp.tools.index_folder.Path.exists", return_value=True),
+            patch(
+                "jcodemunch_mcp.tools.index_folder.Path.exists",
+                autospec=True,
+                side_effect=lambda candidate: candidate == unc_share_root,
+            ),
+            # ⚠⚠ Answering the .git probe TRUE is the point. It proves the UNC
+            # scope predicate (#439) excludes a share root on its own, rather
+            # than because the runner happens to have no such share. Before this,
+            # the guard could move and the test could not tell -- and it did.
+            patch(
+                "jcodemunch_mcp.tools.index_folder.os.path.exists",
+                side_effect=lambda candidate: (
+                    Path(candidate) == unc_share_root / ".git"
+                ),
+            ),
             patch("jcodemunch_mcp.tools.index_folder.Path.is_dir", return_value=True),
+            patch("jcodemunch_mcp.tools.index_folder.Path.is_file", return_value=False),
+            _no_real_access_under(unc_share_root),
         ):
             result = index_folder_module.index_folder(
                 str(tmp_path / "share"),
