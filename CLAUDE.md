@@ -649,6 +649,27 @@ change in what a handoff IS, not only in how long it lasts. It is the intended
 trade — our throughput over their commit — and it should be made in the open
 rather than discovered at expiry.
 
+**3b. A MERGEABLE contributor PR merges BEFORE any changelog-touching work of
+our own** (jjg, 2026-08-14). Not a courtesy and not a preference — a measured
+cost. Every entry we add lands in the same `[Unreleased]` block a contributor's
+entry occupies, so each of our merges puts their PR into conflict, and a
+CONFLICTING fork PR has **no `refs/pull/N/merge`** and therefore gets no CI at
+all. Their branch goes dark for a reason that has nothing to do with their
+change.
+
+⚠⚠ **Measured 2026-08-14: #443 conflicted FIVE TIMES IN ONE DAY** — twice from
+our own PR merges, twice from releases, once from the docs work — and every one
+was resolved by us pushing to their fork. **Five is not five incidents, it is
+one wrong merge order repeated.**
+
+⚠ **The boundary, or the rule fails on its first real case.** A BLOCKED
+contributor PR cannot go first: #443 was unsigned-CLA the whole time, so
+"contributor first" was never available. When it is blocked we ship anyway
+(policy 2 — a release is never blocked on an open issue) and **we own the
+resolution**: push the merge to their branch, resolve it ourselves, and say on
+the thread that the conflict was ours. **This rule is about ORDER when we have a
+choice, never about holding our work behind someone else's form.**
+
 ⚠ **Do not shorten a timebox already posted.** State the new window on new PRs.
 A public promise to a contributor outlives the policy that produced it, and
 retracting one to save six days costs more than the six days. ⚠⚠ **Reaffirmed by
