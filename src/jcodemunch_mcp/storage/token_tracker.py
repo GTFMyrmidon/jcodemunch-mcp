@@ -1385,8 +1385,8 @@ def record_tool_latency(
     _state.record_latency(tool_name, duration_ms, ok=ok, repo=repo, base_path=base_path)
 
 
-def begin_call_context(call_uid: Optional[str] = None) -> Token:
-    """Bind one dispatcher call identifier to the current execution context (#456).
+def begin_call_context() -> Token:
+    """Bind a fresh dispatcher call identifier to the current execution context (#456).
 
     ⚠ Reset with the returned token in a ``finally``. A skipped reset leaves the
     inner entry's identity visible to the outer one after it returns, so the join
@@ -1398,7 +1398,7 @@ def begin_call_context(call_uid: Optional[str] = None) -> Token:
     ``call_tool`` stays the single registered entry: the invariant is held by there
     being one door, not by this helper.
     """
-    return _CURRENT_CALL_UID.set(call_uid or uuid.uuid4().hex)
+    return _CURRENT_CALL_UID.set(uuid.uuid4().hex)
 
 
 def end_call_context(token: Token) -> None:

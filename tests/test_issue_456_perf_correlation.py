@@ -279,18 +279,15 @@ def test_issue_456_writes_outside_dispatch_store_null_call_id(monkeypatch, tmp_p
     assert tool == ranking == (state._session_uid, None)
 
 
-def test_issue_456_telemetry_disabled_creates_no_database(monkeypatch, tmp_path):
-    _set_perf_enabled(monkeypatch, False)
-    state = token_tracker._State()
-    state.record_latency("disabled", 1.0, base_path=str(tmp_path))
-    state.record_ranking_event(
-        tool="disabled",
-        repo=None,
-        query="disabled",
-        returned_ids=[],
-        base_path=str(tmp_path),
-    )
-    assert not (tmp_path / "telemetry.db").exists()
+# The "behaviour with telemetry disabled is unchanged" half of the last acceptance
+# criterion has no test here on purpose. Upstream already pins it from three sides:
+# test_perf_telemetry.py::test_disabled_by_default_no_db_written for the latency sink,
+# test_ranking_ledger.py::test_disabled_no_db for the ranking sink, and
+# test_v1_108_276.py::test_telemetry_disabled_writes_nothing_and_opens_nothing for the
+# explicit base_path route and the connection cache. The new columns are only read
+# after those guards, so there is no pre-guard behaviour left to cover. The payload
+# half of the criterion does have a test below, because it guards a defect that
+# actually happened.
 
 
 def test_issue_456_outbound_payload_has_exact_legacy_keys(monkeypatch):
@@ -368,17 +365,9 @@ def test_issue_456_shipped_tool_writes_a_joinable_pair_through_module_state(
     assert ranking_session == token_tracker._state._session_uid
 
 
-def test_issue_456_context_helpers_restore_nested_values():
-    assert token_tracker._CURRENT_CALL_UID.get() is None
-    outer = token_tracker.begin_call_context("outer")
-    try:
-        assert token_tracker._CURRENT_CALL_UID.get() == "outer"
-        inner = token_tracker.begin_call_context("inner")
-        try:
-            assert token_tracker._CURRENT_CALL_UID.get() == "inner"
-        finally:
-            token_tracker.end_call_context(inner)
-        assert token_tracker._CURRENT_CALL_UID.get() == "outer"
-    finally:
-        token_tracker.end_call_context(outer)
-    assert token_tracker._CURRENT_CALL_UID.get() is None
+# There is no helper-level nesting test. The parametrized re-entrancy matrix above
+# asserts the same three properties -- inner gets its own value, outer still has its
+# original one afterwards, and the context returns to None -- through the real
+# dispatcher on order and route, under success and inner and outer failure. Testing
+# the helper in isolation only repeated that with literal values, and the literals
+# were the sole reason begin_call_context took a caller-supplied id at all.
