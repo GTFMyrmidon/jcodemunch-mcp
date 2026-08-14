@@ -757,7 +757,9 @@ class _State:
                     tool      TEXT NOT NULL,
                     duration_ms REAL NOT NULL,
                     ok        INTEGER NOT NULL,
-                    repo      TEXT
+                    repo      TEXT,
+                    session_uid TEXT,
+                    call_uid  TEXT
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS ix_tool_calls_tool ON tool_calls(tool)")
@@ -789,7 +791,9 @@ class _State:
                     confidence     REAL,
                     semantic_used  INTEGER NOT NULL,
                     identity_hit   INTEGER NOT NULL,
-                    repo_is_stale  INTEGER NOT NULL
+                    repo_is_stale  INTEGER NOT NULL,
+                    session_uid    TEXT,
+                    call_uid       TEXT
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS ix_ranking_events_repo ON ranking_events(repo)")
@@ -806,6 +810,15 @@ class _State:
             self._add_column_if_missing(
                 conn, "ranking_events", "returned_count", "INTEGER"
             )
+            # #456. Correlation keys, added the same additive way returned_count was.
+            #
+            # The join is best-effort, by design. `tool_calls` is trimmed to a rolling cap while
+            # `ranking_events` is not, so older events will outlive their `tool_calls` row.
+            # Queries should use `LEFT JOIN` and expect misses. These are correlation keys, not
+            # referential integrity. Aligning retention is a separate concern.
+            for _table in ("tool_calls", "ranking_events"):
+                self._add_column_if_missing(conn, _table, "session_uid", "TEXT")
+                self._add_column_if_missing(conn, _table, "call_uid", "TEXT")
             self._perf_conns[str(path)] = conn
             return conn
         except Exception:
