@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.108.279] - 2026-08-14 - A machine's language is not English and its bytes are not UTF-8
 
 ### `watch-status` on a non-English Windows ([#468](https://github.com/jgravelle/jcodemunch-mcp/issues/468), [#469](https://github.com/jgravelle/jcodemunch-mcp/issues/469))
 
