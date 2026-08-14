@@ -46,6 +46,40 @@ self-indexing sensitivity will keep producing false reds on ordinary test-adding
 PRs. **It also caught a defect nobody was looking for**, and neither half of that
 is addressed here.
 
+### A schema-budget guardrail asserted a file against copies of itself (test-only)
+
+`test_v1_108_183.py::test_the_core_compact_schema_budget_is_unchanged` read three
+numbers out of `benchmarks/schema_baseline.json` and asserted they equalled three
+copies of themselves written into the test. Both sides were the same frozen
+artifact, so it pinned the **artifact** and never the surface: the baseline was
+captured in 2026-07, the tool surface drifted underneath it release after
+release, and the assertion stayed green throughout. It failed for the first time
+on 2026-08-14 when the capture was re-run — **firing on the one event that proves
+nothing regressed, and silent through every event it existed for.**
+
+Removed rather than re-pinned. The budget is guarded where it is measured:
+`tests/test_schema_budget.py` holds the 5% drift ceiling against a live
+`_build_tools_list()` and the §10 `<=4000` hard ceiling recomputed from the live
+build, which is the check written specifically to catch a breach *before* the
+baseline is regenerated. The intent the removed test carried — a param on four
+core tools must not spend the core budget — is asserted structurally by its
+sibling, which fails if `receipt` ever reaches the published core+compact schema.
+
+`tests/test_schema_baseline_transcription.py` now fails if any baseline value
+returns to `tests/` or `benchmarks/`, prose included. Two of the five sites this
+was written for were **docstrings** claiming `core_compact sits at 3996` — a
+stale number in a comment survives longest precisely because nothing executes it.
+Same shape as maintenance practice #4 and as `test_counter_saving_is_read_not_typed`,
+which exists because `run_route_recall.py` asserted `~98%` for two months against
+a measured 95.9%.
+
+⚠ The counter arms (three digits) are deliberately **out of scope** rather than
+guarded badly — below four digits a baseline value collides with ordinary
+integers often enough that the guard would cost more than it saves. The scanner
+is proven non-vacuous both ways: against a real transcription, and against a
+longer number that merely contains a baseline value.
+
+
 ## [1.108.277] - 2026-08-13 - Reachability is not only the import graph, and liveness is not only the PID
 
 ### `.html` / `.htm` are indexable as a text-searchable file class ([#452](https://github.com/jgravelle/jcodemunch-mcp/issues/452), [PR #459](https://github.com/jgravelle/jcodemunch-mcp/pull/459) by [@phantom-man](https://github.com/phantom-man))
