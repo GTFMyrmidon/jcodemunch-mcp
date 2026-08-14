@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.108.278] - 2026-08-14 - `exact` must mean exact, and a guardrail must not be its own baseline
 
 ### `identity_type: "exact"` graded a normalised match ([#458](https://github.com/jgravelle/jcodemunch-mcp/issues/458))
 
