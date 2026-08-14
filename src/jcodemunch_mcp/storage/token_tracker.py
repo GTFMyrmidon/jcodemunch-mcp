@@ -935,8 +935,9 @@ class _State:
                         "INSERT INTO ranking_events "
                         "(ts, repo, tool, query_hash, query, returned_ids, "
                         " top1_score, top2_score, confidence, semantic_used, "
-                        " identity_hit, repo_is_stale, returned_count) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        " identity_hit, repo_is_stale, session_uid, call_uid, "
+                        "returned_count) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             time.time(),
                             repo or None,
@@ -950,6 +951,8 @@ class _State:
                             1 if semantic_used else 0,
                             1 if identity_hit else 0,
                             1 if repo_is_stale else 0,
+                            self._session_uid,
+                            _CURRENT_CALL_UID.get(),
                             # #441. The TRUE size of the result set, recorded before
                             # the cap. The stored id list stays bounded; only the
                             # count is added, so a reader can tell a complete row
@@ -975,8 +978,18 @@ class _State:
             return
         try:
             conn.execute(
-                "INSERT INTO tool_calls (ts, tool, duration_ms, ok, repo) VALUES (?, ?, ?, ?, ?)",
-                (time.time(), tool, float(duration_ms), 1 if ok else 0, repo or None),
+                "INSERT INTO tool_calls "
+                "(ts, tool, duration_ms, ok, repo, session_uid, call_uid) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    time.time(),
+                    tool,
+                    float(duration_ms),
+                    1 if ok else 0,
+                    repo or None,
+                    self._session_uid,
+                    _CURRENT_CALL_UID.get(),
+                ),
             )
             self._perf_rows_since_trim += 1
             if self._perf_rows_since_trim >= 1000:
