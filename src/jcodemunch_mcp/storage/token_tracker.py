@@ -36,6 +36,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict, deque
+from contextvars import ContextVar, Token
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -43,6 +44,14 @@ from typing import Optional
 from .. import config as _config
 
 logger = logging.getLogger(__name__)
+
+# One identifier per entry into the registered call_tool. Set by the dispatcher,
+# read by the telemetry sinks at write time. Default None so writes outside any
+# dispatched call record NULL rather than inventing an identity.
+_CURRENT_CALL_UID: ContextVar[Optional[str]] = ContextVar(
+    "jcodemunch_current_call_uid",
+    default=None,
+)
 
 _SAVINGS_FILE = "_savings.json"
 
@@ -1360,6 +1369,16 @@ def record_tool_latency(
 ) -> None:
     """Record a tool-call duration for the current session (and optional perf db)."""
     _state.record_latency(tool_name, duration_ms, ok=ok, repo=repo, base_path=base_path)
+
+
+def begin_call_context(call_uid: Optional[str] = None) -> Token:
+    """Bind one dispatcher call identifier to the current execution context."""
+    return _CURRENT_CALL_UID.set(call_uid or uuid.uuid4().hex)
+
+
+def end_call_context(token: Token) -> None:
+    """Restore the execution context that preceded begin_call_context."""
+    _CURRENT_CALL_UID.reset(token)
 
 
 def latency_stats() -> dict:
