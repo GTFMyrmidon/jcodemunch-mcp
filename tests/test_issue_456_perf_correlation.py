@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import queue
 import sqlite3
 from pathlib import Path
@@ -12,6 +13,8 @@ import pytest
 from jcodemunch_mcp import config as config_module
 from jcodemunch_mcp import server
 from jcodemunch_mcp.storage import token_tracker
+from jcodemunch_mcp.tools.index_folder import index_folder
+from jcodemunch_mcp.tools.search_symbols import search_symbols
 
 
 def _set_perf_enabled(monkeypatch: pytest.MonkeyPatch, enabled: bool) -> None:
@@ -25,8 +28,26 @@ def _set_perf_enabled(monkeypatch: pytest.MonkeyPatch, enabled: bool) -> None:
     monkeypatch.setattr(config_module, "get", configured_get)
 
 
+@contextlib.contextmanager
+def _db(path):
+    """Commit like ``sqlite3``'s own context manager, and also CLOSE.
+
+    ``with sqlite3.connect(...)`` commits or rolls back; it does NOT close, and an
+    open handle blocks ``tmp_path`` teardown on Windows, which is the same reason
+    ``close_perf_dbs()`` is public. The inner ``with conn`` keeps the commit
+    semantics the callers below depend on: dropping it rolls back the legacy-schema
+    fixture, which is how this was caught.
+    """
+    conn = sqlite3.connect(path)
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
+
+
 def _columns(db_path: Path, table: str) -> set[str]:
-    with sqlite3.connect(db_path) as conn:
+    with _db(db_path) as conn:
         return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")}
 
 
@@ -46,7 +67,7 @@ def test_issue_456_legacy_rows_remain_null_after_four_column_migration(
 ):
     _set_perf_enabled(monkeypatch, True)
     db_path = tmp_path / "telemetry.db"
-    with sqlite3.connect(db_path) as conn:
+    with _db(db_path) as conn:
         conn.execute(
             "CREATE TABLE tool_calls (ts REAL NOT NULL, tool TEXT NOT NULL, "
             "duration_ms REAL NOT NULL, ok INTEGER NOT NULL, repo TEXT)"
@@ -76,7 +97,7 @@ def test_issue_456_legacy_rows_remain_null_after_four_column_migration(
     )
     state.close_perf_dbs()
 
-    with sqlite3.connect(db_path) as conn:
+    with _db(db_path) as conn:
         assert conn.execute(
             "SELECT session_uid, call_uid FROM tool_calls WHERE tool='legacy-tool'"
         ).fetchone() == (None, None)
@@ -144,7 +165,7 @@ async def test_issue_456_one_dispatcher_entry_joins_ranking_and_latency(
     await server.call_tool("search_symbols", {})
     state.close_perf_dbs()
 
-    with sqlite3.connect(tmp_path / "telemetry.db") as conn:
+    with _db(tmp_path / "telemetry.db") as conn:
         ranking = conn.execute(
             "SELECT session_uid, call_uid FROM ranking_events"
         ).fetchone()
@@ -250,7 +271,7 @@ def test_issue_456_writes_outside_dispatch_store_null_call_id(monkeypatch, tmp_p
     )
     state.close_perf_dbs()
 
-    with sqlite3.connect(tmp_path / "telemetry.db") as conn:
+    with _db(tmp_path / "telemetry.db") as conn:
         tool = conn.execute("SELECT session_uid, call_uid FROM tool_calls").fetchone()
         ranking = conn.execute(
             "SELECT session_uid, call_uid FROM ranking_events"
@@ -290,6 +311,61 @@ def test_issue_456_outbound_payload_has_exact_legacy_keys(monkeypatch):
 
     assert captured == [{"delta": 1, "total": 2, "anon_id": "anonymous"}]
     assert not ({"session_uid", "call_uid"} & set(captured[0]))
+
+
+def test_issue_456_shipped_tool_writes_a_joinable_pair_through_module_state(
+    monkeypatch, tmp_path
+):
+    """The real tool, the module-level ``_state``, and a real ``LEFT JOIN``.
+
+    Every other test here drives a fresh ``_State()`` or stubs ``_call_tool_impl``.
+    The shipped tools write through the module singleton via the module-level
+    ``record_ranking_event``, so nothing above proves the ContextVar reaches the
+    object that actually does the writing. That is the seam where a later refactor
+    breaks this silently: the columns stay, those tests stay green, and ``call_uid``
+    quietly goes NULL.
+    """
+    _set_perf_enabled(monkeypatch, True)
+    project = tmp_path / "sample"
+    project.mkdir()
+    (project / "billing.py").write_text(
+        "def calculate_invoice_total(items):\n    return sum(items)\n", encoding="utf-8"
+    )
+    store = tmp_path / "store"
+    store.mkdir()
+
+    repo = index_folder(
+        path=str(project), use_ai_summaries=False, storage_path=str(store)
+    )["repo"]
+
+    token = token_tracker.begin_call_context()
+    try:
+        expected_call_uid = token_tracker._CURRENT_CALL_UID.get()
+        search_symbols(
+            repo=repo,
+            query="calculate_invoice_total",
+            storage_path=str(store),
+            max_results=5,
+        )
+        token_tracker.record_tool_latency(
+            "search_symbols", 3.0, ok=True, repo=repo, base_path=str(store)
+        )
+    finally:
+        token_tracker.end_call_context(token)
+    token_tracker._state.close_perf_dbs()
+
+    with _db(store / "telemetry.db") as conn:
+        joined = conn.execute(
+            "SELECT r.session_uid, r.call_uid, t.call_uid FROM ranking_events r "
+            "LEFT JOIN tool_calls t "
+            "  ON r.call_uid = t.call_uid AND r.session_uid = t.session_uid"
+        ).fetchall()
+
+    assert len(joined) == 1
+    ranking_session, ranking_call, latency_call = joined[0]
+    assert latency_call is not None, "the ranking row did not join a latency row"
+    assert ranking_call == latency_call == expected_call_uid
+    assert ranking_session == token_tracker._state._session_uid
 
 
 def test_issue_456_context_helpers_restore_nested_values():

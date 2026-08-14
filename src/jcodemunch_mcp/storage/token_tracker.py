@@ -757,9 +757,7 @@ class _State:
                     tool      TEXT NOT NULL,
                     duration_ms REAL NOT NULL,
                     ok        INTEGER NOT NULL,
-                    repo      TEXT,
-                    session_uid TEXT,
-                    call_uid  TEXT
+                    repo      TEXT
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS ix_tool_calls_tool ON tool_calls(tool)")
@@ -791,9 +789,7 @@ class _State:
                     confidence     REAL,
                     semantic_used  INTEGER NOT NULL,
                     identity_hit   INTEGER NOT NULL,
-                    repo_is_stale  INTEGER NOT NULL,
-                    session_uid    TEXT,
-                    call_uid       TEXT
+                    repo_is_stale  INTEGER NOT NULL
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS ix_ranking_events_repo ON ranking_events(repo)")
@@ -978,18 +974,10 @@ class _State:
             return
         try:
             conn.execute(
-                "INSERT INTO tool_calls "
-                "(ts, tool, duration_ms, ok, repo, session_uid, call_uid) "
+                "INSERT INTO tool_calls (ts, tool, duration_ms, ok, repo, session_uid, call_uid) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    time.time(),
-                    tool,
-                    float(duration_ms),
-                    1 if ok else 0,
-                    repo or None,
-                    self._session_uid,
-                    _CURRENT_CALL_UID.get(),
-                ),
+                (time.time(), tool, float(duration_ms), 1 if ok else 0, repo or None,
+                 self._session_uid, _CURRENT_CALL_UID.get()),
             )
             self._perf_rows_since_trim += 1
             if self._perf_rows_since_trim >= 1000:
@@ -1398,7 +1386,18 @@ def record_tool_latency(
 
 
 def begin_call_context(call_uid: Optional[str] = None) -> Token:
-    """Bind one dispatcher call identifier to the current execution context."""
+    """Bind one dispatcher call identifier to the current execution context (#456).
+
+    ⚠ Reset with the returned token in a ``finally``. A skipped reset leaves the
+    inner entry's identity visible to the outer one after it returns, so the join
+    attributes rows to the wrong call while every write still reports success. That
+    is the failure the re-entrancy note at ``call_tool`` describes, reached by
+    forgetting the reset rather than by writing ``set(None)``.
+
+    A second entry point into the dispatcher would need this wrapper, for the reason
+    ``call_tool`` stays the single registered entry: the invariant is held by there
+    being one door, not by this helper.
+    """
     return _CURRENT_CALL_UID.set(call_uid or uuid.uuid4().hex)
 
 
