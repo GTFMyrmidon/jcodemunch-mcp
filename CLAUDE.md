@@ -290,6 +290,32 @@ not measure is what that costs in practice.
 a RESUMED conversation counts accumulated context on every step, so the total is
 dominated by how much the agent read early on, which compounds.
 
+**Merged 2026-08-14: #473 (@rknighton) closes #465** — the perf-db connection
+cache keyed on the caller's SPELLING, not the resolved path, so a relative
+`storage_path` wrote one store's telemetry rows into another's after a chdir.
+Two source lines, three tests, unreleased; see CHANGELOG `[Unreleased]`.
+⚠⚠ **The reusable half is where the fix went.** `_perf_db_path` has one caller
+and all three telemetry sinks reach the cache through it, so resolving where the
+path is BUILT fixes every consumer including the one the issue left open. Fixing
+it at the cache would have covered the sinks that were reported and missed that
+one ([[feedback_guard_every_path_that_shares_the_hazard]]).
+⚠ **The module-level `perf_db_path()` helper is still unresolved ON PURPOSE**,
+checked rather than assumed: it never touches the cache, and an unresolved
+spelling opens the same file on disk. Recorded here so a later sweep does not
+"finish the job" and call it a fix.
+⚠ **Both exits needed the change and only one is covered by the row-level
+tests** — they all pass an explicit `base_path`, so the no-argument exit carries
+its own assertion. Reverting either `.resolve()` alone turns the file red, which
+is the non-vacuity pass done per-edit rather than per-file.
+⚠ **First timebox to expire in the contributor's favour under policy 3a**: #465
+was handed off with a 2026-08-21 default, and the PR arrived in a day. The
+window decides whose commit it is, and here it was his.
+⚠ **His verification note is worth copying: he reported a DELTA, not totals.**
+Ten test modules `importorskip` at module level, so a missing optional dep costs
+a whole module as ONE skip and no per-test trace — two correct runs of the same
+commit can differ by a hundred. Same class as the `--extra watch` under-collect
+in the Tests line above, found independently from the other side.
+
 **In flight 2026-08-13: #441 + #442 (@rknighton), ranking-ledger write path.**
 Same path .272 touched. Unreleased; see CHANGELOG `[Unreleased]`.
 ⚠⚠ **The reusable lesson is that measuring the SAFE fix first is what chose the
