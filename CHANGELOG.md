@@ -1,5 +1,184 @@
 # Changelog
 
+## [Unreleased] - A cache keyed on a spelling is keyed on the caller's working directory
+
+### The perf-db connection cache used the unresolved path ([#465](https://github.com/jgravelle/jcodemunch-mcp/issues/465))
+
+Reported and fixed by [@rknighton](https://github.com/rknighton) in
+[#473](https://github.com/jgravelle/jcodemunch-mcp/pull/473).
+
+`_ensure_perf_db_locked` documents its cache as "keyed by resolved path", and
+`_perf_db_path` returned `root / _PERF_DB_FILE` with no `resolve()`, so the key
+was whatever spelling the caller happened to pass. Both exits now resolve.
+
+Two consequences, and the second is the one that loses data. Aliases of one
+directory each got their own connection, and `_perf_conns` has no cap and no
+eviction, so each spelling held one for the life of the process. Worse, a
+RELATIVE spelling makes the key depend on the process CWD: after a chdir the
+same key names a different database, `_perf_conn_usable`'s `exists()` probe
+consults the new location while the cached connection still points at the old
+file, and a row recorded for one store is written into another's. That is the
+failure v1.108.188 fixed for the writers, reappearing one layer down in the
+cache key.
+
+⚠ The latency sink takes it by a shorter route than the ranking sink: `call_tool`
+hands `record_latency` the raw `storage_path` argument with no `IndexStore`
+normalising it on the way. `analyze_perf` reads `tool_calls` and `ranking_events`
+through one base path, so a split between the two tables is worse than either
+table being wrong alone.
+
+⚠ Fixed at the helper rather than at the cache, because `_perf_db_path` is the
+single place the key is built and all three telemetry sinks reach the cache
+through its one caller. `_persist_session_yield_locked`, whose reachability the
+issue left open, inherits it.
+
+⚠ The module-level `perf_db_path()` helper is deliberately left unresolved. It
+never touches the cache, and an unresolved spelling opens the same file on disk;
+the defect was the KEY, not the path.
+
+⚠ Existing installs are unaffected and nothing is backfilled. The default store
+is absolute with no symlinks, where `resolve()` returns it unchanged, and rows
+that already landed in the wrong file stay there.
+
+`tests/test_perf_db_path_resolution.py` (3). ⚠ **Reverting either `.resolve()`
+alone turns it red**: every row-level test supplies an explicit `base_path`, so
+the no-argument exit needed its own assertion rather than inheriting coverage
+from the other two.
+
+## [1.108.279] - 2026-08-14 - A machine's language is not English and its bytes are not UTF-8
+
+### `watch-status` on a non-English Windows ([#468](https://github.com/jgravelle/jcodemunch-mcp/issues/468), [#469](https://github.com/jgravelle/jcodemunch-mcp/issues/469))
+
+Both reported by [@lsg1103275794](https://github.com/lsg1103275794), split per
+one-issue-one-verdict, and independent: fixing either one alone leaves the other
+exactly as broken.
+
+**#468 — the output was decoded as UTF-8.** `schtasks.exe` writes in the
+machine's code page, so on a Simplified-Chinese install `watch-status.detail`
+came back as 40 U+FFFD characters. ⚠⚠ **`errors="replace"` is what made it
+silent.** Strict UTF-8 *raises* on those bytes; replacement turned a loud failure
+into a plausible string, and a plausible string is what nobody investigates.
+
+Native output now decodes through the code page Windows reports, asking for the
+**console output** page before the ANSI one — they are not always the same
+(measured on the dev box: 437 and 1252; on the reporter's, both 936). ⚠ The
+ORDER is the answer, not the strict-decode loop under it: a multi-byte page like
+cp936 rejects a wrong guess, while cp437 and cp1252 map nearly every byte and
+cannot fail. That is stated at the function so a successful decode is never read
+as confirmation.
+
+⚠ **`locale.getpreferredencoding()` is deliberately not used** — under
+`PYTHONUTF8=1` it reports utf-8 while the child still writes CP936, which is the
+case the reporter warned about. It would have looked principled and been wrong
+for exactly the users this is for.
+
+**#469 — liveness was decided by English display text.** `"Running" in stdout or
+"Ready" in stdout` reports `active: false` on every non-English Windows, while
+the watcher runs and reindexes normally. `正在运行` does not contain `Running`,
+and `/FO CSV` does not help because its headers *and* values are localized too.
+The verdict now reads `Get-ScheduledTask`'s `State`, an enum whose string form is
+invariant, and `Ready` still counts as active so the meaning of the field is
+unchanged.
+
+⚠ The fallback to the old predicate remains for a box where the enum cannot be
+read, and **it says so**: `state_source` is `scheduled_task_state` or
+`display_text`, and `state` is `null` rather than a guess. A wrong answer that
+names its own source is recoverable; a confident one is not.
+
+⚠ **Three call sites shared the decoding hazard and only one was reported.**
+`_install_windows` raises `InstallerError` carrying `schtasks` stderr and
+`_uninstall_windows` reads its output too, so a localized "access denied" reached
+the user as mojibake — on the path taken when something is already going wrong.
+All three go through one decoder, with a ratchet test that fails if a fourth
+arrives.
+
+⚠⚠ **The reporter's own note is why both survived a green suite:** searching
+`tests/` for `_status_windows`, `schtasks` and the `Running`/`Ready` predicate
+returned no hits. There was no coverage to fail. `tests/test_schtasks_locale.py`
+(20) runs on every platform because it drives the decode and the verdict
+directly; **17 fail against `35eeb2d`**, and the 3 that pass both sides are
+controls asserting the defect itself.
+
+## [1.108.278] - 2026-08-14 - `exact` must mean exact, and a guardrail must not be its own baseline
+
+### `identity_type: "exact"` graded a normalised match ([#458](https://github.com/jgravelle/jcodemunch-mcp/issues/458))
+
+`_tokenize` folds case, strips leading underscores and drops punctuation, and the
+identity channel's tokenized comparison ran against that folded form. So for the
+query `_State`, a pytest fixture named `state` and the class literally named
+`_State` both scored `identity: 50.0, identity_type: "exact"`. The identity
+channel could not separate them, the tie fell through to BM25, and the shorter
+name with a docstring won by **0.355 points out of ~58** — a test fixture
+outranking the source symbol it tests, on the single highest-confidence query a
+caller can send.
+
+A match that needed normalisation now scores **40.0** and reports
+`identity_type: "normalized"`. Literal stays 50.0, prefix 30.0 and segment 20.0
+are untouched, so the tiering mechanism this uses already existed.
+
+⚠ **Case folding alone is still `exact`, and that boundary was the decision.**
+`raw_lower` has been case-folded since the channel arrived, so making case
+load-bearing would change the answer for every caller who types `getuser` for
+`getUser` — a behaviour change with no defect behind it. What drops a tier is a
+match that needed *more* than case. A caller passing only tokenized terms and no
+raw query keeps `exact`: with no raw spelling there is nothing to be literal
+about, and grading it down would report a distinction that was never measured —
+which is the defect, not the fix.
+
+⚠⚠ **The first version of the end-to-end test passed against the broken code**,
+and the reason generalises past this fix. BM25 normalises by document length, and
+on the real repo `_State` is a large class that scored *below* the two-line
+fixture on every lexical field (name 6.996 vs 8.012, signature 6.153 vs 7.389,
+summary 0.0 vs 5.992). A small synthetic class wins on lexical signals alone, so
+the ordering assertion held with or without the identity tier. The corpus in
+`tests/test_identity_normalized_tier.py` gives the class a long docstring of
+words unrelated to the query — length without a match — which is what the real
+class's own prose does. **4 of the 10 tests fail against `8cc01a0`**, including
+the ordering one; the 6 that pass both sides are the unchanged tiers and the
+term-only control.
+
+⚠ This was found by the `Retrieval-quality gate` failing on
+[PR #457](https://github.com/jgravelle/jcodemunch-mcp/pull/457), a telemetry-only
+change that cannot affect ranking: the replay harness indexes this repo, so a new
+test file changed the corpus and displaced the expected top-1. The gate's
+self-indexing sensitivity will keep producing false reds on ordinary test-adding
+PRs. **It also caught a defect nobody was looking for**, and neither half of that
+is addressed here.
+
+### A schema-budget guardrail asserted a file against copies of itself (test-only)
+
+`test_v1_108_183.py::test_the_core_compact_schema_budget_is_unchanged` read three
+numbers out of `benchmarks/schema_baseline.json` and asserted they equalled three
+copies of themselves written into the test. Both sides were the same frozen
+artifact, so it pinned the **artifact** and never the surface: the baseline was
+captured in 2026-07, the tool surface drifted underneath it release after
+release, and the assertion stayed green throughout. It failed for the first time
+on 2026-08-14 when the capture was re-run — **firing on the one event that proves
+nothing regressed, and silent through every event it existed for.**
+
+Removed rather than re-pinned. The budget is guarded where it is measured:
+`tests/test_schema_budget.py` holds the 5% drift ceiling against a live
+`_build_tools_list()` and the §10 `<=4000` hard ceiling recomputed from the live
+build, which is the check written specifically to catch a breach *before* the
+baseline is regenerated. The intent the removed test carried — a param on four
+core tools must not spend the core budget — is asserted structurally by its
+sibling, which fails if `receipt` ever reaches the published core+compact schema.
+
+`tests/test_schema_baseline_transcription.py` now fails if any baseline value
+returns to `tests/` or `benchmarks/`, prose included. Two of the five sites this
+was written for were **docstrings** claiming `core_compact sits at 3996` — a
+stale number in a comment survives longest precisely because nothing executes it.
+Same shape as maintenance practice #4 and as `test_counter_saving_is_read_not_typed`,
+which exists because `run_route_recall.py` asserted `~98%` for two months against
+a measured 95.9%.
+
+⚠ The counter arms (three digits) are deliberately **out of scope** rather than
+guarded badly — below four digits a baseline value collides with ordinary
+integers often enough that the guard would cost more than it saves. The scanner
+is proven non-vacuous both ways: against a real transcription, and against a
+longer number that merely contains a baseline value.
+
+
 ## [1.108.277] - 2026-08-13 - Reachability is not only the import graph, and liveness is not only the PID
 
 ### `.html` / `.htm` are indexable as a text-searchable file class ([#452](https://github.com/jgravelle/jcodemunch-mcp/issues/452), [PR #459](https://github.com/jgravelle/jcodemunch-mcp/pull/459) by [@phantom-man](https://github.com/phantom-man))

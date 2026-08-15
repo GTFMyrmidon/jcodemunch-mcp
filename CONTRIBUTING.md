@@ -17,6 +17,21 @@ the work is yours to submit.
 CLA Assistant will prompt you automatically when you open a PR. It takes about
 30 seconds.
 
+### The signing window is 24 hours
+
+Once your PR is reviewed and green, you have **24 hours** to sign. If the CLA is
+not signed by then, we implement the fix ourselves and credit you in the
+CHANGELOG, the release notes and the close comment.
+
+So the window decides whose commit it is. It does not decide whether you are
+credited, and it does not decide whether your fix ships — both of those are
+settled the moment the fix is right. We keep it short because a signed CLA takes
+30 seconds and an unsigned one parks finished work behind a form.
+
+If 24 hours does not work for you — you need legal review, or you are away — say
+so on the PR and we will hold it. The clock exists to stop PRs going quiet, not
+to catch anyone out.
+
 ## Commercial Licensing
 
 If you're using jCodeMunch in a commercial context, see the [license section in the
@@ -96,6 +111,39 @@ full and we announce it retroactively. Nothing expires.
 
 Every timebox we set names its default action, because a date with no stated
 consequence is a wish. "Verification by X, or Y ships with disclosure Z."
+
+**No timebox we offer runs longer than 24 hours.** That applies to all of them,
+not only the CLA window above: signing a form, opening a PR you have already
+written, or taking an issue you want to implement. At expiry the default action
+fires — usually that we do the work ourselves — and you are credited in the
+CHANGELOG, the release notes and the close comment either way.
+
+The short clock is only fair because of that last sentence. It decides whose
+commit it is. It never decides whether you are credited, and it never decides
+whether the fix ships.
+
+If 24 hours does not fit — you want the weekend for it, you are away, the change
+is large — **say so and we will hold it.** An extension you ask for is not the
+same as a default we hand out, and we would rather you told us than went quiet.
+Timeboxes already posted are honoured as posted; we do not shorten a promise
+after making it.
+
+### Your PR merges before our own changelog work
+
+When your PR is ready to merge, it goes in **before** anything of ours that
+touches `CHANGELOG.md`. That is a rule about our merge order, not a favour.
+
+The reason is mechanical. Our entries land in the same `[Unreleased]` block
+yours does, so every merge of ours puts your branch into conflict — and a
+conflicting fork PR has no merge ref, which means **CI stops running on it
+entirely.** Your branch goes quiet for a reason that has nothing to do with your
+change, and you get asked to rebase work that was finished days ago.
+
+⚠ **When your PR is blocked — an unsigned CLA, a red matrix, a change we asked
+you for — we cannot put it first, and we will not hold our own work behind it.**
+We ship, and then **we** resolve the conflict on your branch and say so on the
+thread. You should never be asked to rebase for a conflict we created. If you
+would rather resolve it yourself, say so and it is yours.
 
 The point of this rule is that a reviewer's thoroughness should never become a
 veto. If being careful can stall a release, then careful review is expensive to
