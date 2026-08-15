@@ -311,6 +311,44 @@ compaction is near its floor; descriptions are untouched ground.
 a RESUMED conversation counts accumulated context on every step, so the total is
 dominated by how much the agent read early on, which compounds.
 
+**2026-08-15: #428's remaining four languages IMPLEMENTED BY US (Rust, Go, Java,
+PHP), closing it.** Unreleased; see CHANGELOG `[Unreleased]`.
+⚠⚠ **This is a REVERSAL of an open handoff, not a timebox expiring, and it was
+jjg's call.** The half was @mussonking's by an offer with **no date on it** — the
+standing rule is that every handoff names a date AND the default that fires on
+it, and this one named neither, which is exactly how it sat seven days. Credit
+for the report and for the plural-helper design stays his in the CHANGELOG.
+**The process lesson is the open-ended offer, not the reversal.**
+[[feedback_never_hand_off_without_a_timebox]]
+⚠⚠ **Java needed more than a branch and the gate was the real defect.** The
+constant walk was `parent_symbol is None`, which keeps function locals out — and
+a Java constant is a class member, so `field_declaration` sat in
+`constant_patterns` **unreachable by construction**. The gate now also accepts a
+CONTAINER parent for `_CLASS_SCOPED_CONSTANT_LANGUAGES` (`{"java"}`), never a
+function parent. ⚠ **Relaxing it for every language was DECLINED**: Python class
+bodies, JS class fields and PHP class constants would all start emitting
+constants they never have, moving symbol counts in every index and **every
+published dead-code grade**. One named set, one sample per member, asserted by
+name in `test_only_named_languages_reach_constants_through_a_container`.
+⚠ **Scala looked like a counter-example and is not** — its `val_definition` is in
+`symbol_node_types`, so it never touches the constant gate at all. Checking that
+before copying its shape is what kept the widening narrow.
+⚠ **The exclusions are the careful half**: Rust `static mut` (a
+`mutable_specifier` says the binding changes), Java bare `final` (per-instance)
+and bare `static` (mutable shared state). **A missing constant is a recall bug
+the reporter could see; an ordinary field arriving as `kind="constant"` is a
+precision bug nobody goes looking for.**
+⚠ **Grammar shapes were DUMPED, not assumed** — the TOML left-recursion defect
+came from assuming. Go binds N names two ways at once (`const ( ... )` groups
+plus `const A, B = 1, 2`), which is what `_extract_constants` being plural is
+for. ⚠ No case heuristic anywhere: `const` IS the declaration, and filtering on
+case would silently drop Go's unexported lowercase constants.
+⚠ `tests/test_v1_108_281.py` (10), **9 fail against `d10490e`**; the 1 passing
+both sides is the control that Java function locals are still not constants.
+`EXEMPT` in `test_constant_extraction_guard.py` is now **EMPTY** — the ratchet
+forced its own deletion, and its parametrize-over-nothing SKIP is the ratchet at
+rest, not a lost test.
+
 **Merged 2026-08-14: #473 (@rknighton) closes #465** — the perf-db connection
 cache keyed on the caller's SPELLING, not the resolved path, so a relative
 `storage_path` wrote one store's telemetry rows into another's after a chdir.
