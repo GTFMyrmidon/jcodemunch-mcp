@@ -286,6 +286,27 @@ the r/codex result than the raw number suggests, not a stronger one.**
 default `full`, 6 / 1,030 at `counter`) and needs no API credits; what it does
 not measure is what that costs in practice.
 
+⚠ **Those two numbers are a 2026-07 snapshot from THIS harness and are not the
+canonical figures.** `benchmarks/schema_baseline.json` is, written by
+`benchmarks/harness/capture_schema_baseline.py` and guarded by
+`tests/test_schema_budget.py`; it counts a different payload shape, so the two
+sets will never agree digit for digit and neither is wrong. Quote the baseline
+file. ⚠⚠ **Reconciled 2026-08-14: the Counter avoids 95.9%, not the ~98% that
+`run_route_recall.py` asserted for two months** — that literal is now computed
+from the baseline at runtime, with a test that fails if any schema-saving
+percentage returns to that file. **The gap existed because the budget guardrail
+only walked `tool_profile`, which does not apply to the front door at all**, so
+the single largest lever in the project had no test under it.
+
+⚠⚠ **The same run killed `tool_profile: "standard"` as a token lever: it drops 9
+of 91 tools and 5.7% of the payload.** Anyone selecting it as the safe middle
+setting gets nothing measurable. `core` (74.0%) and `counter` (95.9%) are the
+only two settings that move the number; there is no gradient between them, and
+the config surface currently implies there is. ⚠ Where the rest sits, from
+`--breakdown`: under `full`, tool DESCRIPTIONS are 36% of the payload and
+`compact_schemas` rewrites input schemas only, never descriptions. Schema
+compaction is near its floor; descriptions are untouched ground.
+
 ⚠ Design flaw recorded so nobody repeats it: summing per-invocation input across
 a RESUMED conversation counts accumulated context on every step, so the total is
 dominated by how much the agent read early on, which compounds.
