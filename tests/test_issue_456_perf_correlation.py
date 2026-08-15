@@ -14,7 +14,6 @@ from jcodemunch_mcp import config as config_module
 from jcodemunch_mcp import server
 from jcodemunch_mcp.storage import token_tracker
 from jcodemunch_mcp.tools.index_folder import index_folder
-from jcodemunch_mcp.tools.search_symbols import search_symbols
 
 
 def _set_perf_enabled(monkeypatch: pytest.MonkeyPatch, enabled: bool) -> None:
@@ -310,17 +309,28 @@ def test_issue_456_outbound_payload_has_exact_legacy_keys(monkeypatch):
     assert not ({"session_uid", "call_uid"} & set(captured[0]))
 
 
-def test_issue_456_shipped_tool_writes_a_joinable_pair_through_module_state(
+@pytest.mark.asyncio
+async def test_issue_456_shipped_tool_writes_a_joinable_pair_through_module_state(
     monkeypatch, tmp_path
 ):
-    """The real tool, the module-level ``_state``, and a real ``LEFT JOIN``.
+    """The real dispatcher, the real tool, and the module-level ``_state``.
 
-    Every other test here drives a fresh ``_State()`` or stubs ``_call_tool_impl``.
-    The shipped tools write through the module singleton via the module-level
-    ``record_ranking_event``, so nothing above proves the ContextVar reaches the
-    object that actually does the writing. That is the seam where a later refactor
-    breaks this silently: the columns stay, those tests stay green, and ``call_uid``
-    quietly goes NULL.
+    Every other test here drives a fresh ``_State()`` or stubs ``_call_tool_impl``,
+    so nothing above runs the whole chain: the registered ``call_tool`` binds the
+    identity, the real ``_call_tool_impl`` runs the tool through
+    ``asyncio.to_thread``, the tool writes its ranking row through the module
+    singleton, and ``_call_tool_impl``'s own ``finally`` writes the latency row.
+    That is the seam where a later refactor breaks this silently: the columns stay,
+    those tests stay green, and ``call_uid`` quietly goes NULL.
+
+    ``asyncio.to_thread`` copies the context, so the boundary itself is safe by
+    construction; a raw ``threading.Thread`` is not. Driving the real path is what
+    keeps that a property of the code rather than of this test's own wiring.
+
+    ``CODE_INDEX_PATH`` is what ``_call_tool_impl`` hands the tool, while the
+    latency row is written against ``arguments["storage_path"]``. Both are set to
+    the temporary store: leaving the argument off sends the latency row to the
+    developer's real ``~/.code-index``.
     """
     _set_perf_enabled(monkeypatch, True)
     project = tmp_path / "sample"
@@ -330,25 +340,21 @@ def test_issue_456_shipped_tool_writes_a_joinable_pair_through_module_state(
     )
     store = tmp_path / "store"
     store.mkdir()
+    monkeypatch.setenv("CODE_INDEX_PATH", str(store))
 
     repo = index_folder(
         path=str(project), use_ai_summaries=False, storage_path=str(store)
     )["repo"]
 
-    token = token_tracker.begin_call_context()
-    try:
-        expected_call_uid = token_tracker._CURRENT_CALL_UID.get()
-        search_symbols(
-            repo=repo,
-            query="calculate_invoice_total",
-            storage_path=str(store),
-            max_results=5,
-        )
-        token_tracker.record_tool_latency(
-            "search_symbols", 3.0, ok=True, repo=repo, base_path=str(store)
-        )
-    finally:
-        token_tracker.end_call_context(token)
+    await server.call_tool(
+        "search_symbols",
+        {
+            "repo": repo,
+            "query": "calculate_invoice_total",
+            "storage_path": str(store),
+            "max_results": 5,
+        },
+    )
     token_tracker._state.close_perf_dbs()
 
     with _db(store / "telemetry.db") as conn:
@@ -361,7 +367,8 @@ def test_issue_456_shipped_tool_writes_a_joinable_pair_through_module_state(
     assert len(joined) == 1
     ranking_session, ranking_call, latency_call = joined[0]
     assert latency_call is not None, "the ranking row did not join a latency row"
-    assert ranking_call == latency_call == expected_call_uid
+    assert ranking_call is not None, "the dispatcher's call id did not reach the sink"
+    assert ranking_call == latency_call
     assert ranking_session == token_tracker._state._session_uid
 
 
