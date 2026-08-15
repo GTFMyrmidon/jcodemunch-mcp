@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] - A declared pattern with no implementation reads as a language without constants
+## [1.108.281] - 2026-08-15 - A declared pattern with no implementation reads as a language without constants
 
 ### Rust, Go, Java and PHP constants are extracted ([#428](https://github.com/jgravelle/jcodemunch-mcp/issues/428))
 
