@@ -1,5 +1,44 @@
 # Changelog
 
+## [Unreleased]
+
+### Relative storage paths are resolved before they become cache keys ([#475](https://github.com/jgravelle/jcodemunch-mcp/issues/475))
+
+Reported and fixed by [@mikemikimike](https://github.com/jgravelle/jcodemunch-mcp/pull/479).
+
+`SQLiteIndexStore` keyed `_VERIFIED_PATHS` and `_initialized_dbs` on the spelling
+it was handed. A relative `storage_path` names a different directory after the
+process changes working directory while that key stays the same, so the second
+store inherits the first one's initialization state and skips the `mkdir` and the
+schema/migration setup it needs. `IndexStore` now resolves its base path once and
+hands the resolved path to its SQLite backend.
+
+⚠ **The same defect v1.108.280 fixed, one layer up.** That release resolved the
+perf-db path where it is *built*, because a cache keyed on a spelling is keyed on
+the caller's working directory. This is the index store making that assumption
+about its own keys. Absolute paths and the default `~/.code-index` store are
+unaffected — `resolve()` returns them unchanged.
+
+⚠ **The `expanduser()` half is a second fix and it moves one existing case.** A
+`storage_path` written with a literal `~` (an MCP client config passing
+`CODE_INDEX_PATH: "~/foo"` does not go through a shell) built a directory
+*named* `~` under the working directory here, while `process_registry` and
+`transcript_roots` expanded the same value against the real home. Anyone in that
+state has been running split across two locations; they now get the home one, and
+the tilde directory they accumulated is not migrated.
+
+⚠ **The fix turned four tests red and every one of them was already wrong.**
+`patch("...Path.resolve", return_value=X)` replaces `resolve` on the `Path`
+*class*, so it answered for every path in the process, including the storage path
+the store resolves on construction. Four tests in `test_tools.py` get past the
+breadth guard, and each then created its index directory at the faked location: a
+local run left an empty `C:\work\project` behind, and CI died in `mkdir` at
+`/workspaces/myrepo` and `\\server\share\`. ⚠⚠ **Nothing in the suite could have
+reported that, because the writes landed where no assertion was looking.** The
+mocks are narrow now — `_resolve_only` in `tests/__init__.py`, with
+`autospec=True` so `self` reaches it. The other fifteen patch sites were
+converted as well; none of them were correct either, only inert.
+
 ## [1.108.281] - 2026-08-15 - A declared pattern with no implementation reads as a language without constants
 
 ### Rust, Go, Java and PHP constants are extracted ([#428](https://github.com/jgravelle/jcodemunch-mcp/issues/428))
