@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+### The dispatcher ate its caller's `format` argument ([#482](https://github.com/jgravelle/jcodemunch-mcp/pull/482))
+
+`call_tool` extracts `format` because it belongs to no tool's schema, and did it
+with `arguments.pop("format")` — on the caller's own dict. A caller that reuses
+one args object got JSON on its first call and whatever `server_output` resolves
+to on every call after. The dispatcher now pops from its own copy.
+
+⚠⚠ **The first call proving the argument works is what makes this expensive.**
+Nothing errors and nothing warns; the response is still valid, just encoded
+differently from what was asked for. A caller that checked the first response and
+moved on would never look again.
+
+⚠ **Over the wire this is invisible** — every MCP request arrives as a freshly
+parsed dict, so no remote client can hit it. The exposed callers are in-process:
+the Counter front door re-dispatching into `call_tool`, and the test suite.
+
+⚠⚠ **It presented as an environment quirk, and that is the part worth
+remembering.** The second call falls back to `auto`, where the **15% encoding
+gate decides per response** — and the response carries `timing_ms`. Coverage
+instrumentation slows the call, changes that number, changes the byte count, and
+tips the gate. So the same defect was red on ubuntu 3.10/3.11/3.12, green on
+ubuntu 3.13, green on all four Windows legs, green locally without `--cov` and
+red locally with it. **Chasing the platforms would have found nothing; the
+argument dict is the same everywhere.**
+
+⚠ `tests/test_dispatcher_arg_mutation.py` (3) asserts on the ARGUMENT DICT, not
+on the response encoding, precisely so it does not inherit the gate's
+environment-sensitivity. Reverting the fix turns 2 of the 3 red; the third is the
+control that `format` is still honoured and passes both sides.
+
 ### The test suite runs in parallel, and doing it found a test that only passed because of the file that ran before it
 
 The suite is 7,859 tests and took 599 seconds. It now runs under `pytest-xdist`

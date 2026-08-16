@@ -383,10 +383,33 @@ added a test runner.** Local uv 0.12.1 vs the CI pin 0.9.5 gave 76 insertions /
 changing what installs on 3.10 vs 3.14. Re-locked with `uvx --from uv==0.9.5 uv
 lock`: 24 insertions, 0 deletions. **Diff the lock after EVERY `uv lock`, not
 just version bumps.**
-⚠ Suite at this point: **7845 passed, 16 skipped, 0 failed** + `ruff check src/`
-clean, coverage 79.66%. Delta from the pre-merge 7859 total is EXACTLY **+2**,
-#479's `test_storage_path_resolution.py`. **Fold into the `Tests:` line at
-release, not before.**
+⚠⚠ **It went RED on CI and the failure was a REAL production defect the serial
+runner had never exercised — `call_tool` ate its caller's `format` argument.**
+`arguments.pop("format")` popped from the CALLER's dict, so a caller reusing one
+args object got JSON first and `server_output`'s default after. Fixed at the
+dispatcher (`arguments = dict(arguments)`), not in the tests, because the Counter
+front door re-dispatches through the same path. Over the wire it is unreachable —
+every request arrives as a fresh dict — so only in-process callers are exposed.
+⚠⚠ **It presented as an environment quirk and that is the reusable part.** The
+second call falls back to `auto`, where the **15% encoding gate decides per
+response**, and the response carries `timing_ms`. Coverage instrumentation slows
+the call, moves that number, moves the byte count, tips the gate. Red on ubuntu
+3.10/3.11/3.12, GREEN on ubuntu 3.13, green on all four Windows legs, green
+locally without `--cov`, red locally with it. **Chasing the platform matrix would
+have found nothing.**
+⚠ **Reproduced on a WSL Ubuntu 3.12 copy, which is what made it cheap** — Windows
+cannot produce it at all, and a CI cycle is 4 minutes against WSL's 3. Docker
+Desktop was not running; `wsl -d Ubuntu` with a `tar`-copied tree and its own uv
+was enough. ⚠ WSL interop expands `$PATH` into the command string and the Windows
+PATH contains parens, so `bash -lc` dies on a syntax error — use absolute paths
+and no variables.
+⚠ `tests/test_dispatcher_arg_mutation.py` (3) asserts on the ARGUMENT DICT, never
+on the response encoding, so it does not inherit the gate's environment
+sensitivity. Reverting turns 2 of 3 red; the third is the control.
+⚠ Suite with the fix: WSL Linux 3.12 **7833 passed, 0 failed** (+9 sdist errors
+that are an artifact of copying without `.git`); Windows **see release line**.
+Delta decomposes as 7828 + 2 fixed + 3 new = 7833. **Fold into the `Tests:` line
+at release, not before.**
 
 **2026-08-15: #428's remaining four languages IMPLEMENTED BY US (Rust, Go, Java,
 PHP), closing it.** Shipped as 1.108.281 via PR #478; see Current State.
