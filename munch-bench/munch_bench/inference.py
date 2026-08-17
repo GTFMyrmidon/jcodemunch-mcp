@@ -69,10 +69,16 @@ COST_TABLE: dict[str, tuple[float, float]] = {
 # that a genuinely old, unlisted model silently samples at the API default of
 # 1.0 instead of 0.0 — visible as run-to-run variance, where the other way round
 # is a hard 400 that stops the run.
+#
+# ⚠⚠ EVERY ID HERE MUST HAVE A `COST_TABLE` ROW. `_price_for` falls back to
+# (1.00, 3.00) for anything unlisted, so a model this set says we can benchmark
+# but the table cannot price reports a cost several times under the real rate,
+# silently. `claude-sonnet-4-5` was in exactly that state and was removed rather
+# than priced — it is a legacy model nothing here benchmarks, and the fallback
+# would have made a run of it read cheap.
 _SAMPLING_SUPPORTED: frozenset[str] = frozenset({
     "claude-opus-4-6",
     "claude-sonnet-4-6",
-    "claude-sonnet-4-5",
     "claude-haiku-4-5",
     "claude-haiku-4-5-20251001",
 })
