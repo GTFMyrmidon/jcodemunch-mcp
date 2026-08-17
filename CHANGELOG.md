@@ -2,6 +2,94 @@
 
 ## [Unreleased]
 
+### The dispatcher ate its caller's `format` argument ([#482](https://github.com/jgravelle/jcodemunch-mcp/pull/482))
+
+`call_tool` extracts `format` because it belongs to no tool's schema, and did it
+with `arguments.pop("format")` — on the caller's own dict. A caller that reuses
+one args object got JSON on its first call and whatever `server_output` resolves
+to on every call after. The dispatcher now pops from its own copy.
+
+⚠⚠ **The first call proving the argument works is what makes this expensive.**
+Nothing errors and nothing warns; the response is still valid, just encoded
+differently from what was asked for. A caller that checked the first response and
+moved on would never look again.
+
+⚠ **Over the wire this is invisible** — every MCP request arrives as a freshly
+parsed dict, so no remote client can hit it. The exposed callers are in-process:
+the Counter front door re-dispatching into `call_tool`, and the test suite.
+
+⚠⚠ **It presented as an environment quirk, and that is the part worth
+remembering.** The second call falls back to `auto`, where the **15% encoding
+gate decides per response** — and the response carries `timing_ms`. Coverage
+instrumentation slows the call, changes that number, changes the byte count, and
+tips the gate. So the same defect was red on ubuntu 3.10/3.11/3.12, green on
+ubuntu 3.13, green on all four Windows legs, green locally without `--cov` and
+red locally with it. **Chasing the platforms would have found nothing; the
+argument dict is the same everywhere.**
+
+⚠ `tests/test_dispatcher_arg_mutation.py` (3) asserts on the ARGUMENT DICT, not
+on the response encoding, precisely so it does not inherit the gate's
+environment-sensitivity. Reverting the fix turns 2 of the 3 red; the third is the
+control that `format` is still honoured and passes both sides.
+
+### The test suite runs in parallel, and doing it found a test that only passed because of the file that ran before it
+
+The suite is 7,859 tests and took 599 seconds. It now runs under `pytest-xdist`
+at `-n 4 --dist loadfile`. Measured on a 24-core box: **599s serial vs 183s
+parallel**, both collecting the same 7,859. CI runs the same flags; with coverage
+instrumentation the local run of CI's exact command is 258s.
+
+⚠ **`--dist loadfile` is load-bearing, not tuning.** It keeps a whole file on one
+worker, which preserves within-file ordering. The default `--dist load` spreads
+individual tests across workers and would break any file whose tests share
+module-level state.
+
+⚠ **Worker isolation is STRONGER than the serial run, not weaker.** Everything
+`conftest.py` resets per test — `_GLOBAL_CONFIG`, the index cache, perf-DB
+handles — is process-global, and each xdist worker is its own process. What
+parallelism takes away is the accidental cross-FILE ordering the serial run
+provided for free, and one test was living on it.
+
+⚠⚠ **The two failures the parallel run produced were NOT caused by parallelism —
+they reproduce serially in isolation, and they had been latent for as long as the
+files existed.** `tests/test_css.py` and `tests/test_json.py` imported through
+`src.jcodemunch_mcp`, which is a **different module object** from
+`jcodemunch_mcp` (`is` → `False`). The twin carries its own
+`config._GLOBAL_CONFIG` that conftest never resets, so it lazily loaded the
+developer's real `~/.code-index/config.jsonc`; `is_language_enabled` gated the
+language out of any `languages` allowlist that omits it, and `parse_file`
+returned `[]` while the direct extractor returned 10 symbols.
+
+⚠ **The mechanism is confirmed by which half failed.** `test_css.py` exercises
+both `css` and `scss` through `parse_file` and only the `scss` assertion broke —
+`css` is in the allowlist, `scss` is not. They passed in the full serial run only
+because `test_config.py` (also `src.`-prefixed) overwrote the twin's config
+earlier in alphabetical order.
+
+⚠ **This is Maintenance Practice #8's class in a spelling the guard cannot see.**
+`tests/test_config_isolation_guard.py` has no knowledge of the `src.` prefix.
+**Fourteen test files still import through the twin**, and two are the same defect
+unfired: `test_al.py` and `test_blade.py` both reach `parse_file` that way and
+pass only because `al` and `blade` happen to be in this box's config. On a
+contributor's box with a narrower allowlist they fail exactly as `scss` did.
+Not fixed here; the two live failures are.
+
+⚠ **CI is pinned to `-n 4`, not `-n auto`.** GitHub's standard runners are 4-core
+so `auto` resolves to 4 today and would jump silently if they are resized. More
+workers is not free: tests that do not isolate their storage contend on the same
+`~/.code-index` process-lock scopes, and that contention is the documented cause
+of the 47-minute outlier on the 1.108.261 run. Raise it only with a measurement.
+
+⚠⚠ **Adding the dependency required a re-lock, and the local-uv hazard in
+`test.yml`'s comment fired in its third direction.** A local uv 0.12.1 against
+the CI pin of 0.9.5 produced 76 insertions / 52 deletions: beyond the known
+nvidia marker widening it **stripped `python_full_version` guards off the
+google-api deps and `typing-extensions`**, changing what installs on 3.10 versus
+3.14, on a change whose only intent was adding a test runner. Re-locked via
+`uvx --from uv==0.9.5 uv lock` — 24 insertions, zero deletions, `execnet` and
+`pytest-xdist` only. **Check `git diff --stat uv.lock` after every lock, not just
+after version bumps.**
+
 ### Relative storage paths are resolved before they become cache keys ([#475](https://github.com/jgravelle/jcodemunch-mcp/issues/475))
 
 Reported and fixed by [@mikemikimike](https://github.com/jgravelle/jcodemunch-mcp/pull/479).
