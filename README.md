@@ -88,13 +88,24 @@ Full methodology, pinned commits, harness, and known caveats: [benchmarks/METHOD
 #### Recommended: one command
 
 ```bash
-pip install jcodemunch-mcp
+uv tool install jcodemunch-mcp
 jcodemunch-mcp init
 ```
 
+No virtualenv to manage, nothing written into system Python, and it works as-is on PEP 668 distros (Ubuntu 24.04+, Debian 12+) where bare `pip install` is refused. [Don't have `uv` yet?](https://docs.astral.sh/uv/getting-started/installation/)
+
 `init` auto-detects your MCP clients (Claude Code, Claude Desktop, Cursor, Windsurf, Continue), writes their config entries, installs the CLAUDE.md prompt policy so your agent actually uses jCodeMunch, optionally installs enforcement hooks, optionally indexes your project, and audits your agent config files for token waste.
 
-> **Ubuntu 24.04+ / Debian 12+:** system Python is externally managed (PEP 668). Use `pipx install jcodemunch-mcp` or `uv tool install jcodemunch-mcp` instead of bare `pip install`.
+<details>
+<summary><b>Other install paths</b></summary>
+
+| Command | Use it when |
+|---|---|
+| `uvx jcodemunch-mcp` | **Zero install.** Runs from an ephemeral environment — nothing lands on disk permanently. The client entries `init` writes already invoke the server this way, so for most setups this is all that ever runs. ⚠ Enforcement hooks are the exception: they're spawned by a minimal-PATH subshell and resolve the executable by name, so they need `uv tool install` (or `pipx`/`pip`) to work. |
+| `pipx install jcodemunch-mcp` | You already standardise on pipx |
+| `pip install jcodemunch-mcp` | Inside a virtualenv you manage yourself |
+
+</details>
 
 Verify:
 
@@ -105,9 +116,10 @@ jcodemunch-mcp --version
 #### Manual Claude Code setup
 
 ```bash
-pip install jcodemunch-mcp
-claude mcp add -s user jcodemunch jcodemunch-mcp
+claude mcp add -s user jcodemunch -- uvx jcodemunch-mcp
 ```
+
+No install step — `uvx` fetches and runs the server on demand. Prefer it on your PATH (and required for enforcement hooks)? `uv tool install jcodemunch-mcp`, then `claude mcp add -s user jcodemunch jcodemunch-mcp`.
 
 Then tell the agent to prefer the tools. This matters more than people think; installation makes the tools available but does not break the agent's brute-reading habit. One line in your CLAUDE.md does it:
 
