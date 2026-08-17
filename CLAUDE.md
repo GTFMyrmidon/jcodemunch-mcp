@@ -327,6 +327,163 @@ compaction is near its floor; descriptions are untouched ground.
 a RESUMED conversation counts accumulated context on every step, so the total is
 dominated by how much the agent read early on, which compounds.
 
+**2026-08-17: #476 (@rknighton) FIXED BY US — one telemetry db spent another's
+trim.** `_perf_rows_since_trim` was one int on the `_State` process singleton
+while the trim runs on `conn`, so with two stores alternating one `tool_calls`
+was never trimmed. Now a dict. Unreleased; see CHANGELOG `[Unreleased]`.
+⚠ **Low severity and the REPORT said so** — opt-in, local-only, single-store
+installs cannot reach it, cost is disk. He rates his own findings honestly; the
+standing note that he understates still holds, but check each time.
+⚠⚠ **Keyed by the SAME `str(path)` the connection cache uses, and that IS the
+fix.** Keyed on the raw `base_path` instead, two spellings of one directory each
+get their own budget toward a trim on one shared table — the same defect wearing
+a new key. v1.108.280 resolved that spelling problem for the cache after #465;
+this inherits it rather than re-opening it. [[feedback_guard_every_path_that_shares_the_hazard]]
+⚠ **Added `_ensure_perf_db_locked_with_key` rather than calling `_perf_db_path`
+twice** — re-deriving the key at the trim site repeats that helper's `mkdir` on
+every write, and #442 exists because per-write cost on this exact path was the
+whole problem. Two callers keep the old connection-only signature.
+⚠ `close_perf_dbs()` clears the counters with the connections so a key cannot
+outlive its store; the bounded cost is ~1000 rows of slack for a database whose
+connection is dropped mid-cycle, against a cap that is already an
+every-1000-writes approximation.
+⚠ Nothing is backfilled: an already-oversized `tool_calls` trims on its own next
+cycle.
+⚠ `tests/test_perf_trim_is_per_database.py` (4) asserts on the COUNTER MAP, not
+row counts after 1000 writes — 2000 rows across two databases would be slow and
+would pin the trim interval. **All 4 red against a restored single counter.**
+
+**2026-08-17: #443's conflict was OURS and we resolved it on their branch.**
+elfrost's PR sat `CONFLICTING/DIRTY` since 2026-08-12 — and **a conflicting fork
+PR has no `refs/pull/N/merge`, so it gets NO CI AT ALL**, which is why it read as
+stalled contributor work when it was our CHANGELOG merges. Merged `main` in,
+resolved to one `## [Unreleased]` heading with their section first, pushed to
+their fork, said on the thread that the conflict was ours. `MERGEABLE` again,
+suite green (7856/17, +6 = their tests).
+⚠ **Checked before promising: elfrost is a User, not an Organization**, so the
+`maintainerCanModify`-lies trap did not apply and the push worked.
+⚠ **The CLA status SURVIVED this push** — the documented erase-on-push hazard did
+not fire here. Do not treat either outcome as the rule; read the status.
+⚠⚠ **#447 was NOT implemented, deliberately.** Its window is posted publicly to
+**2026-08-20** and jjg reaffirmed it stands as posted. Resolving the conflict is
+the move that respects the promise AND unblocks them — it removes the reason the
+PR was dark without shortening anything.
+
+**Merged 2026-08-16: #479 (@mikemikimike) closes #475** — `IndexStore` /
+`SQLiteIndexStore` keyed their init caches on the SPELLING of `base_path`, so a
+relative `storage_path` skipped `mkdir` and schema setup for the second store
+after a chdir. Two source lines. Unreleased; see CHANGELOG `[Unreleased]`.
+⚠ **The mock cleanup is the larger half.** `patch("...Path.resolve",
+return_value=X)` replaces `resolve` on the `Path` CLASS, so it answered for every
+path in the process — including the storage path `IndexStore` resolves at
+construction. Four `test_tools.py` tests then CREATED their index directory at
+the faked location (a stray `C:\work\project` locally; `mkdir` death at
+`/workspaces/myrepo` and `\\server\share\` in CI). ⚠⚠ **Nothing in the suite
+could have reported it, because the writes landed where no assertion was
+looking** — same family as #439's blanket `os.path.exists` mock. `_resolve_only`
+in `tests/__init__.py` is narrow, and needs `autospec=True` so `self` reaches the
+side effect. All 19 patch sites converted; the other 15 were wrong too, just
+inert. ⚠ The `expanduser()` half MOVES an existing case (a literal `~` in
+`storage_path` built a directory named `~`); disclosed, not migrated.
+
+**2026-08-16: the suite runs in PARALLEL, and that surfaced a test living on file
+ordering.** `pytest-xdist` at `-n 4 --dist loadfile`, wired into `test.yml`.
+Measured on a 24-core box: **599s serial vs 183s parallel**, same 7,859
+collected; CI's exact command (with coverage) is 258s locally. Test-only + CI, no
+version bump; rides the next release.
+⚠ **`--dist loadfile` is load-bearing.** Whole file per worker preserves
+within-file order; the default `--dist load` spreads individual tests and breaks
+any file sharing module-level state.
+⚠ **Worker isolation is STRONGER, not weaker** — everything conftest resets
+(`_GLOBAL_CONFIG`, index cache, perf-DB handles) is process-global and each
+worker is its own process. What parallelism removes is the accidental
+cross-FILE ordering the serial run gave for free.
+⚠⚠ **The two failures it produced were NOT caused by parallelism — they
+reproduce serially in isolation.** `test_css.py` and `test_json.py` imported via
+`src.jcodemunch_mcp`, a **different module object** from `jcodemunch_mcp` (`is`
+→ `False`) carrying its own `config._GLOBAL_CONFIG` that conftest never resets.
+The twin lazily read the developer's real `~/.code-index/config.jsonc`,
+`is_language_enabled` gated the language out of the `languages` allowlist, and
+`parse_file` returned `[]` against a direct extractor's 10 symbols.
+⚠ **Which half failed is the proof of mechanism**: `test_css.py` drives BOTH
+`css` and `scss` through `parse_file` and only `scss` broke — `css` is in the
+allowlist, `scss` is not. They passed serially only because `test_config.py`
+(also `src.`-prefixed) overwrote the twin earlier in alphabetical order.
+⚠ **Maintenance Practice #8 in a spelling its guard cannot see** —
+`test_config_isolation_guard.py` knows nothing of the `src.` prefix. **14 files
+still import through the twin**, and `test_al.py` / `test_blade.py` are the same
+defect UNFIRED, passing only because `al` and `blade` sit in this box's config.
+**Not fixed; the two live failures are.** Next sweep starts there. **DONE — see
+the sweep entry immediately below.**
+
+**2026-08-17: the package twin is RETIRED and the guard now sees the spelling.**
+All 140 `src.jcodemunch_mcp` references across 14 test modules converted, and
+`tests/test_config_isolation_guard.py` gained the check. Test-only, no version
+bump; rides the next release.
+⚠⚠ **The guard already existed and a different IMPORT PATH walked around it** —
+the same shape as the defect that file was written for, where the guard existed
+and the CALL SITES walked around the reset. That is why the check went INTO that
+file rather than a new one.
+⚠ **Two of the fourteen were live, twelve were unfired.** `test_al.py` and
+`test_blade.py` are the identical `parse_file` defect and passed only because
+`al` and `blade` sit in this box's `languages` allowlist.
+⚠⚠ **The `patch("src.jcodemunch_mcp...")` form fails the OTHER way and is the
+worse half**: it patches the twin's attribute while the test drives the canonical
+module, so the patch does nothing and the test passes **without testing what it
+names**. Two existed (`test_config.py:351`, `test_git_sha_verification.py:159`).
+**Converting imports without converting these would have left a false green.**
+⚠ Detector matches a string only when it STARTS with the twin root (the shape of
+a patch target) and skips docstrings, so prose naming the hazard is not a
+violation — asserted by name. ⚠ **`_TWIN_ROOT` is assembled from two literals so
+the guard does not exempt ITSELF**; as one string it flags its own source line,
+and exempting the file or special-casing its name both stop it policing itself.
+⚠ **Non-vacuity proven against the REAL pre-fix tree**, not just synthetic
+fixtures: restoring `tests/test_al.py` from `HEAD` turns it red naming lines 6-7.
+`TWIN_EXEMPT` is EMPTY and its parametrize-over-nothing SKIP is the ratchet at
+rest.
+⚠ Suite: Windows **7850 passed, 17 skipped, 0 failed**, coverage 79.66%, ruff
+clean. Delta from 7864 is EXACTLY **+3** and decomposes as +2 passing guard tests
+and +1 skip (the empty parametrize) — the skip count moving 16 → 17 is the
+ratchet arriving, not a lost test.
+⚠ **CI pinned to `-n 4`, deliberately not `-n auto`** — GitHub runners are
+4-core so `auto` matches today and would jump silently on a resize, and extra
+workers contend on the same `~/.code-index` process-lock scopes that caused
+.261's 47m outlier.
+⚠⚠ **The local-uv lock hazard fired in its THIRD direction on a change that only
+added a test runner.** Local uv 0.12.1 vs the CI pin 0.9.5 gave 76 insertions /
+52 deletions, and beyond the known nvidia widening it **stripped
+`python_full_version` guards off the google-api deps and `typing-extensions`**,
+changing what installs on 3.10 vs 3.14. Re-locked with `uvx --from uv==0.9.5 uv
+lock`: 24 insertions, 0 deletions. **Diff the lock after EVERY `uv lock`, not
+just version bumps.**
+⚠⚠ **It went RED on CI and the failure was a REAL production defect the serial
+runner had never exercised — `call_tool` ate its caller's `format` argument.**
+`arguments.pop("format")` popped from the CALLER's dict, so a caller reusing one
+args object got JSON first and `server_output`'s default after. Fixed at the
+dispatcher (`arguments = dict(arguments)`), not in the tests, because the Counter
+front door re-dispatches through the same path. Over the wire it is unreachable —
+every request arrives as a fresh dict — so only in-process callers are exposed.
+⚠⚠ **It presented as an environment quirk and that is the reusable part.** The
+second call falls back to `auto`, where the **15% encoding gate decides per
+response**, and the response carries `timing_ms`. Coverage instrumentation slows
+the call, moves that number, moves the byte count, tips the gate. Red on ubuntu
+3.10/3.11/3.12, GREEN on ubuntu 3.13, green on all four Windows legs, green
+locally without `--cov`, red locally with it. **Chasing the platform matrix would
+have found nothing.**
+⚠ **Reproduced on a WSL Ubuntu 3.12 copy, which is what made it cheap** — Windows
+cannot produce it at all, and a CI cycle is 4 minutes against WSL's 3. Docker
+Desktop was not running; `wsl -d Ubuntu` with a `tar`-copied tree and its own uv
+was enough. ⚠ WSL interop expands `$PATH` into the command string and the Windows
+PATH contains parens, so `bash -lc` dies on a syntax error — use absolute paths
+and no variables.
+⚠ `tests/test_dispatcher_arg_mutation.py` (3) asserts on the ARGUMENT DICT, never
+on the response encoding, so it does not inherit the gate's environment
+sensitivity. Reverting turns 2 of 3 red; the third is the control.
+⚠ Suite with the fix: WSL Linux 3.12 **7833 passed, 0 failed** (+9 sdist errors
+that are an artifact of copying without `.git`); Windows **see release line**.
+Delta decomposes as 7828 + 2 fixed + 3 new = 7833. **Fold into the `Tests:` line
+at release, not before.**
+
 **2026-08-15: #428's remaining four languages IMPLEMENTED BY US (Rust, Go, Java,
 PHP), closing it.** Shipped as 1.108.281 via PR #478; see Current State.
 ⚠⚠ **This is a REVERSAL of an open handoff, not a timebox expiring, and it was
