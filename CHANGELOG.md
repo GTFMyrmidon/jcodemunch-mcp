@@ -2,6 +2,52 @@
 
 ## [Unreleased]
 
+### The package twin is retired, and the guard that could not see it now can
+
+Fourteen test modules imported the package as `src.jcodemunch_mcp`. That is a
+**different module object** from `jcodemunch_mcp` — `src.jcodemunch_mcp.config
+is jcodemunch_mcp.config` is `False` — carrying its own `_GLOBAL_CONFIG` that
+conftest's `_reset_global_config` never resets. The twin therefore lazily loaded
+the developer's real `~/.code-index/config.jsonc`, and every protection in
+`tests/test_config_isolation_guard.py` was bypassed by a spelling.
+
+All 140 references are converted, and `tests/test_config_isolation_guard.py`
+now fails on the spelling.
+
+⚠⚠ **The guard already existed and a different import path walked around it** —
+which is the same shape as the defect that file was written for, where the guard
+existed and the CALL SITES walked around the reset. That is why the new check
+lives in that file rather than a new one.
+
+⚠ **Two of the fourteen were the live defect; the rest were unfired.**
+`test_css.py` and `test_json.py` returned `[]` from `parse_file` because
+`is_language_enabled` consulted the twin's config, where the real `languages`
+allowlist omits `scss` and `json` (fixed in #482). `test_al.py` and
+`test_blade.py` are the identical defect and passed only because `al` and
+`blade` happen to be in this box's allowlist. **On a contributor's machine with
+a narrower list they fail the same way** — which is the "passes on two machines,
+fails on a third" shape the original guard was written for.
+
+⚠⚠ **The `patch("src.jcodemunch_mcp...")` form fails the OTHER way and is worse
+for it.** Two such targets existed. They patch an attribute on the twin while
+the test exercises the canonical module, so the patch does nothing and the test
+passes **without testing what it names** — a false green rather than a false
+red. Converting the imports without converting these would have left exactly
+that.
+
+⚠ The detector matches a string only when it STARTS with the twin root, which is
+the shape of a `patch()` target, and skips docstrings — so prose naming the
+hazard is not itself a violation, asserted by name in
+`test_the_twin_guard_can_fail`. ⚠ `_TWIN_ROOT` is assembled from two literals so
+the guard **does not exempt itself**; written as one string it flags its own
+source line, and both alternatives (exempting the file, special-casing its name)
+stop it policing itself.
+
+⚠ Proven non-vacuous against the REAL pre-fix tree, not only synthetic fixtures:
+restoring `tests/test_al.py` from `HEAD` turns the guard red naming lines 6-7.
+`TWIN_EXEMPT` is **empty**, and its parametrize-over-nothing SKIP is the ratchet
+at rest — it re-arms the moment anyone adds an entry.
+
 ### The dispatcher ate its caller's `format` argument ([#482](https://github.com/jgravelle/jcodemunch-mcp/pull/482))
 
 `call_tool` extracts `format` because it belongs to no tool's schema, and did it

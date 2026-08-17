@@ -371,7 +371,38 @@ allowlist, `scss` is not. They passed serially only because `test_config.py`
 `test_config_isolation_guard.py` knows nothing of the `src.` prefix. **14 files
 still import through the twin**, and `test_al.py` / `test_blade.py` are the same
 defect UNFIRED, passing only because `al` and `blade` sit in this box's config.
-**Not fixed; the two live failures are.** Next sweep starts there.
+**Not fixed; the two live failures are.** Next sweep starts there. **DONE — see
+the sweep entry immediately below.**
+
+**2026-08-17: the package twin is RETIRED and the guard now sees the spelling.**
+All 140 `src.jcodemunch_mcp` references across 14 test modules converted, and
+`tests/test_config_isolation_guard.py` gained the check. Test-only, no version
+bump; rides the next release.
+⚠⚠ **The guard already existed and a different IMPORT PATH walked around it** —
+the same shape as the defect that file was written for, where the guard existed
+and the CALL SITES walked around the reset. That is why the check went INTO that
+file rather than a new one.
+⚠ **Two of the fourteen were live, twelve were unfired.** `test_al.py` and
+`test_blade.py` are the identical `parse_file` defect and passed only because
+`al` and `blade` sit in this box's `languages` allowlist.
+⚠⚠ **The `patch("src.jcodemunch_mcp...")` form fails the OTHER way and is the
+worse half**: it patches the twin's attribute while the test drives the canonical
+module, so the patch does nothing and the test passes **without testing what it
+names**. Two existed (`test_config.py:351`, `test_git_sha_verification.py:159`).
+**Converting imports without converting these would have left a false green.**
+⚠ Detector matches a string only when it STARTS with the twin root (the shape of
+a patch target) and skips docstrings, so prose naming the hazard is not a
+violation — asserted by name. ⚠ **`_TWIN_ROOT` is assembled from two literals so
+the guard does not exempt ITSELF**; as one string it flags its own source line,
+and exempting the file or special-casing its name both stop it policing itself.
+⚠ **Non-vacuity proven against the REAL pre-fix tree**, not just synthetic
+fixtures: restoring `tests/test_al.py` from `HEAD` turns it red naming lines 6-7.
+`TWIN_EXEMPT` is EMPTY and its parametrize-over-nothing SKIP is the ratchet at
+rest.
+⚠ Suite: Windows **7850 passed, 17 skipped, 0 failed**, coverage 79.66%, ruff
+clean. Delta from 7864 is EXACTLY **+3** and decomposes as +2 passing guard tests
+and +1 skip (the empty parametrize) — the skip count moving 16 → 17 is the
+ratchet arriving, not a lost test.
 ⚠ **CI pinned to `-n 4`, deliberately not `-n auto`** — GitHub runners are
 4-core so `auto` matches today and would jump silently on a resize, and extra
 workers contend on the same `~/.code-index` process-lock scopes that caused
