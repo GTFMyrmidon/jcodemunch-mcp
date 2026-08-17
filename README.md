@@ -3,8 +3,8 @@
 **The most token-efficient MCP server for precise source code retrieval via tree-sitter AST parsing.** Cut AI token costs 86-99% on code exploration (96% average, benchmarked at 27.9x fewer tokens than a grep-and-read agent) and stop burning your context window reading entire files.
 
 > **Real results, live from production**
-> **645B+ tokens saved** · **95,000+ reporting installs** · **$3.2M+ in AI spend avoided** · **77,000+ kg CO₂ prevented**
-> Counter figures as of 2026-08-05, valued at the $5/MTok Claude Opus **input** rate. All four only grow, so read them as floors. Live at **[jcodemunch.com](https://jcodemunch.com/)**.
+> **838B+ tokens saved** · **136,000+ reporting installs** · **$4.2M+ in AI spend avoided** · **100,000+ kg CO₂ prevented**
+> Counter figures as of 2026-08-17, valued at the $5/MTok Claude Opus **input** rate. All four only grow, so read them as floors. Live at **[jcodemunch.com](https://jcodemunch.com/)**.
 
 Works with **Claude Code**, **Cursor**, **VS Code**, **Codex CLI**, **Windsurf**, **Continue**, and [any MCP-compatible client](CLIENTS.md).
 
