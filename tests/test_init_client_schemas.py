@@ -1,19 +1,25 @@
-"""Codex and opencode client registration.
+"""Per-client config schemas, and the ways getting one wrong stays silent.
 
-Both hosts were advertised on our GitHub topics before `init` could serve
-them, and neither accepts the `_MCP_ENTRY` shape every other JSON client in
-`cli/init.py` uses:
+Five hosts were advertised on our GitHub topics before `init` could serve
+them. Three of the five do NOT accept the `_MCP_ENTRY` / `mcpServers` shape
+the rest of `cli/init.py` writes, and ⚠⚠ **no mismatch here produces an
+error** — the host parses the file, registers nothing, and reports success.
+The user gets an agent with no jCodeMunch tools and no reason to suspect the
+config. That is what these tests exist to catch.
 
-* **Codex** reads TOML (`~/.codex/config.toml`, `[mcp_servers.jcodemunch]`)
-  and its rmcp transport is strict about the first JSON-RPC frame on stdout.
-  uvx's install chatter on a cold run poisons that handshake, and the
-  documented symptom is a SILENT multi-hour hang rather than an error
-  (CLIENTS.md). So the Codex writer resolves a real binary or REFUSES; it
-  must never emit the uvx form that every other client gets.
-* **opencode** reads JSON but not our JSON: the top-level key is `mcp` (not
-  `mcpServers`), each server needs `"type": "local"`, and `command` is one
-  ARRAY rather than separate `command`/`args`. `_MCP_ENTRY` written here
-  produces a file opencode parses and ignores — no error, no tools.
+Three distinct JSON schemas plus one TOML:
+
+* **Codex** — TOML at `~/.codex/config.toml`, `[mcp_servers.jcodemunch]`.
+  Its rmcp transport is strict about the first JSON-RPC frame on stdout and
+  uvx's cold-run install chatter poisons the handshake; the documented
+  symptom is a SILENT multi-hour hang (CLIENTS.md). The writer resolves a
+  real binary or REFUSES — it must never emit the uvx form.
+* **opencode** — top-level `mcp`, each server needs `"type": "local"`, and
+  `command` is one ARRAY carrying executable and arguments together.
+* **VS Code / Copilot** — top-level `servers`, not `mcpServers`.
+* **Gemini CLI** and **Cline** — the generic `mcpServers` shape, so their
+  risk is not the schema but DETECTION: `~/.gemini` is shared with
+  Antigravity, which reads a different file entirely.
 """
 
 from __future__ import annotations
@@ -170,8 +176,121 @@ def test_opencode_is_idempotent(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# VS Code / GitHub Copilot
+# ---------------------------------------------------------------------------
+
+def test_vscode_uses_the_servers_key(tmp_path):
+    """Third distinct schema, and like opencode's it fails silently."""
+    cfg = tmp_path / "mcp.json"
+
+    init_mod._patch_vscode_mcp_config(cfg, backup=False)
+
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    assert "mcpServers" not in data, "wrote the key VS Code does not read"
+    assert data["servers"]["jcodemunch"]["command"] == "uvx"
+    assert data["servers"]["jcodemunch"]["args"] == ["jcodemunch-mcp"]
+
+
+def test_vscode_preserves_sibling_servers(tmp_path):
+    cfg = tmp_path / "mcp.json"
+    cfg.write_text(json.dumps({
+        "inputs": [{"id": "tok", "type": "promptString"}],
+        "servers": {"playwright": {"command": "npx", "args": ["-y", "x"]}},
+    }), encoding="utf-8")
+
+    init_mod._patch_vscode_mcp_config(cfg, backup=False)
+
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    assert "playwright" in data["servers"], "clobbered a sibling server"
+    assert "jcodemunch" in data["servers"]
+    assert data["inputs"][0]["id"] == "tok", "dropped an unrelated top-level key"
+
+
+def test_vscode_is_idempotent(tmp_path):
+    cfg = tmp_path / "mcp.json"
+    init_mod._patch_vscode_mcp_config(cfg, backup=False)
+    first = cfg.read_text(encoding="utf-8")
+    msg = init_mod._patch_vscode_mcp_config(cfg, backup=False)
+    assert "already configured" in msg
+    assert cfg.read_text(encoding="utf-8") == first
+
+
+def test_vscode_does_not_mutate_the_shared_entry_template(tmp_path):
+    """`servers[...] = _MCP_ENTRY` would alias the module-level dict.
+
+    Every other client writes that same object, so a later mutation through
+    one config would silently change what every subsequent client receives.
+    """
+    before = dict(init_mod._MCP_ENTRY)
+    cfg = tmp_path / "mcp.json"
+    init_mod._patch_vscode_mcp_config(cfg, backup=False)
+
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    data["servers"]["jcodemunch"]["args"].append("--tampered")
+
+    assert init_mod._MCP_ENTRY == before
+
+
+# ---------------------------------------------------------------------------
 # Detection + dispatch
 # ---------------------------------------------------------------------------
+
+def test_gemini_cli_is_not_detected_from_the_antigravity_directory(tmp_path, monkeypatch):
+    """~/.gemini exists for Antigravity users who have no Gemini CLI.
+
+    Antigravity reads ~/.gemini/config/mcp_config.json; Gemini CLI reads
+    ~/.gemini/settings.json. Keying detection on the shared DIRECTORY would
+    offer to configure a client the user does not have and write a
+    settings.json nothing reads.
+    """
+    monkeypatch.setattr(init_mod.Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(init_mod, "_find_executable", lambda n: None)
+    monkeypatch.setattr(init_mod.Path, "cwd", staticmethod(lambda: tmp_path / "proj"))
+    (tmp_path / ".gemini" / "config").mkdir(parents=True)
+    (tmp_path / ".gemini" / "config" / "mcp_config.json").write_text("{}", encoding="utf-8")
+
+    names = {c.name for c in init_mod._detect_clients()}
+
+    assert "Gemini CLI" not in names
+
+
+@pytest.mark.parametrize("name,rel", [
+    ("Gemini CLI", ".gemini/settings.json"),
+    ("Cline", ".cline/mcp.json"),
+])
+def test_generic_clients_detected_from_their_own_file(tmp_path, monkeypatch, name, rel):
+    monkeypatch.setattr(init_mod.Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(init_mod, "_find_executable", lambda n: None)
+    monkeypatch.setattr(init_mod.Path, "cwd", staticmethod(lambda: tmp_path / "proj"))
+    target = tmp_path / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("{}", encoding="utf-8")
+
+    found = {c.name: c for c in init_mod._detect_clients()}
+
+    assert name in found
+    assert found[name].method == "json_patch"
+
+
+def test_vscode_requires_an_existing_dot_vscode_directory(tmp_path, monkeypatch):
+    """`code` on PATH is true almost everywhere; .vscode/ is the real signal.
+
+    Detecting on the executable would CREATE .vscode/mcp.json in whatever
+    directory init happened to be run from.
+    """
+    monkeypatch.setattr(init_mod.Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(init_mod, "_find_executable", lambda n: "/usr/bin/" + n)
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.setattr(init_mod.Path, "cwd", staticmethod(lambda: proj))
+
+    assert "VS Code (Copilot)" not in {c.name for c in init_mod._detect_clients()}
+
+    (proj / ".vscode").mkdir()
+    found = {c.name: c for c in init_mod._detect_clients()}
+    assert found["VS Code (Copilot)"].method == "json_vscode"
+
+
 
 @pytest.mark.parametrize("name,method", [("Codex", "toml_codex"), ("opencode", "json_opencode")])
 def test_detected_when_config_dir_exists(tmp_path, monkeypatch, name, method):
@@ -199,6 +318,7 @@ def test_detected_by_executable_before_the_config_dir_exists(tmp_path, monkeypat
 @pytest.mark.parametrize("method,marker", [
     ("toml_codex", "[mcp_servers.jcodemunch]"),
     ("json_opencode", '"mcp"'),
+    ("json_vscode", '"servers"'),
 ])
 def test_configure_client_dispatches_each_method(tmp_path, monkeypatch, method, marker):
     monkeypatch.setattr(init_mod.shutil, "which", lambda name: "/usr/local/bin/jcodemunch-mcp")
