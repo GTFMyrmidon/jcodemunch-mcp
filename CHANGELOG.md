@@ -5046,10 +5046,21 @@ headline is the clean-subset figure, not the flattering aggregate.
 around it; a real agent re-queries and self-corrects, so effective recall is
 better than the raw number. Do not read it as a failure rate.
 
-## [Unreleased] - benchmarks: one measurement path, no estimates
+## Benchmarks — one measurement path, no estimates
 
-No shipped-package changes. Benchmark harnesses, their committed reports, and the
-published numbers that mirror them.
+**Unversioned: no shipped-package changes.** Benchmark harnesses, their committed
+reports, and the published numbers that mirror them. The work landed 2026-07-29
+and first went out with 1.108.200 the following day.
+
+⚠ **This block was headed `## [Unreleased]` until 2026-08-17**, two weeks after
+it shipped, in a file that should carry exactly one. Nothing broke — `whatsnew`'s
+parser requires `[\d.]+` for the version and skipped it, and the rotation gate's
+predicates match `## [\d+.\d+.\d+]` — but every count of "how many Unreleased
+headings are there" returned 2, so a real duplicate would have been
+indistinguishable from this one. It cost a round of verification against both
+parents during the v1.108.283 release, resolving a contributor merge that had
+produced exactly that defect once before. **A heading that is wrong but harmless
+still spends the signal a check exists to give.**
 
 ### The comparison harnesses divided a fresh number by a stale one
 
