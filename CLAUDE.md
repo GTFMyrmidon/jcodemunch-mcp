@@ -922,6 +922,49 @@ change in what a handoff IS, not only in how long it lasts. It is the intended
 trade — our throughput over their commit — and it should be made in the open
 rather than discovered at expiry.
 
+**3c. PROFILE THE AUTHOR BEFORE REVIEWING A VENDOR-SHAPED PR** (jjg,
+2026-08-17). Any PR adding a named third-party provider, gateway, SDK or
+endpoint gets three queries FIRST, before a line of the diff is read:
+
+```bash
+GITHUB_TOKEN="" gh api users/<login> --jq '"created=\(.created_at[0:10]) repos=\(.public_repos) company=\(.company) bio=\(.bio)"'
+GITHUB_TOKEN="" gh api "search/issues?q=is:pr+author:<login>&per_page=1" --jq .total_count
+GITHUB_TOKEN="" gh api "search/issues?q=is:pr+author:<login>+<vendor>+in:title&per_page=1" --jq .total_count
+```
+
+⚠⚠ **The discriminator is the RATIO, not the volume.** A prolific contributor
+is fine. #485's author had **3,089 PRs, 2,242 with "minimax" in the title
+alone (73%), ~19/day since March**, and a profile reading
+`company: Independent Developer`. #487's had 87 forks, 86 PRs, all OrcaRouter,
+on a 7-day-old account. **Both were found in under a minute; #485 was reviewed
+in depth twice before anyone looked.** That is the cost this rule removes.
+
+⚠ **Also check whether we have a DEMAND signal**, which is the actual #380 bar
+and is one query:
+`gh api "search/issues?q=repo:jgravelle/jcodemunch-mcp+<vendor>"`. MiniMax
+cleared it honestly as a summarizer (#184, a user asking); MiniMax TTS did not,
+and the only tracker mention was the PR itself.
+
+⚠⚠ **Quality is NOT the discriminator and must not be used as one.** #485's
+diff was better than most human PRs — a real `output_format`-versus-container
+finding, a three-point review addressed in hours, a self-corrected test count.
+**Good work aimed at something nobody asked for is still something nobody asked
+for.** Close on demand, credit the finding, and say plainly that quality was not
+the reason.
+
+⚠ **Do not assert employment you cannot prove.** State the numbers, ask the
+affiliation question on the thread, and let the ratio speak. #487's author
+volunteered their affiliation unprompted and it cost them nothing — that is the
+contrast worth drawing, not an accusation.
+
+⚠⚠ **A posted timebox's default can be RETRACTED IN THE OPEN when the facts
+change, but never silently.** #485's clock promised that at expiry "we implement
+the same change ourselves" and that the window "never decides whether the
+feature ships." The authorship-and-credit half was honoured; the feature half
+was withdrawn ON THE THREAD, with the reason, because it was written before the
+campaign was known. **Letting a promise lapse quietly is the failure mode;
+retracting it out loud is not.**
+
 **3b. A MERGEABLE contributor PR merges BEFORE any changelog-touching work of
 our own** (jjg, 2026-08-14). Not a courtesy and not a preference — a measured
 cost. Every entry we add lands in the same `[Unreleased]` block a contributor's
