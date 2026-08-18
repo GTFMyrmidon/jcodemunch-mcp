@@ -67,6 +67,63 @@ Two of those eight are constraints rather than evidence, red only because
 `get_model()` does not exist there; `test_re_embedding_the_same_model_does_not_rebuild`
 passes on both sides and is the control against turning the common path into a
 full re-embed on every call.
+### The two exclusion opt-outs never read the project config that documents them (#491, @rknighton)
+
+`security.py`'s `exclude_skip_directories` and `exclude_secret_patterns`
+resolvers called `_config.get()` without `repo=`, which skips the project
+overlay entirely. A project declaring either key in its own `.jcodemunch.jsonc`
+got **no effect, no warning, and a successful index** — the files were simply
+absent from the corpus.
+
+⚠⚠ **The comment above the skip list is what makes this a defect rather than a
+missing feature.** It says in as many words that these are ordinary English
+words that can name a real package, "which is why `exclude_skip_directories`
+exists — a project that ships an `archive/` module removes it there
+per-project." `is_secret_file`'s own docstring claims it applies "the project's
+`exclude_secret_patterns` overrides" one line above the global-only read. **Both
+were describing an intent the code did not implement.**
+
+⚠ **Nothing surfaces it.** `discovery_skip_counts` reports `skip_dir: 2` with no
+directory name and no rule name, and the pruned path goes to `logger.debug`. The
+user sets the documented opt-out, sees a green index, and gets a corpus quietly
+missing a module.
+
+The keys themselves were sound — the same values in **global** config worked
+throughout, which isolates the defect to the missing keyword rather than to the
+key, the walk or the parser. `repo=` is now threaded through
+`_excluded_skip_directories`, `get_skip_directories`, `get_skip_patterns` and
+`is_secret_file`, and through every local call site: the three
+`_build_skip_dirs_regex()` sites in `index_folder.py`, both `is_secret_file`
+sites there, the one in `index_file.py`, and the one in `security.py` itself.
+
+⚠ **`index_repo` is exempt BY NAME, not by omission.** A project's
+`.jcodemunch.jsonc` is found by walking up from a local path, and a GitHub tree
+has no local checkout — there is nothing to walk up to. Passing the owner/repo
+identifier would imply a lookup that cannot succeed. Global config still applies
+there, and the exemption is asserted by name in the test rather than left as a
+gap the ratchet happens not to cover.
+
+⚠ **The parameter is optional and defaults to today's behaviour**, so a caller
+with no path to offer resolves global-only exactly as before.
+
+⚠ **This is the fourth report of one bug shape**, after #300
+(`extra_ignore_patterns`), #187 (`languages`) and #304 (`summarizer_model`).
+**#301 audited about forty call sites for exactly this and lists
+`get_extra_ignore_patterns` as fixed while neither exclusion resolver appears in
+it**; v1.108.197 then fixed the three `max_*` resolvers and did not touch them
+either. So the ratchet is the point: `tests/test_security_exclusions_are_project_overridable.py`
+fails on any unthreaded read of either key and on any local call site that drops
+`repo=`. **A third audit would find the fifth instance; a test finds it on the
+commit that introduces it.**
+
+⚠ **Signature-only would have been a false green** — adding the parameter and
+leaving the callers bare changes nothing observable. The call-site check walks
+the AST rather than the signature for that reason.
+
+⚠ `tests/test_security_exclusions_are_project_overridable.py` (13), all red
+against `b85ef61`. Three of those are constraints rather than evidence: they are
+red only because `repo=` is not a parameter there, so each also asserts the
+no-argument form, which runs identically on both sides.
 
 
 ### `resolve_repo` no longer answers a repository question with a filesystem fact (#492, @rknighton)
