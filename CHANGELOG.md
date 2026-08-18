@@ -2,6 +2,616 @@
 
 ## [Unreleased]
 
+### An explicit local embedding model now outranks the zero-config default (#488, @pnm-jgb)
+
+`_detect_provider` returned the bundled ONNX encoder at priority 0, so once
+`[local-embed]` was installed every lower branch became unreachable **by
+configuration**. `embed_model` / `JCODEMUNCH_EMBED_MODEL` was read after the
+early return and changed nothing — no warning, no log line, no field in any
+response. **Absence of a setting and an explicit setting are different intents,
+and only the first should get the default.**
+
+The reporter's case is the ordinary one: they run jdocmunch on
+`BAAI/bge-base-en-v1.5` and wanted code and docs on the same model. `embed_model`
+is exactly the knob that appears to offer it. They set it, saw no change, and
+learned why only by reading the resolver.
+
+⚠⚠ **ONLY THE FREE, ON-MACHINE OPTION WAS PROMOTED. Gemini and OpenAI still sit
+BELOW the bundled encoder, and that is the load-bearing half of this change.**
+`tests/test_paid_embeddings_optin.py` exists because jdocmunch's resolver
+auto-selected OpenAI from an ambient key and began **billing a remote account and
+shipping the indexed corpus off the machine**; jcm's second line of defence is
+precisely that ONNX wins before any cloud branch is reached. **`embed_model` is
+free and local, so promoting it costs a re-embed; promoting a cloud provider
+costs money and exfiltrates the corpus.** Those are not the same decision and
+they do not get the same answer. A machine with an ambient `OPENAI_API_KEY` and
+`OPENAI_EMBED_MODEL` still embeds locally.
+
+⚠ **The usability probe decides PRECEDENCE, never selection.**
+`_embed_sentence_transformers` raises `ImportError` without its package, so
+promoting an uninstalled backend over a working ONNX install would trade a
+silently-ignored setting for a hard failure at embed time — the same defect,
+louder. When ONNX is unavailable there is nothing to protect and the setting is
+selected as before, which is what hands the caller the actionable
+`pip install 'jcodemunch-mcp[semantic]'` message rather than a bare `None`.
+**Probing unconditionally broke that on every machine without the package**, and
+33 tests said so.
+
+⚠ `embed_repo` now reports `provider_reason` (`embed_model` / `bundled_default`
+/ `google_api_key` / `openai_api_key` / `none_configured`) and, when an explicit
+setting could not be honoured, `provider_skipped` naming it and the remedy. **An
+explicit setting we cannot use is disclosed, never dropped** — silently ignoring
+it is the reported defect, and silently failing on it is that defect with a
+louder symptom.
+
+⚠ **The config comment is corrected**, which matters because it was the only
+place `embed_model` was documented and it described the opposite precedence:
+"takes priority over GOOGLE_API_KEY and OPENAI_API_KEY embeddings" was true of
+the two it named and silent about the one that outranked it.
+
+⚠ **MIGRATION, stated.** If you have `[local-embed]` installed AND `embed_model`
+set, your next `embed_repo` switches provider — and v1.108.285's #500 fix
+detects that, forces the rebuild, and reports `model_changed_from`. Before .285
+it would have left the store holding two vector widths with the newer half
+silently excluded from search, which is why this change waited for that one.
+
+⚠ `tests/test_explicit_embed_model_wins.py` (12). Six are red against the
+pre-fix resolver, **but only two of those are behavioural** — the other four
+fail because `_detect_provider_detailed` does not exist there. The six that pass
+on both sides are the money-safety class and the wrapper-shape controls, which
+pin what must NOT move.
+
+
+### The guide advertised a tool the same process refuses to run (#495, @rknighton)
+
+`jcodemunch_guide` built its `### All tools` list from a static constant without
+consulting `disabled_tools`. That key ships as `["test_summarizer"]`, so **at
+shipped defaults — no config file, no environment overrides —** the guide named a
+tool `call_tool` then rejected before the handler ran. An agent reads the name,
+calls it, and gets an error.
+
+⚠⚠ **The filtering already existed and a SECOND generator walked around it.**
+Commit `e086e9a` ("claude-md respects tool_profile and disabled_tools", #242)
+added exactly this to `cli/init.py`, which is why the CLI policy path filters
+correctly today. `server.py`'s generator never received it. **The fix reuses
+`_get_active_tools` rather than adding a third copy** — a copy is precisely how
+the two drifted apart, and a third would drift again.
+
+⚠ **Profile is honoured too, not only `disabled_tools`.** The reporter scoped
+their claim to `disabled_tools` deliberately and correctly: a profile-hidden tool
+stays dispatchable by name, so naming it costs context (#397) rather than
+producing a failure. But the tool's own registered description promises the guide
+"Matches the active tool surface, tier and disabled_tools", and `tier` is the
+profile — so filtering by one and not the other leaves the description making a
+claim the code does not keep, which is the defect class this release is full of.
+
+⚠ A category emptied by filtering is dropped whole. A bare `**Search:**` with
+nothing after it reads as a surface with no tools in it.
+
+⚠⚠ **`tests/test_config.py::test_generate_full_snippet` asserted that EVERY
+canonical tool name appears in the snippet, which encoded the defect instead of
+catching it.** `test_summarizer` is canonical and disabled by default, so the
+test could only pass while the bug existed. It now asserts the property actually
+wanted — advertises what it will dispatch — and pins the absence. **That is the
+third test this release found asserting the behaviour it should have prevented.**
+
+⚠ `tests/test_guide_respects_disabled_tools.py` (9), 5 red against the pre-fix
+generator. The other four are constraints: the nothing-disabled control, snippet
+shape, the empty-category rule, and a pin on `DEFAULTS["disabled_tools"]` so the
+issue's premise cannot silently change out from under the case.
+
+
+### The tool schema advertised three paid-ish providers and hid the free one (#489, @pnm-jgb)
+
+Five places tell a caller how to obtain an embedding provider. Exactly one of
+them named the bundled zero-config ONNX encoder — the provider that is
+**priority 0 in `_detect_provider`** and the project's recommended setup. The
+other four listed only `JCODEMUNCH_EMBED_MODEL`, `GOOGLE_API_KEY` and
+`OPENAI_API_KEY`, two of which bill per call.
+
+⚠⚠ **The `semantic` parameter description is the expensive one, and the harm is
+invisible from outside.** It is not documentation a human browses; it is the
+tool schema, and it is the only information an agent has when deciding whether
+to set `semantic: true`. An agent reading "requires one of three env vars"
+against an environment with none of them set correctly concludes semantic search
+is unavailable and never attempts it — **on a machine where it works, for free,
+right now.** There is no error, no warning and no degraded result to notice. The
+capability simply goes unused. It is the inverse of a false positive: the tool
+under-reports its own function.
+
+All five now derive from `embeddings/advice.py`. `_LOCAL_FIRST` leads both
+strings, mirroring `_detect_provider`'s priority order so the advice and the
+resolver cannot disagree about which provider wins.
+
+⚠⚠ **The report named three sites; the ratchet found FIVE.** Two more were only
+visible once a test asserted the property rather than the instances: the
+`embed_repo` TOOL DESCRIPTION (`server.py`) carried the same omission and is
+equally agent-facing, and `retrieval/embed_drift.py` had its own copy that named
+the bundled encoder **last**, behind the two that cost money. A fifth, the
+`semantic` docstring in `search_symbols`, is developer-facing and now points at
+the constant instead of enumerating.
+
+⚠ **`tests/test_embed_drift.py` pinned the literal `"No embedding provider
+configured"`,** which is precisely how that site kept a stale copy: a test keyed
+to one spelling of a sentence guards the spelling, not the behaviour. It now
+asserts the shared message is served. **The first version of this release's own
+ratchet had the same defect** — it matched `"No embedding provider is
+configured"` with the `is`, and caught `embed_drift` only by luck via a
+different clause.
+
+⚠ **No token-budget cost, and that was MEASURED rather than assumed.** The first
+read of this issue assumed the `semantic` description was charged against the
+hard 4,000-token `core_compact` ceiling, which has ten tokens of headroom, and
+would have trimmed a description to make room. `semantic` is in
+`_COMPACT_STRIP_PARAMS`, so it never reaches the compact schema at all: live
+`core_compact` is **3,990 before and after**. A test pins that, so if `semantic`
+ever stops being stripped the budget question comes back visibly.
+
+⚠ `tests/test_embedding_provider_advice.py` (10). Four are red against the
+pre-fix consumers; the rest assert the constants' shape and the budget, and hold
+on both sides. ⚠⚠ **One of the four only became red after it was corrected**:
+`test_the_search_symbols_runtime_error` originally imported the constant and
+asserted the extra was in it, which is true the moment the constant exists,
+whether or not the site uses it. **It checked the fix instead of the site.**
+
+
+## [1.108.285] - 2026-08-18 - Five answers that were asserted, not established
+
+Five fixes, each one a place that reported a result it had not checked: a cache that said ready, an index that said fresh, a resolver that said this repository, an opt-out that said applied, and an embedding store that said one model. Three of the five were a comment or docstring describing behaviour the code did not implement.
+
+### A model change left the embedding store holding two vector widths (#500)
+
+`embed_repo` carried this comment for four releases:
+
+```python
+# Detect dimension mismatch — if the stored model differs, force a rebuild.
+stored_dim = emb_store.get_dimension()
+```
+
+**It implemented no such detection.** `stored_dim` was read only to seed `dim`,
+nothing compared the stored model against the active one, and `set_dimension`
+fired exclusively when `dim is None` — a first-ever embed. Only `task_type`
+forced a rebuild. So changing the embedding model wrote new-width vectors
+alongside the old ones behind a meta row still naming the first.
+
+⚠⚠ **The consequence is a recall failure that reads as a finding, and it
+compounds.** `EmbeddingMatrix` infers its dimension from the FIRST row and drops
+every row that disagrees. The inferred width follows the majority of
+pre-existing rows, so **every symbol embedded after the change is silently
+excluded from semantic search, and the gap grows with every new file.** Measured
+on a 7-symbol repo: store `{384: 6, 768: 1}`, meta reporting 384, one symbol
+excluded — and nothing anywhere said so.
+
+⚠ **No unusual configuration reaches it.** Installing `[local-embed]` on an
+install that used `embed_model`, uninstalling it, deleting the ONNX model
+directory, changing `embed_model`, or rotating a cloud key with a different
+`*_EMBED_MODEL` all swap the active provider on an existing store.
+
+⚠⚠ **The read path is NOT the defect and was left alone.** Excluding a
+mismatched row reaches the same answer `_cosine_similarity` gave before the
+matrix existed — `embedding_matrix._build` says so in a comment and is right.
+The defect is that a mixed store could come into existence at all. **Fixing the
+consumer would have hidden the producer.**
+
+`EmbeddingStore.get_model()` is added and compared against the active model; a
+difference forces the rebuild, and the result carries `model_changed_from` +
+`rebuild_reason` rather than performing an expensive re-embed silently.
+
+⚠ **Unknown is not a change.** A store written before the model name was
+persisted has no row, and forcing a rebuild on it would bill every existing user
+a full re-embed for a model that may be identical.
+
+⚠ **`stored_dim` is now cleared inside the `force` branch**, which also repairs
+the pre-existing `task_type` rebuild path: it cleared the store and then left
+`dim` seeded from the old value, so the `dim is None` gate never re-fired and
+the meta kept advertising the previous dimension and model against freshly
+written vectors.
+
+⚠ **`skipped_dim_mismatch` was computed, stored on the object and read NOWHERE**
+— `grep -rn skipped_dim_mismatch src/` returned only the three lines defining
+it. Stores already mixed stay mixed until the next model change or a forced
+re-embed, so `search_symbols` now reports `_meta.semantic_partial` and grades
+the semantic channel `partial`. **A count that exists and is discarded is the
+same defect as not counting.**
+
+⚠ **`evidence/capability.py` has called `get_model()` since v1.108.221 behind a
+`type: ignore` and a bare `except`**, so the capability certificate reported
+`model: "unknown"` for every repository. It resolves now — found by adding the
+method, not by reading the call site.
+
+⚠ `tests/test_embedding_model_change.py` (9), 8 red against the pre-fix tree.
+Two of those eight are constraints rather than evidence, red only because
+`get_model()` does not exist there; `test_re_embedding_the_same_model_does_not_rebuild`
+passes on both sides and is the control against turning the common path into a
+full re-embed on every call.
+### The two exclusion opt-outs never read the project config that documents them (#491, @rknighton)
+
+`security.py`'s `exclude_skip_directories` and `exclude_secret_patterns`
+resolvers called `_config.get()` without `repo=`, which skips the project
+overlay entirely. A project declaring either key in its own `.jcodemunch.jsonc`
+got **no effect, no warning, and a successful index** — the files were simply
+absent from the corpus.
+
+⚠⚠ **The comment above the skip list is what makes this a defect rather than a
+missing feature.** It says in as many words that these are ordinary English
+words that can name a real package, "which is why `exclude_skip_directories`
+exists — a project that ships an `archive/` module removes it there
+per-project." `is_secret_file`'s own docstring claims it applies "the project's
+`exclude_secret_patterns` overrides" one line above the global-only read. **Both
+were describing an intent the code did not implement.**
+
+⚠ **Nothing surfaces it.** `discovery_skip_counts` reports `skip_dir: 2` with no
+directory name and no rule name, and the pruned path goes to `logger.debug`. The
+user sets the documented opt-out, sees a green index, and gets a corpus quietly
+missing a module.
+
+The keys themselves were sound — the same values in **global** config worked
+throughout, which isolates the defect to the missing keyword rather than to the
+key, the walk or the parser. `repo=` is now threaded through
+`_excluded_skip_directories`, `get_skip_directories`, `get_skip_patterns` and
+`is_secret_file`, and through every local call site: the three
+`_build_skip_dirs_regex()` sites in `index_folder.py`, both `is_secret_file`
+sites there, the one in `index_file.py`, and the one in `security.py` itself.
+
+⚠ **`index_repo` is exempt BY NAME, not by omission.** A project's
+`.jcodemunch.jsonc` is found by walking up from a local path, and a GitHub tree
+has no local checkout — there is nothing to walk up to. Passing the owner/repo
+identifier would imply a lookup that cannot succeed. Global config still applies
+there, and the exemption is asserted by name in the test rather than left as a
+gap the ratchet happens not to cover.
+
+⚠ **The parameter is optional and defaults to today's behaviour**, so a caller
+with no path to offer resolves global-only exactly as before.
+
+⚠ **This is the fourth report of one bug shape**, after #300
+(`extra_ignore_patterns`), #187 (`languages`) and #304 (`summarizer_model`).
+**#301 audited about forty call sites for exactly this and lists
+`get_extra_ignore_patterns` as fixed while neither exclusion resolver appears in
+it**; v1.108.197 then fixed the three `max_*` resolvers and did not touch them
+either. So the ratchet is the point: `tests/test_security_exclusions_are_project_overridable.py`
+fails on any unthreaded read of either key and on any local call site that drops
+`repo=`. **A third audit would find the fifth instance; a test finds it on the
+commit that introduces it.**
+
+⚠ **Signature-only would have been a false green** — adding the parameter and
+leaving the callers bare changes nothing observable. The call-site check walks
+the AST rather than the signature for that reason.
+
+⚠ `tests/test_security_exclusions_are_project_overridable.py` (13), all red
+against `b85ef61`. Three of those are constraints rather than evidence: they are
+red only because `repo=` is not a parameter there, so each also asserts the
+no-argument form, which runs identically on both sides.
+
+
+### `resolve_repo` no longer answers a repository question with a filesystem fact (#492, @rknighton)
+
+Fast path 1 matched on `source_root` containment alone, so a path inside an
+**independent git repository nested in an indexed parent** came back as the
+parent index with `found: true`, `indexed: true`, `loadable: true` and
+`match_path: source_root_containment`. Nothing in that branch consulted git
+identity. The caller was bound to a corpus built from a different checkout with
+a different history.
+
+⚠⚠ **Whether it looks wrong depends on something irrelevant to the defect.**
+When the nested repository is gitignored by the parent, the read fails and
+returns `absent` — correct for the corpus that was searched, and the reason it
+reads as a normal empty result. When the parent's walk absorbed the nested
+files, the same wrong repository is returned and **the read succeeds with
+`state: ok`**. The mis-resolution is identical; only the symptom differs. Both
+cases change here.
+
+The guard is a `.git` stat between the requested path and the matched
+`source_root`. ⚠ **A subprocess would have been the wrong fix at the right
+place**: fast path 1 exists precisely to avoid the `resolve_index_identity`
+walk that can hang in large agent-worktree environments (#303), so a
+correctness guard on it must not reintroduce a process spawn. A test asserts no
+`subprocess.run` on the ordinary containment path.
+
+⚠ **Classify by where `.git` POINTS, not by whether it is a file.** A `.git`
+directory is an independent repository; a `.git` file carries a `gitdir:`
+pointer, and `.git/worktrees/<name>` versus `.git/modules/<name>` is exactly the
+distinction #372 drew. **Submodules deliberately still resolve to the parent** —
+their content is indexed into it, and #372 excluded linked worktrees without
+changing that. Linked worktrees are also left alone: fast path 2 already answers
+for them via `canonical_candidates`, and diverting them here would change #303's
+answer. `git clone --separate-git-dir` leaves a `.git` file pointing at neither,
+and counts as independent — a file/directory test would have read it as a
+submodule.
+
+⚠ **A file outside the parent's corpus still resolves to the parent.** Being
+gitignored, oversize or in a skipped directory is not the same condition as
+belonging to another repository, and only the second changes which repository is
+returned.
+
+⚠ `tests/test_resolve_repo_nested_repo_boundary.py` (11). Seven are red against
+`b85ef61`; the remaining four are the boundary tests above and pass on both
+sides by design.
+
+
+### A single-file refresh no longer certifies a corpus it never re-read (#493, @rknighton)
+
+`index_file` wrote live HEAD as the repository's stored SHA. `repo_is_stale` is
+defined as "index SHA differs from live HEAD", so refreshing one file out of a
+two-file commit **cleared the staleness signal for the file that was never
+refreshed**. `get_file_content` on that file then served commit-A content
+reporting `channels.index: fresh`, against a clean working tree.
+
+⚠⚠ **The write is not the defect; what has been proven before it is.**
+`index_folder`'s `_refresh_git_head_if_advanced` performs the *identical* write
+on a no-change run (#330), and it is correct there — that run walked the corpus
+and established that nothing indexed had changed, so the corpus really does
+correspond to the new head. `index_file` established something far weaker, that
+one requested file now matches, and advanced the repository-level head anyway.
+**Two calls, one write, opposite correctness, and the difference is entirely in
+what came before.**
+
+The head now advances only when refreshing this one file is what brought the
+corpus into line: every other path that moved between the stored head and live
+HEAD must be one the index does not carry and would not index. That is one
+`git diff --name-only --relative` against the stored head — no walk, no
+per-file work.
+
+⚠ **Unknown resolves to "do not advance".** A head left behind reads `stale` for
+a repository that may match, costing a re-index; a head advanced without proof
+reads `fresh` for one that does not, costing a wrong answer with no signal
+attached. Same asymmetry as v1.108.209's rule that `classify()` must never
+answer `fresh` for a comparison it could not make. `_paths_changed_between`
+returns `None` for "could not ask" and never an empty set, so a failed git call
+cannot read as a clean diff.
+
+⚠ **`--relative` is load-bearing.** It scopes the diff to `source_root`, so a
+monorepo subtree index is not held back by a commit that touched a sibling it
+never indexed.
+
+⚠ **An ADDED source file blocks the advance too**, though it is in no corpus and
+so cannot be "a file we carry that moved". The indexer would take it, so
+advancing would certify a complete index over a corpus missing a file — an
+absence claim with nothing behind it.
+
+⚠ **A no-change `index_folder` run still advances the head** (#330 does not
+regress), a full re-index still records it, and a single-file commit refreshed
+by `index_file` still clears staleness. Those three are the constraints on the
+fix, not side effects of it: a guard that simply never advanced would satisfy
+every assertion about the reported bug and leave every repository reading stale
+forever.
+
+⚠ **The branch-delta path is deliberately unchanged.** It writes `branch_meta`
+rather than the repository-level `meta` row, and carries its own `base_head`, so
+it is a different question — the reporter said as much and made no claim about
+it. Recorded rather than swept.
+
+⚠ `tests/test_index_file_head_advance.py` (10). Five are red against `b85ef61`;
+the other five are the constraint tests above and pass on both sides by design.
+
+
+### A cache that announced it was ready one key before it was (#490, @rknighton)
+
+`search_symbols` could raise `KeyError: 'centrality'` — surfacing through the
+dispatcher as `Internal error processing search_symbols` — when a second search
+arrived while the first was still building the lexical corpus.
+
+The BM25 corpus cache is built once per loaded index behind a check-then-build
+guarded on `idf`. It publishes **four** keys, and the statement that looked
+atomic is not:
+
+```python
+cache["idf"], cache["avgdl"], cache["inverted"] = _compute_bm25(index.symbols)
+cache["centrality"] = _compute_centrality(...)
+```
+
+That is four separate `__setitem__` calls. `idf` — the key every reader checked
+before deciding the cache was ready — lands first, and `centrality` lands after
+a full pass over the corpus. A caller arriving between the two passed the
+readiness check, skipped the build, and read a key that did not exist yet.
+
+⚠⚠ **The window is not a narrow one.** It is the entire runtime of
+`_compute_centrality`, which walks every import in the repository. The larger
+the corpus, the wider the window — so the installs most likely to hit it are the
+ones where a rebuild is most expensive.
+
+⚠ **The lock was real and was not the problem.** `_bm25_lock` exists on
+`CodeIndex` and was correctly acquired. The build was single-flight, as
+#370's fix intended; what leaked was the *readiness signal*, which is read
+outside the lock by design and must therefore not be true early.
+
+The build now runs in one shared `ensure_bm25_cache(index)` helper that writes
+`avgdl`, `inverted` and `centrality` first and `idf` last, and whose fast path
+checks all four keys rather than the sentinel alone — so a future edit that
+reorders the writes costs an extra lock acquisition instead of a `KeyError`.
+
+⚠ **The same four-key publish existed in three modules** — `search_symbols`,
+`get_ranked_context` and `plan_turn` — so fixing the reported one would have
+left two. All three now call the helper. `tests/test_bm25_cache_single_flight.py`
+fails if a fourth appears.
+
+⚠ **The `pagerank` and `name_map` blocks were checked and deliberately left
+alone.** Each writes the one key it also checks, so they are atomic by
+construction and share none of this hazard. Their
+`getattr(index, "_bm25_lock", None) or threading.Lock()` fallback is a separate
+and milder weakness — a fresh lock per caller guards nothing, so if an index
+ever arrived without `_bm25_lock` they would duplicate work rather than crash.
+Unreachable today, since both `CodeIndex` and `SelectiveIndexView` carry the
+lock. Recorded rather than swept, so a later pass does not read the silence as
+"already handled". The new helper uses a module-level fallback instead.
+
+⚠⚠ **The first version of the shipped-path test passed against the broken
+source**, which is the part worth keeping. Signalling from inside the build and
+letting the second thread race is not enough on a two-file corpus — the builder
+finishes before the racer arrives. The test holds the build open until the
+second caller is demonstrably inside its call. **A concurrency test that does
+not pin the interleaving is testing its own machine's scheduler.** Seven of the
+eight tests were red against the pre-fix tree without it; all eight are now.
+
+
+## [1.108.284] - 2026-08-17 - A documented setting the storage layer never read
+
+### `CODE_INDEX_PATH` now moves the index store and the lock directory
+
+The env table documents `CODE_INDEX_PATH` as "Index storage location", and
+`config.py`, `process_registry.py`, `install_pack.py`, `receipt.py` and two
+`server.py` sites all read it. `IndexStore`, `SQLiteIndexStore` and
+`process_locks._lock_dir` hardcoded `Path.home() / ".code-index"` and ignored
+it — so anyone who set the variable got their **config from one directory and
+their indexes and locks in another.**
+
+⚠⚠ **Nothing errored, which is why it survived: an index written to the wrong
+root is a successful write.** Same shape as #428, where a declared
+`constant_patterns` entry with no branch behind it was indistinguishable from a
+language that has no constants. The fingerprint was already in the tree — two
+`server.py` call sites pass `os.environ.get("CODE_INDEX_PATH")` **by hand**, so
+someone hit this and patched their own call site instead of the default.
+
+⚠ **If you set `CODE_INDEX_PATH`, your indexes move to it on next use.** They
+are not migrated. Anything previously written to `~/.code-index` stays there;
+point the variable at that directory, or re-index. Installs that never set the
+variable are unaffected, because the fallback is unchanged.
+
+⚠ `CODE_INDEX_PATH=` (empty) is treated as unset rather than as `.`. `Path("")`
+is the current directory, so a bare export would otherwise put every index
+wherever the server happened to start — the CWD-dependence v1.108.280 removed
+from the perf-db cache key.
+
+### The test suite could reach your real `~/.code-index`, and under xdist that mattered
+
+`tests/conftest.py` now pins `CODE_INDEX_PATH` to a per-worker temp store for
+the session. Any test calling `index_folder()` without an explicit
+`storage_path` was writing the developer's real store — tolerable serially, and
+not under `pytest-xdist`, where four workers share one store and its
+`indexwrite` and `watcher` process-lock scopes. That is the mechanism behind
+`test_v1_108_2.py::test_probe_runs_when_identity_true` failing once on a Linux
+CI leg, passing on a re-run of the identical tree, and surviving all fourteen
+bisect pairings.
+
+⚠ The fixture is **session**-scoped, not `tmp_path`. Module-scoped fixtures
+index once and read later — `served_repo` in
+`test_blast_radius_package_granular_verdict.py` deliberately indexes "where the
+SERVER looks", because `call_tool` hands `IndexStore` no `base_path` — and a
+per-test pin would move the store out from under that write.
+
+⚠⚠ **The obvious fix was tried first and failed informatively.** Pinning
+`storage_path=` on the twelve unpinned `index_folder()` call sites produced
+**eight failures**: the tests wrote to the pinned store and read back through a
+loader still using the default. **No single knob moved both, and that was the
+bug.** Every test edit was reverted; the fix is three source lines.
+
+⚠⚠ **`token_tracker`'s six sites were routed the same way and then REVERTED.**
+`test_v1_108_188.py::test_no_base_path_still_uses_the_default` sets
+`CODE_INDEX_PATH` to the NAMED store and asserts a no-argument call lands in the
+DEFAULT — v1.108.188's contract, which this change makes self-contradictory,
+since the variable then *is* the default. **A test written to pin
+default-versus-named could no longer express the distinction.** Telemetry
+routing is what .188 and .280 pinned deliberately and it is not the flake, so
+`_savings.json` and `session_stats.json` still resolve to home. Disclosed rather
+than left to be discovered.
+
+⚠ Four `storage_path=None` assertions in `test_server.py` became `ANY`. They
+passed only because `CODE_INDEX_PATH` happened to be unset — `call_tool`
+resolves it at `server.py:5348` — so anyone who set the variable had four red
+tests and no explanation. Same class as the `src.jcodemunch_mcp` twin reading
+the real config, and as #411.
+
+`tests/test_code_index_path_is_honoured.py` (9). Non-vacuity: reverting both
+defaults turns exactly the two env-var tests red; the other seven pass on both
+sides as controls.
+
+⚠ **Not claimed: that the flake is gone.** It was seen once. The contention
+mechanism it pointed at is removed — measured on a full run, the real store
+gains nothing and no `_watcher_*.signal` appears. That is a different and
+weaker statement, and it is the one the evidence supports.
+
+## [1.108.283] - 2026-08-17 - A config in the wrong shape is a client that reports success and registers nothing
+
+### `init` learns five more clients, and four of them needed their own schema
+
+`jcodemunch-mcp init` went from 5 auto-configured clients to 10: **Codex CLI**,
+**opencode**, **Gemini CLI**, **Cline** and **VS Code / GitHub Copilot** join
+Claude Code, Claude Desktop, Cursor, Windsurf and Continue.
+
+⚠⚠ **The reason this is four writers rather than five table rows is that no
+schema mismatch here produces an error.** Write the wrong key and the host
+parses the file, registers nothing, and reports success — the user gets an
+agent with no jCodeMunch tools and nothing to suspect. Every shape below was
+read out of vendor documentation rather than inferred, which is the same
+lesson #378's TOML left-recursion defect cost us.
+
+- **Codex** reads TOML at `~/.codex/config.toml`. Its rmcp transport is strict
+  about the first JSON-RPC frame on stdout and uvx's cold-run install chatter
+  poisons the handshake; the documented symptom is a **silent multi-hour hang**,
+  not an error. So `init` resolves a real binary or **DECLINES**, naming
+  `uv tool install jcodemunch-mcp` — a uvx fallback would look like a successful
+  install and then hang on first use.
+- **opencode** uses top-level `mcp` (not `mcpServers`), requires an explicit
+  `"type": "local"`, and takes `command` as one ARRAY carrying executable and
+  arguments together.
+- **VS Code / Copilot** uses top-level `servers`, not `mcpServers`.
+- **Gemini CLI** and **Cline** take the generic shape, so their risk is
+  detection rather than schema.
+
+⚠ **Codex paths are written as TOML LITERAL strings.** A Windows path inside a
+basic string makes `\U` an invalid unicode escape, so a parser either rejects
+the file or mangles the path. The writer also APPENDS rather than
+round-tripping: `config.toml` is user-owned, and Python ships no stdlib TOML
+*writer* at any version this package supports, so serialising would drop the
+user's comments and reorder their keys.
+
+⚠ **`~/.gemini` is shared with Antigravity, which reads a different file**
+(`~/.gemini/config/mcp_config.json`). Detection keys on `settings.json` itself
+or the `gemini` executable — a directory check would offer to configure Gemini
+CLI on a machine that only has Antigravity, and write a file nothing reads.
+
+⚠ **Cline's IDE-extension settings path is not documented per-platform, so it
+is deliberately not guessed at.** `init` writes the documented CLI config
+(`~/.cline/mcp.json`); CLIENTS.md points extension users at the marketplace UI
+and says why.
+
+⚠ **VS Code registration requires an existing `.vscode/` directory rather than
+`code` on `PATH`.** The executable is present on most developer machines, so
+PATH detection would CREATE `.vscode/mcp.json` in whatever directory `init` ran
+from — a file the user might commit without meaning to. VS Code's user-level
+MCP config is reached through an editor command rather than a documented path
+and moves with the active profile, so `init` does not write it at all.
+
+⚠ **`CONFIGURE_METHODS` is new and replaces three copies of the method list** —
+a comment on `MCPClient.method`, the `configure_client` dispatch chain, and a
+hardcoded tuple inside `test_detect_clients_returns_list`. That test caught the
+first new method precisely BECAUSE it carried its own copy. A new test
+parametrizes over the set to assert every declared method actually dispatches;
+without it a method with no branch returns `"unknown method for X"` at runtime,
+which reads as a client we support.
+
+⚠ `servers["jcodemunch"] = _MCP_ENTRY` would have aliased the module-level dict
+every other client writes, so one later mutation would silently change what
+every subsequent client receives. Copied instead. **Found by writing the test,
+not by reading the line.**
+
+`tests/test_init_client_schemas.py` (29). Non-vacuity proven by falsifying six
+behaviours across two passes.
+
+### The install instructions led with the one command that makes people think about Python
+
+`README.md` now opens with `uv tool install jcodemunch-mcp`; `uvx`, `pipx` and
+`pip` move into a collapsed table.
+
+**The zero-friction path already existed and was buried.** `_MCP_ENTRY` has
+always written `{"command": "uvx", "args": ["jcodemunch-mcp"]}` into every
+client config, and both one-click badges use it — so for most setups nothing is
+installed persistently at all. The human-readable instruction still said
+`pip install`, with `uvx` appearing once, as a PEP 668 footnote for Debian users.
+
+⚠ **It leads with `uv tool install` rather than bare `uvx`, and there are two
+independent reasons.** `_hook_invocation` resolves the executable with
+`shutil.which` because Claude Code spawns hooks through a minimal-PATH subshell;
+under `uvx` there is no persistent binary to find, so a uvx-first README would
+write a hook command that fails at spawn — silently, since hooks are optional
+and most users never enable them. And Codex cannot use `uvx` at all (above).
+`uv tool install` is still one command, no virtualenv, and no PEP 668 refusal.
+
+jdocmunch-mcp and jdatamunch-mcp got the same treatment. ⚠ **jdata's was a
+different fix, checked rather than copied**: it has no `cli/` package, so no
+hooks and no `shutil.which`, and `uvx` leads outright there. Its README opened
+with a `pip install` that did nothing — the server has no CLI subcommands and
+its own setup line already used `uvx`.
+
 ### One telemetry database spent another's trim ([#476](https://github.com/jgravelle/jcodemunch-mcp/issues/476))
 
 Reported by [@rknighton](https://github.com/rknighton), who pinned the cause to
@@ -4953,10 +5563,21 @@ headline is the clean-subset figure, not the flattering aggregate.
 around it; a real agent re-queries and self-corrects, so effective recall is
 better than the raw number. Do not read it as a failure rate.
 
-## [Unreleased] - benchmarks: one measurement path, no estimates
+## Benchmarks — one measurement path, no estimates
 
-No shipped-package changes. Benchmark harnesses, their committed reports, and the
-published numbers that mirror them.
+**Unversioned: no shipped-package changes.** Benchmark harnesses, their committed
+reports, and the published numbers that mirror them. The work landed 2026-07-29
+and first went out with 1.108.200 the following day.
+
+⚠ **This block was headed `## [Unreleased]` until 2026-08-17**, two weeks after
+it shipped, in a file that should carry exactly one. Nothing broke — `whatsnew`'s
+parser requires `[\d.]+` for the version and skipped it, and the rotation gate's
+predicates match `## [\d+.\d+.\d+]` — but every count of "how many Unreleased
+headings are there" returned 2, so a real duplicate would have been
+indistinguishable from this one. It cost a round of verification against both
+parents during the v1.108.283 release, resolving a contributor merge that had
+produced exactly that defect once before. **A heading that is wrong but harmless
+still spends the signal a check exists to give.**
 
 ### The comparison harnesses divided a fresh number by a stale one
 

@@ -158,9 +158,9 @@ That's the highlight reel. The complete tour of 90+ tools, the MUNCH compact wir
 <!-- WHATSNEW:START -->
 #### What's new
 
-- **[v1.108.281](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.281)** (2026-08-15) — A declared pattern with no implementation reads as a language without constants
-- **[v1.108.280](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.280)** (2026-08-14) — A cache keyed on a spelling is keyed on the caller's working directory
-- **[v1.108.279](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.279)** (2026-08-14) — A machine's language is not English and its bytes are not UTF-8
+- **[v1.108.285](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.285)** (2026-08-18) — Five answers that were asserted, not established
+- **[v1.108.284](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.284)** (2026-08-17) — A documented setting the storage layer never read
+- **[v1.108.283](https://github.com/jgravelle/jcodemunch-mcp/releases/tag/v1.108.283)** (2026-08-17) — A config in the wrong shape is a client that reports success and registers nothing
 <!-- WHATSNEW:END -->
 
 ---

@@ -364,6 +364,59 @@ def _compute_centrality(
     return {f: math.log(1 + c) * _CENTRALITY_WEIGHT for f, c in counts.items()}
 
 
+# The four keys the lexical corpus cache publishes together. ``idf`` is the
+# readiness sentinel every historical call site checked, so it stays the last
+# one written; the fast path below checks all four anyway, so a future edit that
+# reorders the writes degrades to an extra lock acquisition instead of a
+# KeyError (#490).
+_BM25_CORPUS_KEYS = ("avgdl", "inverted", "centrality", "idf")
+
+# Used only if an index arrives without its own lock. A process-wide lock is
+# slower than a per-index one and correct; the `threading.Lock()` this replaces
+# was a NEW lock per caller, i.e. no mutual exclusion at all, which is the
+# failure this whole helper exists to remove.
+_BM25_FALLBACK_LOCK = threading.Lock()
+
+
+def ensure_bm25_cache(index) -> dict:
+    """Populate and return ``index._bm25_cache``'s lexical corpus stats.
+
+    Builds ``idf`` / ``avgdl`` / ``inverted`` / ``centrality`` exactly once per
+    loaded index, under the index's own lock, and returns the cache dict.
+
+    LIMITATION: this covers only the lexical corpus keys. ``pagerank`` and
+    ``name_map`` are built by their own single-key blocks elsewhere; each writes
+    the one key it also checks, so those are atomic by construction and are not
+    routed through here.
+
+    ⚠⚠ The build must never publish a key a reader treats as "cache ready"
+    before the keys that reader will go on to read. Three call sites wrote
+    ``cache["idf"], cache["avgdl"], cache["inverted"] = _compute_bm25(...)`` and
+    then ``cache["centrality"] = ...`` as a separate statement -- four
+    ``__setitem__`` calls behind a check-then-build guarded on ``idf`` alone. A
+    second caller arriving in that window passed the readiness check and raised
+    ``KeyError: 'centrality'`` (#490). The window is not narrow: it is the whole
+    runtime of ``_compute_centrality`` over the corpus.
+    """
+    cache = index._bm25_cache
+    if all(k in cache for k in _BM25_CORPUS_KEYS):
+        return cache
+    with getattr(index, "_bm25_lock", None) or _BM25_FALLBACK_LOCK:
+        if all(k in cache for k in _BM25_CORPUS_KEYS):
+            return cache
+        idf, avgdl, inverted = _compute_bm25(index.symbols)
+        centrality = _compute_centrality(
+            index.symbols, index.imports, index.alias_map,
+            getattr(index, "psr4_map", None),
+        )
+        cache["avgdl"] = avgdl
+        cache["inverted"] = inverted
+        cache["centrality"] = centrality
+        # Sentinel last: see the module note above.
+        cache["idf"] = idf
+    return cache
+
+
 def _identity_score(sym: dict, query_joined: str, raw_query: str = "") -> float:
     """Identity channel: exact, normalised, or prefix match on symbol name/ID.
 
@@ -690,8 +743,9 @@ def search_symbols(
             "centrality" = filter by query match, rank by PageRank score.
             "combined" = BM25 + PageRank weighted combination.
         semantic: Enable semantic (embedding-based) search. Requires an embedding
-            provider to be configured (JCODEMUNCH_EMBED_MODEL, GOOGLE_API_KEY +
-            GOOGLE_EMBED_MODEL, or OPENAI_API_KEY + OPENAI_EMBED_MODEL).
+            provider; ``embeddings.advice.PROVIDER_HINT`` is the single source for
+            which ones and which wins (#489 — this docstring used to enumerate
+            them and had gone stale).
             When False (default) there is zero performance impact and no new imports.
         semantic_weight: Weight for semantic score in hybrid ranking (0.0–1.0).
             BM25 receives ``1 - semantic_weight``. Default 0.5.
@@ -861,28 +915,21 @@ def search_symbols(
         from .embed_repo import _detect_provider
         _semantic_provider = _detect_provider()
         if _semantic_provider is None:
+            from ..embeddings.advice import (  # noqa: PLC0415
+                NO_PROVIDER_MESSAGE as _NO_PROVIDER_MESSAGE,
+            )
             return {
                 "error": "no_embedding_provider",
-                "message": (
-                    "No embedding provider is configured. Set one of: "
-                    "JCODEMUNCH_EMBED_MODEL (sentence-transformers, free/local), "
-                    "GOOGLE_API_KEY + GOOGLE_EMBED_MODEL (Gemini), or "
-                    "OPENAI_API_KEY + OPENAI_EMBED_MODEL (OpenAI)."
-                ),
+                "message": _NO_PROVIDER_MESSAGE,
             }
 
     # BM25 corpus stats — cached on CodeIndex, computed once per index load
     query_terms = _tokenize(query) or [query.lower()]
     # Guard: empty string in query_terms causes "" to match every filename
     query_terms = [t for t in query_terms if t]
-    cache = index._bm25_cache
-    if "idf" not in cache:
-        # Single-flight: concurrent cold searches must not each build the
-        # full-corpus BM25 state (#370)
-        with getattr(index, "_bm25_lock", None) or threading.Lock():
-            if "idf" not in cache:
-                cache["idf"], cache["avgdl"], cache["inverted"] = _compute_bm25(index.symbols)
-                cache["centrality"] = _compute_centrality(index.symbols, index.imports, index.alias_map, getattr(index, "psr4_map", None))
+    # Single-flight: concurrent cold searches must not each build the
+    # full-corpus BM25 state (#370), nor observe a half-published one (#490).
+    cache = ensure_bm25_cache(index)
     idf = cache["idf"]
     avgdl = cache["avgdl"]
     centrality = cache["centrality"]
@@ -1747,6 +1794,19 @@ def _search_symbols_semantic(
     # The semantic channel really ran, and the verdict should say so rather than
     # inherit the `off` default from `semantic_requested=False` above.
     meta["verdict"]["channels"]["semantic"] = "ok"
+    # #500: a store written across a model change holds two vector widths, and
+    # the matrix silently excludes whichever width is not the first row's. The
+    # producer is fixed, but stores already in that state stay that way until
+    # the next model change or a forced re-embed — so say so, or a partial
+    # corpus reads as a complete one and short results read as a finding.
+    _skipped_dim = getattr(matrix, "skipped_dim_mismatch", 0) if matrix else 0
+    if _skipped_dim:
+        meta["semantic_partial"] = {
+            "symbols_excluded": _skipped_dim,
+            "reason": "embedding_dimension_mismatch",
+            "remedy": "embed_repo(force=True) rebuilds the store at one width",
+        }
+        meta["verdict"]["channels"]["semantic"] = "partial"
     negative_evidence = _vres["negative_evidence"]
     if negative_evidence is not None:
         result["negative_evidence"] = negative_evidence

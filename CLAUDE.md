@@ -1,11 +1,11 @@
 # jcodemunch-mcp — Project Brief
 
 ## Current State
-- **Version:** 1.108.282. **Half the tool descriptions never said what the tool would not do.** Scored all 194 tool descriptions across the three servers against the six-component rubric in [arXiv:2602.14878](https://arxiv.org/abs/2602.14878) (Hasan, Li, Rajbahadur, Adams & Hassan, Queen's University; 856 tools / 103 servers; **97.1% carry at least one smell**). We scored **73.2%**, and the damage sat in ONE component: **Unstated Limitation on 99 of 194 tools**. ⚠⚠ **That is the expensive smell precisely because it is invisible from the caller's side** — an agent reading `search_symbols` with no mention of the index has no reason to suspect a stale index when the answer comes back empty, so a recall failure reads as a finding. Purpose was our BEST component (1.5% vs their 56%): the house style already wrote good opening sentences and skipped the caveat. 41 descriptions changed here (40 clause additions plus a `test_summarizer` rewrite), each derived from the tool's own guard clauses, schema defaults or module docstring — `plan_refactoring` never writes a file, `check_rename_safe` misses a collision in a file that uses the name without importing it, `resolve_repo`'s relative path resolves against the SERVER's working directory. Result: Unstated Limitation 51.0% → 21.6%, Unclear Purpose and Underspecified to ZERO. ⚠⚠ **The first pass added 290 tokens to `core_compact` and I regenerated `schema_baseline.json` to clear the drift ratchet — WRONG.** Two siblings in that same file enforce a HARD §10 ceiling, one against the LIVE build, and one says in as many words not to regenerate the baseline to paper over it. **A ratchet offers re-baselining as a remedy; a ceiling is a promise, and failing only the ratchet gives no hint the ceiling exists.** Baseline untouched, clauses trimmed to fit instead; `counter` is unchanged, so a first-ever install pays nothing. ⚠ `tests/test_description_smells.py` gates Purpose and Length only — NOT Unstated Limitation (42 tools still flagged are substantially cue-matching misses, and gating would freeze the scanner's own false positives) and NOT Opaque Parameters (**the rubric scores schema-documented params 1/5 by its own wording**, so we fail it by construction while documenting 375 of 377). ⚠⚠ **Report BOTH frames or neither** — the paper's scanner never sees `inputSchema`. ⚠ `benchmarks/description_smells/README.md` transcribed a baseline value and `test_no_baseline_value_is_transcribed_into_the_tree` caught it, in the same session as the memo about not papering over baseline guards. [[feedback_a_test_offering_two_remedies_may_be_offering_a_promise]]
-- **Prior (1.108.281):** **A declared pattern with no implementation reads as a language without constants.** #428's remaining four languages — Rust, Go, Java, PHP — reported by @mussonking, whose generated Rust contract file holding **935 `pub const`** came back in `no_symbols_files` with ZERO symbols. All four declared `constant_patterns` in `LANGUAGE_REGISTRY` and had **no branch** in `_extract_constant`, so the walker dispatched on the node type and fell off the end to `return None`. ⚠⚠ **Nothing errored, and that IS the defect**: a declared-and-unimplemented pattern is indistinguishable from a language that has no constants, so `search_symbols` returning nothing reads as an answer. He only caught it because he knew the exact count. ⚠ **Three of the four bind N NAMES per declaration**, which is what @mussonking's plural `_extract_constants` was built for; **Go does it two ways at once** (`const ( ... )` groups one spec per line AND `const A, B = 1, 2` binds two in one spec), so a single-symbol return would have reported the first name of a 935-line block and dropped the rest — **which reads as success**. ⚠ **No case heuristic anywhere.** Python needs `name.isupper()` because an assignment is a constant only by CONVENTION; `const` IS the declaration, and filtering on case would silently drop Go's unexported constants, lowercase by the language's own visibility rule. ⚠⚠ **The exclusions are the careful half and the asymmetry is the reason**: Rust `static mut` carries a `mutable_specifier` (the declaration says the binding changes), a Java constant is `static final` (bare `final` is per-instance, bare `static` is mutable shared state). **A missing constant is a RECALL bug the reporter could see; an ordinary field arriving as `kind="constant"` in every Java class is a PRECISION bug nobody goes looking for.** ⚠⚠ **Java needed the walk GATE widened, not just a branch** — the constant walk was `parent_symbol is None`, which is what keeps function locals out, and a Java constant is a class member, so `field_declaration` sat in `constant_patterns` **unreachable by construction**. The gate now also accepts a CONTAINER parent for `_CLASS_SCOPED_CONSTANT_LANGUAGES` (`{"java"}`), never a function parent. ⚠ **The general version was DECLINED**: accepting `parent_is_container` for every language would start emitting constants Python class bodies, JS class fields and PHP class constants have never emitted, moving symbol counts in every index and **every published dead-code grade**. One named set, one sample per member, pinned by name in a test. ⚠ **Scala looked like a counter-example and is NOT** — its `val_definition` is in `symbol_node_types`, so it never touches this gate; checking that before copying its shape is what kept the widening narrow. ⚠ **Grammar shapes were DUMPED from tree-sitter, not inferred** — #378's TOML left-recursion defect came from inferring. ⚠ `tests/test_v1_108_281.py` (10), **9 fail against `d10490e`**; the 1 passing both sides is the control that Java function locals are still not constants, a boundary that must not move. `EXEMPT` in `test_constant_extraction_guard.py` is now **EMPTY** — its ratchet forced its own deletion, and the parametrize-over-nothing SKIP is the ratchet at rest. ⚠⚠ **This was a REVERSAL of an open handoff, not a timebox expiring**, taken at jjg's direction to clear the tracker. The offer to @mussonking carried **no date and no default**, which is how it sat seven days — **the process failure is the open-ended offer, ours, not his.** Report and plural-helper design credited to him in the CHANGELOG, the release notes and the close. [[feedback_never_hand_off_without_a_timebox]]
-- **Prior (1.108.280):** **A cache keyed on a spelling is keyed on the caller's working directory.** One fix, reported AND shipped by @rknighton as PR #473 (#465). `_ensure_perf_db_locked` documents its connection cache as "keyed by resolved path"; `_perf_db_path` returned `root / _PERF_DB_FILE` with no `resolve()`, so the key was whatever spelling the caller passed. ⚠⚠ **A RELATIVE `storage_path` therefore made the key depend on the process CWD, and the failure is silent data loss, not an error**: after a chdir the same key names a different database, `_perf_conn_usable`'s `exists()` probe consults the NEW location while the cached connection still points at the OLD file, and a row recorded for one store is written into another's. **That is the failure v1.108.188 fixed for the WRITERS, reappearing one layer down in the cache key** — the same defect can re-enter through any component the original fix did not own. ⚠ The alias case is the cheaper half and still real: `_perf_conns` has **no cap and no eviction**, so every spelling of one directory held its own connection for the life of the process. ⚠⚠ **Fixed at the HELPER, not at the cache, and that choice is the reusable part.** `_perf_db_path` has exactly one caller and all three telemetry sinks reach the cache through it, so resolving where the path is BUILT fixes every consumer — including `_persist_session_yield_locked`, whose reachability the issue left open. Fixing it at the cache would have covered the two sinks that were reported and missed the one that was not. [[feedback_guard_every_path_that_shares_the_hazard]] ⚠ **The latency sink reaches it by a SHORTER route than the ranking sink**: `call_tool` hands `record_latency` the raw `storage_path` argument with no `IndexStore` normalising it on the way. `analyze_perf` reads `tool_calls` and `ranking_events` through ONE base path, so a split between the two tables is worse than either table being wrong alone. ⚠ **The module-level `perf_db_path()` helper is deliberately left UNRESOLVED** — checked, not assumed. It never touches the cache, and an unresolved spelling opens the same file on disk; the defect was the KEY, not the path. Recorded so a later sweep does not "finish the job". ⚠ **Existing installs are unaffected and nothing is backfilled**: the default store is absolute with no symlinks, where `resolve()` returns it unchanged, and rows that already landed in the wrong file stay there. ⚠⚠ **Both exits needed the change and only ONE is covered by the row-level tests** — every row-level test supplies an explicit `base_path`, so the no-argument exit carries its own assertion. `tests/test_perf_db_path_resolution.py` (3), and **reverting either `.resolve()` ALONE turns it red**: the non-vacuity pass run per-EDIT rather than per-file, which is what caught that a single-assertion file would have been half vacuous. ⚠ **First timebox to expire in the contributor's favour under policy 3a** — #465 was handed off with a 2026-08-21 default and the PR arrived in a day. The window decides whose COMMIT it is, nothing else. ⚠⚠ **His verification method transfers and is now the house style: report a DELTA, never absolute totals across machines.** Ten test modules call `pytest.importorskip` at MODULE level, so a missing optional dep costs a whole module as **one** skip with no per-test trace — 209 tests can vanish with nothing failing. `uv sync` and CONTRIBUTING.md's `pip install -e .` do not install the same set, so two correct runs of one commit can report totals a hundred apart. **Independently the same class as our own `--extra watch` under-collect, found from the other side.**
-- **Older releases (1.108.279 and earlier):** see `CHANGELOG.md`. The 1.108.182 entry ("a stall has a name and a ceiling", #375) and the 1.108.177-.181 #377 hardening arc are there in full.
-- **Tests:** 7849 passed, 10 skipped, **0 failed** (1.108.282) **+ `uv run ruff check src/` clean**. ⚠ Delta from .281's 7858 TOTAL is EXACTLY **+1**, the single test in `test_description_smells.py`; the release carries no other test. ⚠⚠ **A red arrived DURING this release that no local gate would have caught earlier**: the new `benchmarks/description_smells/README.md` transcribed `core_compact`'s baseline value into prose, and `test_no_baseline_value_is_transcribed_into_the_tree` failed on it. **The scanner covers `tests/` AND `benchmarks/`, prose included**, which is the whole reason it caught a README rather than an assertion. Fixed by describing the property and pointing at the file. ⚠ 3.13 CI-env reproduce **7843 passed / 16 skipped, the SAME 7859 TOTAL**, different skip split, via `uv run --python 3.13 --group dev --extra watch python -m pytest tests/ -q`, run SEQUENTIALLY after the local suite. ⚠ Prior (1.108.281): 7848 passed, 10 skipped, **0 failed**. ⚠⚠ **Reconciled by a SAME-TREE COLLECT against `origin/main`, and arithmetic against the previous release line would have been wrong by 16** — `main` moved twice between .280 and this bump (#474's 14 tests, #477's 2), so the usual "delta from the last release" method had two unrelated merges inside it. **Pick the method that matches how the work landed.** Measured: **7858 collected on the branch vs 7847 on `d10490e`, +11.** Decomposition: `test_v1_108_281.py` **10**, plus a net **+1** from the ratchet rearranging — four languages leave `EXEMPT` and join `test_declared_constant_pattern_extracts_a_constant` (+4) while the four `test_exemptions_are_not_stale` cases collapse into ONE empty-parametrize item (-3). ⚠ **The 10th skip is that empty parametrize** and is the ratchet AT REST, not a lost test; it re-arms the moment anyone adds an exemption (same shape as `_JS_VARIANT_EXEMPT` in .273). ⚠ The release commit adds no tests, so the post-bump run reproduces the pre-bump 7848/10 exactly. ⚠ 3.13 CI-env reproduce **7842 passed / 16 skipped, the SAME 7858 TOTAL**, different skip split, via `uv run --python 3.13 --group dev --extra watch python -m pytest tests/ -q`. ⚠ Run SEQUENTIALLY after the local suite, never alongside it — two full runs share `~/.code-index` process-lock scopes and contention is the documented cause of .261's 47m outlier (.280 records the reversal). Prior (1.108.280): 7822 passed, 9 skipped, **0 failed** **+ `uv run ruff check src/` clean**. ⚠ Delta from .279's 7828 total is EXACTLY the 3 new `test_perf_db_path_resolution.py` tests, and that release carried no other code, so nothing else could have moved. ⚠⚠ **The two suites were run in SEQUENCE, not in parallel, and that was a deliberate reversal mid-release.** Both were started together, then the 3.13 arm was killed before it produced anything: two full runs on one box contend for the same `~/.code-index` process-lock scopes, and **contention is the documented cause of .261's 47m outlier**. A false red costs a re-run and, worse, a few minutes of reading a real-looking failure. **Sequence them; the wall-clock saving was never worth the ambiguity.** ⚠ 3.13 CI-env reproduce **7816 passed / 15 skipped, the SAME 7831 TOTAL**, different skip split, via `uv run --python 3.13 --group dev --extra watch python -m pytest tests/ -q` — without `--extra watch` it collects 105 fewer and reports a clean pass (see .278 below). Prior (1.108.279): 7819 passed, 9 skipped, **0 failed** **+ `uv run ruff check src/` clean**. ⚠ Delta from .278's 7808 total is EXACTLY the 20 new `test_schtasks_locale.py` tests; the release's other half is docs-only, so nothing else could have moved. ⚠ 3.13 CI-env reproduce **7813 passed / 15 skipped, the SAME 7828 TOTAL**, different skip split. Prior (1.108.278): 7799 passed, 9 skipped, **0 failed** **+ `uv run ruff check src/` clean**. ⚠ Reconciled by DECOMPOSITION against .277's 7797 total: `test_identity_normalized_tier.py` 10 (#458) + `test_schema_baseline_transcription.py` 2 (#467) **- 1 REMOVED** (`test_the_core_compact_schema_budget_is_unchanged`) = **+11**, and 7797 + 11 = 7808 exactly. **A removal is part of the delta and the usual add-only arithmetic hides it.** ⚠⚠ **THE DOCUMENTED 3.13 REPRODUCE COMMAND UNDER-COLLECTS BY 105 TESTS, and it reports a clean pass while doing it.** `uv run --python 3.13 python -m pytest tests/ -q` collected **7703** against the local 7808. The missing 105 are ENTIRELY three watcher files (`test_watcher_serve.py` 49, `test_watcher_lock.py` 40, `test_watcher_dynamic.py` 16), each gated on `pytest.importorskip("watchfiles")` — and `watchfiles` is an OPTIONAL extra. **CI installs it** (`uv sync --locked --group dev --extra watch`, `test.yml:84`); the documented command does not. **Use `uv run --python 3.13 --group dev --extra watch python -m pytest tests/ -q`** — that run is **7793 passed / 15 skipped, the SAME 7808 TOTAL**, different skip split. ⚠ **The totals convention is what caught it**: passed counts alone read as a plausible pass either way, and a whole subsystem being absent is invisible from `N passed`. ⚠ **Do NOT read this as .277's number being wrong** — 7782 + 15 = 7797 is internally consistent, so that run DID collect the watcher tests. `uv run` reuses an already-synced environment, so the same command can collect differently depending on what last synced it. **The command is unreliable, not that record.** Prior (1.108.277): 7788 passed, 9 skipped, **0 failed** **+ `uv run ruff check src/` clean**. ⚠⚠ **This release adds NO test file of its own and a flat delta would have been the RED flag on any other release** — every prior one ships a `test_v1_108_NNN.py`, so "no new tests" normally means the bump outran the work. Here the work landed across the day in #459/#462/#463/#464 and the release commit is version metadata + changelog + rotation only. **Reconciled by DECOMPOSITION rather than a same-tree collect**, because the collect diff has nothing to subtract: `test_html_file_class.py` 4 (#459) + `test_v1_108_277.py` 6 (#462) + `test_pid_reuse_identity.py` 10 (#451 via #464) + `test_claude_md_rotation.py` 4→9 = +5 (#463) = **25**, and .276's 7763 + 25 = 7788 exactly. ⚠ **Pick the reconciliation method that matches how the work landed**; applying the usual one here yields a zero and proves nothing. ⚠ 3.13 CI-env reproduce: **7782 passed / 15 skipped**, same 7797 TOTAL, different skip split — compare totals across interpreters, never passed counts. Prior (1.108.276) **+ `uv run ruff check src/` clean**. ⚠ Reconciled by same-tree collect: 7772 total, 7753 with `test_v1_108_276.py` ignored (= its 19); the **+5 over .275's 7748 is five new `def test_` functions in `test_tools.py`** from the #438/#439 drive-root work — COUNTED in `git diff v1.108.275..HEAD`, not inferred, because "nothing else moved" was not true this release and asserting it would have been the same shape of error the count notes below are about. ⚠⚠ **The 3.13 CI-env reproduce totals the SAME 7772 but splits 7757 passed / 15 skipped** — six tests that RUN on 3.10 SKIP there. **A passed-count comparison ACROSS interpreters is meaningless; compare TOTALS.** ⚠ **The 9th skip is the POSIX-only orphaned-inode test for #442** — Windows refuses to unlink a file with an open handle, so this box CANNOT produce that case. **Do not read that skip as cross-platform coverage**; it is a real local gap covered only by the portable unit test for the predicate. Prior (1.108.275) **+ `uv run ruff check src/` clean**. ⚠ Reconciled by same-tree collect: 7748 total, 7734 with `test_v1_108_275.py` ignored (= its 14), and 7734 is exactly .274's total, so nothing else moved. Prior (1.108.274) **+ `uv run ruff check src/` clean**. ⚠ Reconciled by same-tree collect: 7734 total, 7728 with `test_security_disclosure.py` ignored (= its 6), and 7728 is exactly .273's total, so nothing else moved. ⚠⚠ **This line was briefly written with a GUESSED number before the run finished, and the guess (7734) was the TOTAL rather than the passed count — it would have read as a plausible, wrong figure.** Never pre-write a count; the run is the only source. Prior (1.108.273) **+ `uv run ruff check src/` clean**. ⚠ Reconciled by same-tree collect: 7728 total, 7717 with `test_v1_108_273.py` ignored (= its 11), and the +1 over .272's 7717 is `next` ENTERING the #435 sweep now that its exemption is gone. ⚠ **The 8th skip is EXPECTED and is not a lost test**: `_JS_VARIANT_EXEMPT` is empty, so the ratchet parametrizes over an empty set and pytest skips it ("got empty parameter set"). That is the end state of a ratchet that did its job; it re-arms the moment anyone adds an exemption. ⚠⚠ **A version bump MID-RUN voids the run** — the rotation gate compares CLAUDE.md to `pyproject.toml`, so a suite spanning the bump is not evidence. Bump and rotate FIRST, then run once. (Done wrong on .273 and the run was discarded.) Prior (1.108.272) **+ `uv run ruff check src/` clean**. ⚠ Delta is EXACTLY the 9 new `test_v1_108_272.py` tests, reconciled by COLLECTING the same tree twice (7716 with the file, 7707 with it `--ignore`d) rather than by arithmetic against this line. ⚠⚠ **That method was forced, because this line was STALE by ~239 for two releases** — it read "7470 (1.108.269)" while .270's 31 and .271's 124 were never folded in, so the documented baseline was unusable as one. **A count that is only ever appended to during a release rots the moment a release skips it**; prefer a same-tree collect diff, which cannot go stale, and treat this number as a report rather than a baseline. ⚠⚠ **The count was mis-reported once during this release and the ARITHMETIC caught it, not the reading** — an intermediate run was quoted as "7469 passed, 0 failed", a combination that never happened: it was 7469 passed WITH 1 failed, totalling 7470. **Always reconcile passed+failed against the prior release's total plus the new test count**; eyeballing `N passed` at the end of a 17-minute run is how a red run gets read as green. ⚠ The failure was the CLAUDE.md rotation gate correctly refusing a Current State naming 1.108.269 while `pyproject.toml` still read .268 — **the gate fires BEFORE the version bump lands, so a red rotation test mid-release is expected and must not be waved through as "just the gate"**; it clears only when every pin site agrees. **Prior (1.108.268):** 7436 passed, 7 skipped, **0 failed** **+ `uv run ruff check src/` clean**. ⚠ Delta from .267's 7428 is EXACTLY the 8 new `test_stdio_guard.py` tests; nothing else moved. ⚠⚠ **The CLAUDE.md rotation gate caught a real mistake this release** — a 4th entry was added without demoting .267 or moving the `Older releases` boundary, and the gate failed the build rather than letting the history drift. **Prior (1.108.267):** 7428 passed, 7 skipped, **0 failed** **+ `uv run ruff check src/` clean**. ⚠ Delta from .266's 7404 is EXACTLY the 24 new `test_constant_extraction_guard.py` tests; nothing else moved. **Prior (1.108.266):** 7404 passed, 7 skipped, **0 failed** (isolated worktree run) **+ `uv run ruff check src/` clean + CI all 9 jobs green on the pushed SHA**. ⚠ The delta from .265's 7394 is EXACTLY the 10 new `test_format.py` cases; nothing else moved. ⚠⚠ **Nothing moving is itself the finding** — not one existing test pinned a fusion or semantic confidence value, which is precisely why a ~5x mis-scaling shipped and survived. ⚠ **+17 after .264 shipped**: the file-IO scanner needed TWO MORE iterations (see below), test-only, no bump. ⚠⚠ **A green suite is NOT a green build** — lint was RED for four releases while this line said 0 failed. Quote ALL THREE (suite, ruff, CI) from now on. ⚠⚠ **A green suite is NOT a green build** — lint was RED for four releases while this line said 0 failed. Quote BOTH numbers here from now on, and read the CI run for the pushed SHA. ⚠ **.261's run took 47m45s against ~16-17m before and after it on the same tree** — same counts, same result, so it was machine contention and NOT a signal. Do not treat a wall-clock outlier as a regression. ⚠⚠ **A config change is the one edit whose blast radius is the whole suite** - 128 test files touch `_GLOBAL_CONFIG` directly, so a "small" resolver change is never a small run. ⚠ **The "KNOWN 12 local-ONNX `test_semantic_search` env failures" are GONE** — .207's autouse `no_local_onnx` fixture fixed them, so a local run is now fully green and **any** red is a real signal. Do not carry that 12-failure allowance forward; it papered over a real failure once already (.197 had one hiding inside it). ⚠ **Still do not eyeball the COUNT** — diff the FAILED names against the same tree with your changes stashed; for .199 and .205 that diff was empty, and for .209 the failure set was empty outright, which is the one case that needs no baseline. ⚠ **Stashing is the wrong tool when the change is already committed and pushed** — for .205 the comparison ran in a throwaway `git worktree add --detach <pre-release-sha>`, which also survives a concurrent writer in the main tree.
+- **Version:** 1.108.285. **Five answers that were asserted, not established.** Every fix here is one place that reported a result it had not checked. **#490** — the BM25 cache published `idf` before `centrality` while every reader treated `idf` as "ready", so a concurrent cold `search_symbols` raised `KeyError: 'centrality'`. ⚠⚠ **The window is the whole runtime of `_compute_centrality`, so it WIDENS with corpus size**, and the lock was real and correctly held — what leaked was the READINESS SIGNAL, which is read outside it by design. THREE modules carried the identical block. **#493** — `index_file` wrote live HEAD as the repo SHA after proving ONE file matched, clearing `repo_is_stale` for files still at the old commit. ⚠⚠ `index_folder._refresh_git_head_if_advanced` makes the IDENTICAL write and is CORRECT, because that run walked the corpus first. **The write is not the defect; what has been proven before it is.** **#492** — `resolve_repo` matched `source_root` containment alone, so a path in a nested independent clone returned the PARENT index as `indexed: true`. ⚠ Gitignored it reads `absent`, absorbed it reads `ok`: **two symptoms, one mis-resolution.** Guard is a `.git` stat, never a subprocess (#303), classified by where the pointer goes so submodules still resolve to the parent (#372). **#491** — both exclusion resolvers called `_config.get()` without `repo=`, so the per-project opt-out their OWN COMMENTS document never applied. ⚠ Fourth report of this shape after #300/#187/#304, and #301's ~40-site audit named neither. **#500** (filed by us) — `embed_repo`'s `# Detect dimension mismatch` comment implemented NO detection, so a model change left the store holding two vector widths, and `EmbeddingMatrix`, which infers width from the FIRST row, silently excluded every symbol embedded afterwards — cumulatively. ⚠⚠ **The read path was NOT the defect and was left alone: fixing the consumer would have hidden the producer.** ⚠ `skipped_dim_mismatch` was computed and read NOWHERE, and `capability.py` had called a non-existent `get_model()` behind a bare `except` since .221, reporting `model: "unknown"` for every repo. ⚠⚠ **THREE OF THE FIVE WERE A COMMENT OR DOCSTRING DESCRIBING BEHAVIOUR THE CODE DID NOT IMPLEMENT** (#491, #500, and #493's promise-shaped comment). **Prose in the tree is not evidence about the code beside it.** [[a-concurrency-test-must-pin-the-interleaving]]
+- **Prior (1.108.284):** **A documented setting the storage layer never read.** `CODE_INDEX_PATH` is in the env table as "Index storage location" and `config.py`, `process_registry.py`, `install_pack.py`, `receipt.py` and TWO `server.py` sites all read it — while `IndexStore`, `SQLiteIndexStore` and `process_locks._lock_dir` hardcoded `Path.home() / ".code-index"` and ignored it. **A user who set it got their CONFIG from one directory and their INDEXES and LOCKS from another.** ⚠⚠ **Nothing errored, which is why it survived — an index written to the wrong root is a successful write**, the #428 shape exactly. ⚠ **The fingerprint was already in the tree**: two `server.py` call sites pass `os.environ.get("CODE_INDEX_PATH")` BY HAND, so someone hit this and patched their own call site rather than the default. ⚠⚠ **THE OBVIOUS FIX WAS TRIED FIRST AND FAILED INFORMATIVELY, which is the reusable part.** Pinning `storage_path=` on the twelve unpinned `index_folder()` call sites produced EIGHT failures — the tests wrote to the pinned store and read back through a loader still on the default. **No single knob moved both, and that WAS the bug.** All twelve test edits reverted; the fix is THREE source lines plus a helper. ⚠⚠ **`token_tracker`'s six sites were routed the same way and then REVERTED**, and the test that forced it is the interesting half: `test_v1_108_188.py::test_no_base_path_still_uses_the_default` sets `CODE_INDEX_PATH` to the NAMED store and asserts a no-argument call lands in the DEFAULT. This change makes that self-contradictory, because the variable then IS the default — **a test written to pin default-versus-named could no longer express the distinction, which is the signal that a change is redefining a contract rather than fixing a bug.** Telemetry routing is what .188 and .280 pinned deliberately and it is NOT the flake, so `_savings.json` and `session_stats.json` still resolve to home; disclosed, not discovered. ⚠ **conftest pins `CODE_INDEX_PATH` for the SESSION, not per-`tmp_path`** — module-scoped fixtures index once and read later (`served_repo` deliberately indexes "where the SERVER looks", since `call_tool` hands `IndexStore` no `base_path`), and a per-test pin moves the store out from under that write. ⚠ Four `storage_path=None` assertions in `test_server.py` became `ANY`: they passed only because the variable happened to be unset, so anyone who set it had four red tests and no explanation — the #411 class. ⚠ **MIGRATION, stated**: indexes are NOT moved. Set the variable and the next index goes there; anything already in `~/.code-index` stays. Installs that never set it are unaffected. ⚠ `CODE_INDEX_PATH=` (empty) is treated as UNSET, never as `.` — `Path("")` is the CWD, the same dependence .280 removed from the perf-db cache key. ⚠ `tests/test_code_index_path_is_honoured.py` (9); reverting both defaults turns exactly the TWO env-var tests red and the other seven pass on both sides as controls. ⚠⚠ **NOT CLAIMED: that the flake is gone.** It was seen ONCE. Measured on a full run the real store gains nothing and no `_watcher_*.signal` appears, so the CONTENTION MECHANISM is removed — a different and weaker statement, and the one the evidence supports. [[pipes-and-missing-xdist-both-report-exit-zero]]
+- **Prior (1.108.283):** **A config in the wrong shape is a client that reports success and registers nothing.** `init` goes from 5 auto-configured clients to 10 — Codex CLI, opencode, Gemini CLI, Cline and VS Code/Copilot join the original five. ⚠⚠ **Four of the five needed their OWN writer, and the reason is that no schema mismatch here errors**: write the wrong key and the host parses the file, registers nothing, and reports success, so the user gets an agent with no jCodeMunch tools and nothing to suspect. Three distinct JSON schemas plus one TOML — opencode uses top-level `mcp` with `"type": "local"` and `command` as ONE ARRAY; VS Code uses top-level `servers`; Gemini CLI and Cline take the generic `mcpServers`. **Every shape was READ FROM VENDOR DOCS, not inferred** — the same lesson #378's TOML left-recursion defect cost us. ⚠⚠ **Codex is the one that REFUSES**: its rmcp transport is strict about the first JSON-RPC frame on stdout and uvx's cold-run install chatter poisons the handshake, whose documented symptom is a **silent multi-hour hang**, so `_codex_command` resolves a real binary or returns None and the writer declines naming `uv tool install`. **A uvx fallback would look like a successful install and then hang on first use.** ⚠ Codex paths are TOML LITERAL strings (a Windows path inside a BASIC string makes its backslash-U an invalid unicode escape — this bit the release script itself) and the writer APPENDS: `config.toml` is user-owned and Python ships no stdlib TOML *writer* at any supported version, so serialising would drop the user's comments and reorder their keys. ⚠ **Detection is where Gemini CLI and Cline carry their risk, not schema**: `~/.gemini` is SHARED with Antigravity, which reads a different file entirely, so detection keys on `settings.json` itself; and Cline's IDE-extension path is not documented per-platform, so `init` writes only the documented CLI config rather than guessing. ⚠ VS Code needs an existing `.vscode/` dir, NOT `code` on PATH — the executable is on most dev machines, so PATH detection would CREATE a file in whatever directory `init` ran from, one the user might commit unintentionally. ⚠⚠ **`CONFIGURE_METHODS` replaces THREE copies of the method list** and `test_detect_clients_returns_list` caught the first new method precisely BECAUSE it carried its own; a new test parametrizes over the set so a declared-but-undispatched method fails instead of returning `"unknown method for X"`, which reads as a supported client. ⚠ `servers[...] = _MCP_ENTRY` would have ALIASED the module-level dict every other client writes — **found by writing the test, not by reading the line**. ⚠ README now leads with `uv tool install` rather than `pip install`; the zero-friction path already existed and was buried, since `_MCP_ENTRY` has always written `uvx` into every client config. **Not bare `uvx`, for two independent reasons**: hooks resolve via `shutil.which` through a minimal-PATH subshell, and Codex cannot use uvx at all. ⚠ jdoc/jdata got the same treatment but **jdata's is a DIFFERENT fix, checked not copied** — it has no `cli/` package, so no hooks and no `shutil.which`, and `uvx` leads outright there. ⚠ `tests/test_init_client_schemas.py` (29), non-vacuity proven by falsifying SIX behaviours across two passes. [[feedback_verify_at_the_users_entry_point]]
+- **Older releases (1.108.282 and earlier):** see `CHANGELOG.md`. The 1.108.182 entry ("a stall has a name and a ceiling", #375) and the 1.108.177-.181 #377 hardening arc are there in full.
+- **Tests:** 7945 passed, 17 skipped, **0 failed** (1.108.285) **+ `uv run ruff check src/` clean**, measured on `main` at the release commit. ⚠ Reconciled by DECOMPOSITION against .284's 7911 total: #490 **8** + #493 **10** + #492 **11** + #491 **13** + #500 **9** = **51**, and 7911 + 51 = **7962** exactly. The release commit adds no tests, so the post-bump run reproduces the pre-bump total. ⚠⚠ **An intermediate run during this session read 7968, and that was NOT `main`** — it was @elfrost's #443 branch with `main` merged in, carrying his six tests. **A count taken from a contributor branch is not a count of `main`, and the two differ by exactly the PR under review.** Say which tree produced a number, or the next decomposition is off by six and looks like drift. ⚠ 3.13 CI-env reproduce via `uv run --python 3.13 --group dev --extra watch python -m pytest tests/ -q`: **7945 passed / 17 skipped, the same 7962 total AND the same skip split** — stronger than the usual same-total-different-split, and run SEQUENTIALLY after the local suite (two full runs share `~/.code-index` process-lock scopes; contention is the documented cause of .261's 47m outlier). ⚠ Prior (1.108.284): 7894 passed, 17 skipped, **0 failed** **+ `uv run ruff check src/` clean**. ⚠ Reconciled by same-tree collect: **7911 with `test_code_index_path_is_honoured.py`, 7902 without = exactly its 9**, and 7902 is .283's total, so nothing else moved. ⚠⚠ **This release also measured the REAL STORE, which no pass count can show**: a full run now CREATES nothing under `~/.code-index` and emits no `_watcher_*.signal`, so the process-lock scopes are isolated. `_savings.json` and `session_stats.json` still move, because `token_tracker` was deliberately left on the home default (see Current State). **Assert the side effect, not just the exit code.** ⚠ Prior (1.108.283): 7883 passed, 17 skipped, **0 failed**, and the 3.13 CI-env reproduce returned the SAME totals AND the same skip split — stronger than the usual same-total-different-split. ⚠⚠ **TWO INDEPENDENT FALSE-GREEN MECHANISMS were found across these two releases and BOTH reported `exit code 0`.** (1) `PYTHONPATH=src python -m pytest tests/ -n 4 --dist loadfile` — **pytest-xdist lives in the dev group inside `.venv` and is INVISIBLE to a bare `python -m pytest`**, so pytest rejected the flags, collected NOTHING, and exited 0 while the harness reported success. **Use `uv run pytest` whenever xdist flags are passed.** (2) **A trailing `| tail` swallows pytest's exit status** — a run with one real failure was reported as "exit code 0", because the pipeline's status is tail's. **Write to a log and echo the exit code BEFORE any pipe**; every number in this line was obtained that way. ⚠ Local suite is `uv run pytest tests/ -n 4 --dist loadfile` at ~200-300s against ~600s serial; CI pins `-n 4`, deliberately not `-n auto`. Prior (1.108.282): 7849 passed, 10 skipped, **0 failed** **+ `uv run ruff check src/` clean**. Prior (1.108.281): 7848 passed, 10 skipped, **0 failed**. ⚠⚠ **Reconciled by a SAME-TREE COLLECT against `origin/main`, and arithmetic against the previous release line would have been wrong by 16** — `main` moved twice between .280 and this bump (#474's 14 tests, #477's 2), so the usual "delta from the last release" method had two unrelated merges inside it. **Pick the method that matches how the work landed.** Measured: **7858 collected on the branch vs 7847 on `d10490e`, +11.** Decomposition: `test_v1_108_281.py` **10**, plus a net **+1** from the ratchet rearranging — four languages leave `EXEMPT` and join `test_declared_constant_pattern_extracts_a_constant` (+4) while the four `test_exemptions_are_not_stale` cases collapse into ONE empty-parametrize item (-3). ⚠ **The 10th skip is that empty parametrize** and is the ratchet AT REST, not a lost test; it re-arms the moment anyone adds an exemption (same shape as `_JS_VARIANT_EXEMPT` in .273). ⚠ The release commit adds no tests, so the post-bump run reproduces the pre-bump 7848/10 exactly. ⚠ 3.13 CI-env reproduce **7842 passed / 16 skipped, the SAME 7858 TOTAL**, different skip split, via `uv run --python 3.13 --group dev --extra watch python -m pytest tests/ -q`. ⚠ Run SEQUENTIALLY after the local suite, never alongside it — two full runs share `~/.code-index` process-lock scopes and contention is the documented cause of .261's 47m outlier (.280 records the reversal). Prior (1.108.280): 7822 passed, 9 skipped, **0 failed** **+ `uv run ruff check src/` clean**. ⚠ Delta from .279's 7828 total is EXACTLY the 3 new `test_perf_db_path_resolution.py` tests, and that release carried no other code, so nothing else could have moved. ⚠⚠ **The two suites were run in SEQUENCE, not in parallel, and that was a deliberate reversal mid-release.** Both were started together, then the 3.13 arm was killed before it produced anything: two full runs on one box contend for the same `~/.code-index` process-lock scopes, and **contention is the documented cause of .261's 47m outlier**. A false red costs a re-run and, worse, a few minutes of reading a real-looking failure. **Sequence them; the wall-clock saving was never worth the ambiguity.** ⚠ 3.13 CI-env reproduce **7816 passed / 15 skipped, the SAME 7831 TOTAL**, different skip split, via `uv run --python 3.13 --group dev --extra watch python -m pytest tests/ -q` — without `--extra watch` it collects 105 fewer and reports a clean pass (see .278 below). Prior (1.108.279): 7819 passed, 9 skipped, **0 failed** **+ `uv run ruff check src/` clean**. ⚠ Delta from .278's 7808 total is EXACTLY the 20 new `test_schtasks_locale.py` tests; the release's other half is docs-only, so nothing else could have moved. ⚠ 3.13 CI-env reproduce **7813 passed / 15 skipped, the SAME 7828 TOTAL**, different skip split. Prior (1.108.278): 7799 passed, 9 skipped, **0 failed** **+ `uv run ruff check src/` clean**. ⚠ Reconciled by DECOMPOSITION against .277's 7797 total: `test_identity_normalized_tier.py` 10 (#458) + `test_schema_baseline_transcription.py` 2 (#467) **- 1 REMOVED** (`test_the_core_compact_schema_budget_is_unchanged`) = **+11**, and 7797 + 11 = 7808 exactly. **A removal is part of the delta and the usual add-only arithmetic hides it.** ⚠⚠ **THE DOCUMENTED 3.13 REPRODUCE COMMAND UNDER-COLLECTS BY 105 TESTS, and it reports a clean pass while doing it.** `uv run --python 3.13 python -m pytest tests/ -q` collected **7703** against the local 7808. The missing 105 are ENTIRELY three watcher files (`test_watcher_serve.py` 49, `test_watcher_lock.py` 40, `test_watcher_dynamic.py` 16), each gated on `pytest.importorskip("watchfiles")` — and `watchfiles` is an OPTIONAL extra. **CI installs it** (`uv sync --locked --group dev --extra watch`, `test.yml:84`); the documented command does not. **Use `uv run --python 3.13 --group dev --extra watch python -m pytest tests/ -q`** — that run is **7793 passed / 15 skipped, the SAME 7808 TOTAL**, different skip split. ⚠ **The totals convention is what caught it**: passed counts alone read as a plausible pass either way, and a whole subsystem being absent is invisible from `N passed`. ⚠ **Do NOT read this as .277's number being wrong** — 7782 + 15 = 7797 is internally consistent, so that run DID collect the watcher tests. `uv run` reuses an already-synced environment, so the same command can collect differently depending on what last synced it. **The command is unreliable, not that record.** Prior (1.108.277): 7788 passed, 9 skipped, **0 failed** **+ `uv run ruff check src/` clean**. ⚠⚠ **This release adds NO test file of its own and a flat delta would have been the RED flag on any other release** — every prior one ships a `test_v1_108_NNN.py`, so "no new tests" normally means the bump outran the work. Here the work landed across the day in #459/#462/#463/#464 and the release commit is version metadata + changelog + rotation only. **Reconciled by DECOMPOSITION rather than a same-tree collect**, because the collect diff has nothing to subtract: `test_html_file_class.py` 4 (#459) + `test_v1_108_277.py` 6 (#462) + `test_pid_reuse_identity.py` 10 (#451 via #464) + `test_claude_md_rotation.py` 4→9 = +5 (#463) = **25**, and .276's 7763 + 25 = 7788 exactly. ⚠ **Pick the reconciliation method that matches how the work landed**; applying the usual one here yields a zero and proves nothing. ⚠ 3.13 CI-env reproduce: **7782 passed / 15 skipped**, same 7797 TOTAL, different skip split — compare totals across interpreters, never passed counts. Prior (1.108.276) **+ `uv run ruff check src/` clean**. ⚠ Reconciled by same-tree collect: 7772 total, 7753 with `test_v1_108_276.py` ignored (= its 19); the **+5 over .275's 7748 is five new `def test_` functions in `test_tools.py`** from the #438/#439 drive-root work — COUNTED in `git diff v1.108.275..HEAD`, not inferred, because "nothing else moved" was not true this release and asserting it would have been the same shape of error the count notes below are about. ⚠⚠ **The 3.13 CI-env reproduce totals the SAME 7772 but splits 7757 passed / 15 skipped** — six tests that RUN on 3.10 SKIP there. **A passed-count comparison ACROSS interpreters is meaningless; compare TOTALS.** ⚠ **The 9th skip is the POSIX-only orphaned-inode test for #442** — Windows refuses to unlink a file with an open handle, so this box CANNOT produce that case. **Do not read that skip as cross-platform coverage**; it is a real local gap covered only by the portable unit test for the predicate. Prior (1.108.275) **+ `uv run ruff check src/` clean**. ⚠ Reconciled by same-tree collect: 7748 total, 7734 with `test_v1_108_275.py` ignored (= its 14), and 7734 is exactly .274's total, so nothing else moved. Prior (1.108.274) **+ `uv run ruff check src/` clean**. ⚠ Reconciled by same-tree collect: 7734 total, 7728 with `test_security_disclosure.py` ignored (= its 6), and 7728 is exactly .273's total, so nothing else moved. ⚠⚠ **This line was briefly written with a GUESSED number before the run finished, and the guess (7734) was the TOTAL rather than the passed count — it would have read as a plausible, wrong figure.** Never pre-write a count; the run is the only source. Prior (1.108.273) **+ `uv run ruff check src/` clean**. ⚠ Reconciled by same-tree collect: 7728 total, 7717 with `test_v1_108_273.py` ignored (= its 11), and the +1 over .272's 7717 is `next` ENTERING the #435 sweep now that its exemption is gone. ⚠ **The 8th skip is EXPECTED and is not a lost test**: `_JS_VARIANT_EXEMPT` is empty, so the ratchet parametrizes over an empty set and pytest skips it ("got empty parameter set"). That is the end state of a ratchet that did its job; it re-arms the moment anyone adds an exemption. ⚠⚠ **A version bump MID-RUN voids the run** — the rotation gate compares CLAUDE.md to `pyproject.toml`, so a suite spanning the bump is not evidence. Bump and rotate FIRST, then run once. (Done wrong on .273 and the run was discarded.) Prior (1.108.272) **+ `uv run ruff check src/` clean**. ⚠ Delta is EXACTLY the 9 new `test_v1_108_272.py` tests, reconciled by COLLECTING the same tree twice (7716 with the file, 7707 with it `--ignore`d) rather than by arithmetic against this line. ⚠⚠ **That method was forced, because this line was STALE by ~239 for two releases** — it read "7470 (1.108.269)" while .270's 31 and .271's 124 were never folded in, so the documented baseline was unusable as one. **A count that is only ever appended to during a release rots the moment a release skips it**; prefer a same-tree collect diff, which cannot go stale, and treat this number as a report rather than a baseline. ⚠⚠ **The count was mis-reported once during this release and the ARITHMETIC caught it, not the reading** — an intermediate run was quoted as "7469 passed, 0 failed", a combination that never happened: it was 7469 passed WITH 1 failed, totalling 7470. **Always reconcile passed+failed against the prior release's total plus the new test count**; eyeballing `N passed` at the end of a 17-minute run is how a red run gets read as green. ⚠ The failure was the CLAUDE.md rotation gate correctly refusing a Current State naming 1.108.269 while `pyproject.toml` still read .268 — **the gate fires BEFORE the version bump lands, so a red rotation test mid-release is expected and must not be waved through as "just the gate"**; it clears only when every pin site agrees. **Prior (1.108.268):** 7436 passed, 7 skipped, **0 failed** **+ `uv run ruff check src/` clean**. ⚠ Delta from .267's 7428 is EXACTLY the 8 new `test_stdio_guard.py` tests; nothing else moved. ⚠⚠ **The CLAUDE.md rotation gate caught a real mistake this release** — a 4th entry was added without demoting .267 or moving the `Older releases` boundary, and the gate failed the build rather than letting the history drift. **Prior (1.108.267):** 7428 passed, 7 skipped, **0 failed** **+ `uv run ruff check src/` clean**. ⚠ Delta from .266's 7404 is EXACTLY the 24 new `test_constant_extraction_guard.py` tests; nothing else moved. **Prior (1.108.266):** 7404 passed, 7 skipped, **0 failed** (isolated worktree run) **+ `uv run ruff check src/` clean + CI all 9 jobs green on the pushed SHA**. ⚠ The delta from .265's 7394 is EXACTLY the 10 new `test_format.py` cases; nothing else moved. ⚠⚠ **Nothing moving is itself the finding** — not one existing test pinned a fusion or semantic confidence value, which is precisely why a ~5x mis-scaling shipped and survived. ⚠ **+17 after .264 shipped**: the file-IO scanner needed TWO MORE iterations (see below), test-only, no bump. ⚠⚠ **A green suite is NOT a green build** — lint was RED for four releases while this line said 0 failed. Quote ALL THREE (suite, ruff, CI) from now on. ⚠⚠ **A green suite is NOT a green build** — lint was RED for four releases while this line said 0 failed. Quote BOTH numbers here from now on, and read the CI run for the pushed SHA. ⚠ **.261's run took 47m45s against ~16-17m before and after it on the same tree** — same counts, same result, so it was machine contention and NOT a signal. Do not treat a wall-clock outlier as a regression. ⚠⚠ **A config change is the one edit whose blast radius is the whole suite** - 128 test files touch `_GLOBAL_CONFIG` directly, so a "small" resolver change is never a small run. ⚠ **The "KNOWN 12 local-ONNX `test_semantic_search` env failures" are GONE** — .207's autouse `no_local_onnx` fixture fixed them, so a local run is now fully green and **any** red is a real signal. Do not carry that 12-failure allowance forward; it papered over a real failure once already (.197 had one hiding inside it). ⚠ **Still do not eyeball the COUNT** — diff the FAILED names against the same tree with your changes stashed; for .199 and .205 that diff was empty, and for .209 the failure set was empty outright, which is the one case that needs no baseline. ⚠ **Stashing is the wrong tool when the change is already committed and pushed** — for .205 the comparison ran in a throwaway `git worktree add --detach <pre-release-sha>`, which also survives a concurrent writer in the main tree.
 - **Python:** >=3.10
 - **Tool count:** 91 visible in `full` / 94 in catalog (front door hidden; counts verified 2026-07-30 from `jcodemunch-mcp surface`, which is the only place to get them — do NOT hand-type this; +1 v1.108.111 `get_parity_map`, +1 v1.108.112 `get_decorator_census`, +1 v1.108.113 `get_architecture_metrics`); `tool_surface=counter` exposes a 3-tool front door (`order`/`menu`/`route`) instead
 
@@ -326,6 +326,408 @@ compaction is near its floor; descriptions are untouched ground.
 ⚠ Design flaw recorded so nobody repeats it: summing per-invocation input across
 a RESUMED conversation counts accumulated context on every step, so the total is
 dominated by how much the agent read early on, which compounds.
+
+**2026-08-18: #488 DECIDED BY JJG — OPTION A, "explicit config outranks the
+zero-config ONNX default", with disclosure.** NOT YET IMPLEMENTED; queued behind
+#495. `_detect_provider` will check `embed_model` / `JCODEMUNCH_EMBED_MODEL` and
+the cloud key pairs BEFORE returning `local_onnx` at priority 0, the result will
+name the active provider and why, and the `config.jsonc` comment gets corrected.
+⚠⚠ **This was only safe to decide because #500 shipped first.** Making explicit
+config win makes provider changes MORE frequent, and before #500 each one left
+the store holding two vector widths with the newer half silently excluded from
+search. **The migration hazard that looked like a cost of option A was a
+pre-existing defect option A would merely have made more likely to fire.**
+⚠ **Option C (local-only per #302) was REJECTED on a factual error in the
+report**: branches 1-3 are not vestigial, only SHADOWED, and only when
+`[local-embed]` is ALSO installed. `[semantic]` without `[local-embed]` uses
+branch 1 today and it works. **Say that to the reporter — their largest
+suggestion rests on it.**
+⚠ Disclosure is not optional in A: a caller whose provider changes needs to see
+`model_changed_from` / `rebuild_reason` (#500's fields) rather than discover a
+re-embed by watching the clock.
+
+**2026-08-18: #488 (@pnm-jgb) FIXED BY US via PR #505 — an explicit local model
+now outranks the zero-config default, and the NARROWING is the entry.**
+Unreleased.
+⚠⚠ **JJG DECIDED "OPTION A"; WHAT SHIPPED IS A IN ONE BRANCH ONLY, AND HE
+APPROVED THE NARROWING AFTER IT WAS SURFACED.** Full A turned
+`tests/test_paid_embeddings_optin.py` RED, and that file is not incidental — it
+exists because jdocmunch's resolver auto-selected OpenAI from an ambient
+`OPENAI_API_KEY` and began **billing a remote account and shipping the indexed
+corpus off the machine**. jcm's second line of defence IS that ONNX wins before
+any cloud branch is reached. **A developer with `[local-embed]` and an exported
+`OPENAI_APIKEY`+`OPENAI_EMBED_MODEL` would have silently started paying per call
+and sending their source off the box.**
+⚠⚠ **THE ASYMMETRY THE ISSUE NEVER ADDRESSED, and the reusable half:
+`embed_model` is FREE and ON-MACHINE; Gemini and OpenAI are PAID and REMOTE.
+Promoting the first costs a re-embed. Promoting the others costs money and
+exfiltrates the corpus. A principle stated over a set ("explicit beats default")
+can be right for part of the set and wrong for the rest — check what each member
+costs before applying it uniformly.**
+⚠ **A RED TEST IS SOMETIMES THE SPEC.** The instinct on 33 reds and one
+money-safety red is to fix the tests. Here one of them was the design document
+and the other 33 were reporting a real regression. **Read the docstring of a
+failing test before assuming it is stale.**
+⚠⚠ **The usability probe was WRONG on its first pass and 33 tests caught it.**
+Probing `sentence_transformers` importability UNCONDITIONALLY meant that on any
+machine without the package `JCODEMUNCH_EMBED_MODEL` selected nothing, so the
+caller got a bare `None` instead of the actionable `pip install
+'jcodemunch-mcp[semantic]'` error. **The probe now decides PRECEDENCE, never
+SELECTION**: an uninstalled backend does not displace a WORKING ONNX install,
+but with no ONNX the setting is selected as before.
+⚠ `provider_reason` + `provider_skipped` added to `embed_repo`'s result: an
+explicit setting we cannot honour is DISCLOSED, never dropped. Silently ignoring
+it is the reported defect; silently failing on it at embed time is that defect
+with a louder symptom.
+⚠ **Option (4) from the report (remove branches 1-3 + the `[semantic]` extra +
+~5 GB of torch) was DECLINED ON A FACTUAL ERROR IN THE REPORT** — those branches
+are not vestigial, only SHADOWED, and only when `[local-embed]` is ALSO
+installed. `[semantic]` without `[local-embed]` uses branch 1 today and it works.
+**Said so on the thread; his largest suggestion rested on it.**
+⚠ **This change was only possible because #500 shipped in .285.** Making explicit
+config win makes provider changes more frequent, and before .285 each one split
+the store silently. **The migration hazard was a pre-existing defect the change
+would merely have made more likely to fire.**
+⚠ `tests/test_explicit_embed_model_wins.py` (12), 6 red pre-fix **but only TWO
+behavioural** — the other four fail because `_detect_provider_detailed` does not
+exist there, which is a signature fact and not evidence. **Report that split;
+"6 red" alone overstates it.** The 6 passing both sides are the money-safety
+class and the wrapper-shape controls.
+⚠ Suite: **7976 passed, 17 skipped, 0 failed** + ruff clean; +12 over .285's
+7981-after-#495.
+
+**2026-08-18: #504 (@lsg1103275794) VERIFIED, TIMEBOXED TO 2026-08-19, NOT YET
+FIXED.** Repeat `index_folder` on a GIT ROOT never reaches the incremental
+no-change path: the v1.96 collision guard at `index_folder.py:2224` is
+`if _existing_source_root == _git_root:` with NO `walk_prefix` test, so a
+full-root re-walk assigns `_merge_with_existing` and the incremental branch at
+`:2402` (gated on `_merge_with_existing is None`) is unreachable. **Every
+scheduled freshness check rebuilt the whole corpus.** Reproduced at .285.
+⚠ **He offered to PR and sign the CLA; we said yes and posted the window with
+the default (we implement + credit at expiry).** First-time contributor.
+⚠⚠ **NOT a one-line fix and he said so BEFORE writing it** — `and walk_prefix`
+alone breaks `test_full_root_walk_after_subdir_replaces_everything`, because a
+full-corpus incremental diff cannot be layered onto a `source_roots` marker that
+is still partial. His account: one full rebuild establishes `source_roots ==
+[""]`, after which repeat root walks take the no-change path. **That is a
+DISCLOSED MIGRATION and must reach the CHANGELOG, not be found by a user whose
+first post-upgrade index is unexpectedly slow.**
+⚠ **It makes `_refresh_git_head_if_advanced` fire MORE OFTEN** (no-change runs
+finally happen), which is #493's ground from .285. Correct in `index_folder`
+precisely because that path walks the whole corpus — **verify in review, do not
+assume.**
+⚠ Measured by him: 5.0-5.7s -> 1.58s on 1,132 files / 9,926 symbols. **His
+machine, his number; do not transcribe as canonical.**
+⚠ **Droppable from the release if it needs care.** It is a PERFORMANCE fix — the
+index produced is correct, just rebuilt needlessly — and #447's SECURITY fix must
+not wait behind it.
+
+**2026-08-18: #495 (@rknighton) FIXED BY US via PR #503 — the guide advertised a
+tool the same process refuses to run.** Unreleased.
+⚠⚠ **AT SHIPPED DEFAULTS, no config file and no env overrides.**
+`disabled_tools` ships `["test_summarizer"]` and
+`_generate_claude_md_snippet` walked a static constant, so the guide named it,
+`tools/list` omitted it, and `call_tool` rejected it before the handler ran.
+**Reachable out of the box is what makes this worth a release rather than a
+note.**
+⚠⚠ **THE FILTERING ALREADY EXISTED AND A SECOND GENERATOR WALKED AROUND IT** —
+`e086e9a` added it to `cli/init.py` for #242, and `server.py`'s generator never
+got it. **Reused `_get_active_tools`; a third copy is how the first two
+drifted.** Same shape as #491 (the guard existed, the call sites bypassed it) and
+the `src.jcodemunch_mcp` twin sweep.
+⚠ **Widened past the reporter's scope DELIBERATELY and said so on the PR**: they
+scoped to `disabled_tools` correctly (a profile-hidden tool stays dispatchable,
+so it costs context not failure), but the tool's own description promises to
+match "surface, tier and disabled_tools", and `tier` IS the profile. Filtering
+one and not the other leaves the description making a claim the code does not
+keep.
+⚠⚠ **`tests/test_config.py::test_generate_full_snippet` ASSERTED THAT EVERY
+CANONICAL TOOL NAME APPEARS, so it could only pass WHILE THE BUG EXISTED.**
+`test_summarizer` is canonical and disabled by default. **Third test this release
+found asserting the behaviour it should have prevented** (after
+`test_embed_drift.py`'s literal wording and my own two in #489). **When a fix
+turns an old test red, read whether the test was encoding the defect before
+"fixing" the code back.**
+⚠ `tests/test_guide_respects_disabled_tools.py` (9), 5 red pre-fix; the four
+constraints include a PIN ON `DEFAULTS["disabled_tools"]` so the issue's premise
+cannot silently change out from under the case.
+⚠ Suite: **7964 passed, 17 skipped, 0 failed** + ruff clean; +9 over .285's 7972.
+
+**2026-08-18: #489 (@pnm-jgb) FIXED BY US via PR #502 — the tool schema
+advertised three key-requiring providers and hid the free one.** Unreleased.
+⚠⚠ **The `semantic` PARAMETER DESCRIPTION is the expensive site and the harm is
+invisible from outside.** It is not documentation a human browses — it is the
+tool schema, and the ONLY information an agent has when deciding whether to set
+`semantic: true`. An agent reading "requires one of three env vars" against an
+environment with none set correctly concludes semantic search is unavailable and
+never tries it, **on a machine where it works for free**. No error, no warning,
+no degraded result: **the inverse of a false positive, where the tool
+under-reports its own function.**
+⚠⚠ **THE REPORT NAMED THREE SITES; THE RATCHET FOUND FIVE.** The two extras were
+only visible once a test asserted the PROPERTY instead of the instances: the
+`embed_repo` TOOL DESCRIPTION in `server.py` (equally agent-facing, same
+omission) and `retrieval/embed_drift.py`, whose own copy named the bundled
+encoder **LAST**, behind the two that bill per call. **Write the ratchet before
+concluding the reported list is the list.**
+⚠ All five now derive from `embeddings/advice.py`; `_LOCAL_FIRST` leads both
+strings, mirroring `_detect_provider`'s priority so advice and resolver cannot
+disagree about which wins. Option (3) from the report — a schema stating the
+RUNTIME fact rather than setup instructions — is NOT shipped; noted on the PR
+rather than dropped.
+⚠⚠ **MY BUDGET WARNING WAS WRONG AND MEASURING IS WHAT CAUGHT IT.** I told jjg to
+watch the hard 4,000-token `core_compact` ceiling (10 tokens of headroom) and was
+ready to trim a description. **`semantic` is in `_COMPACT_STRIP_PARAMS` and never
+reaches the compact schema at all** — live `core_compact` is **3,990 before and
+after**. A test pins that, so if `semantic` ever stops being stripped the budget
+question returns visibly. **Measure the constraint before paying for it.**
+⚠⚠ **`tests/test_embed_drift.py` PINNED THE LITERAL OLD WORDING, which is HOW
+that site kept a stale copy** — a test keyed to one spelling of a sentence guards
+the spelling, not the behaviour. **My own ratchet had the identical defect on its
+first pass** (matched `"No embedding provider is configured"` WITH the `is`, and
+caught `embed_drift` only by luck via a different clause), and **my site-2 test
+asserted on the CONSTANT rather than on `search_symbols`** — true the moment the
+constant exists, so it checked the fix instead of the site and passed against a
+tree where that site was still stale. Corrected; it is now among the pre-fix
+reds, and was not before. **Three instances of one mistake in one change.**
+⚠ `tests/test_embedding_provider_advice.py` (10), 4 red against the pre-fix
+CONSUMERS with `advice.py` present — stashing the module too only proves it is
+new. **Keep the new module and revert the call sites; that is the pass that
+means something.**
+⚠ Suite: **7955 passed, 17 skipped, 0 failed** + ruff clean; +10 over .285's 7962.
+
+**2026-08-18: #443 resolved a THIRD time, still ours.** v1.108.285 plus #489 both
+touched the `[Unreleased]` block. Same resolution, suite **7961/17/0**, +6 =
+exactly elfrost's tests, all 11 real CI checks green on the merge ref;
+`license/cla` PENDING is the only blocker.
+⚠ **The erase-on-push hazard fired again** (count=0 on the new head, back as
+`pending` within ~2 minutes). Tally now: erased 2, survived 1. **Read the status
+after every push to a fork; it is not predictable.**
+⚠ **A comment was posted BEFORE CI confirmed it** ("everything green except
+license/cla"). It held, but it was a prediction at the time. Post the claim after
+the run, or say it is expected rather than observed.
+
+**2026-08-18: #491 (@rknighton) FIXED BY US via PR #499 — the two exclusion
+opt-outs never read the project config that documents them.** `security.py` read
+`exclude_skip_directories` / `exclude_secret_patterns` without `repo=`, so the
+project overlay was skipped and the documented per-project opt-out did nothing.
+Unreleased; see CHANGELOG `[Unreleased]`.
+⚠⚠ **The COMMENTS are what make it a defect rather than a missing feature.** The
+note above the skip list says these are ordinary English words that can name a
+real package, "which is why `exclude_skip_directories` exists"; `is_secret_file`'s
+docstring claims it applies the project overrides ONE LINE above the global-only
+read. **Both described an intent the code did not implement** — same shape as
+#500's promise-without-detection, found the same day.
+⚠ Nothing surfaces it: `discovery_skip_counts` gives `skip_dir: 2` with no
+directory or rule name, and the pruned path goes to `logger.debug`.
+⚠ **FOURTH report of one shape** after #300 / #187 / #304, and **#301 audited
+~40 call sites for exactly this, listed `get_extra_ignore_patterns` as fixed and
+named neither of these**; v1.108.197 then fixed the three `max_*` resolvers and
+left them too. **A fifth audit finds a fifth instance; the ratchet finds it on
+the commit that introduces one.**
+⚠ **Signature-only would have been a FALSE GREEN** — adding the parameter and
+leaving callers bare changes nothing observable, so the call-site check walks the
+AST, not the signature.
+⚠ **`index_repo` is exempt BY NAME, not by omission**: a project config is found
+by walking up from a LOCAL path and a GitHub tree has no checkout, so passing the
+owner/repo id would imply a lookup that cannot succeed. This is a stated
+DEVIATION from the reporter's acceptance criterion 5, said so on the PR.
+⚠ `tests/test_security_exclusions_are_project_overridable.py` (13), all red at
+`b85ef61` — but **three are constraints, red only because `repo=` is not a
+parameter there**, so each also asserts the no-argument form. **Do not report
+"all red" without that distinction; it overstates the evidence.**
+
+**2026-08-18: #500 FILED AND FIXED BY US via PR #501 — a promise in a comment
+with no code behind it, found while checking whether #488 was safe to ship.**
+`embed_repo`'s `# Detect dimension mismatch — if the stored model differs, force
+a rebuild` implemented NO detection: `stored_dim` only seeded `dim`, nothing
+compared stored model to active, and `set_dimension` fired only when
+`dim is None` (first-ever embed). A model change wrote new-width vectors beside
+the old under a meta row naming the first.
+⚠⚠ **THE CONSEQUENCE COMPOUNDS AND IS SILENT.** `EmbeddingMatrix` infers width
+from the FIRST row and drops the rest, and the inferred width follows the
+majority of PRE-EXISTING rows — so **every symbol embedded after the change is
+excluded from semantic search, forever, and the gap grows with every new file.**
+Measured `{384: 6, 768: 1}` with meta reporting 384. A recall failure that reads
+as a finding.
+⚠⚠ **THE READ PATH IS NOT THE DEFECT AND WAS LEFT ALONE.** `_build`'s exclusion
+is a faithful port of what `_cosine_similarity` did before the matrix existed and
+its comment says so. **Fixing the consumer would have HIDDEN the producer** —
+the fix must go where the mixed store is CREATED. Same lesson as #493's write:
+find what was proven, not what was written.
+⚠ **Unknown is not a change**: a store with no persisted model name must NOT
+force a rebuild, or every existing user is billed a full re-embed for a model
+that may be identical.
+⚠ **`stored_dim` is cleared inside the `force` branch, which REPAIRS A SECOND
+BUG nobody reported**: the pre-existing `task_type` force path cleared the store
+and left `dim` seeded, so the `dim is None` gate never re-fired and the meta kept
+advertising the old dimension against fresh vectors.
+⚠ **`skipped_dim_mismatch` was computed, stored on the object and read NOWHERE**
+(`grep` found only its three defining lines). **A count that exists and is
+discarded is the same defect as not counting.** Now surfaced as
+`_meta.semantic_partial` + `channels.semantic: "partial"`, because the producer
+fix does not heal stores already mixed.
+⚠ **`evidence/capability.py` has called `get_model()` since v1.108.221 behind a
+`type: ignore` and a bare `except`**, so the capability certificate reported
+`model: "unknown"` for EVERY repo. **Found by adding the method, not by reading
+the call site** — a bare except around a `type: ignore` is a permanent silent
+failure by construction.
+⚠⚠ **THIS IS THE BLOCKER ON #488 AND THAT IS WHY IT WAS FILED SEPARATELY.**
+Making explicit config outrank the ONNX default makes provider changes MORE
+frequent, and until now each one silently degraded the index. **The "migration
+hazard" that looked like a cost of #488's option A was a pre-existing defect
+option A would merely have made more likely to fire.** Check whether a hazard is
+introduced or merely exposed before pricing it against a design choice.
+⚠ `tests/test_embedding_model_change.py` (9), 8 red at pre-fix (2 of those are
+signature-only reds); the same-model no-rebuild control passes both sides.
+
+⚠⚠ **PROCESS, MEASURED THIS SESSION: a push is the RELIABLE way to re-provoke a
+missing `license/cla`; close+reopen is NOT.** #499 opened with **zero** statuses
+on its head (the #479 shape — the bot never fired, which reads identically to
+our-push-erased-it). Close+reopen left `count=0`; `git commit --amend --no-edit`
++ force-push restored it `success` within a minute. **That is now 2 failures and
+1 success for close+reopen and 2 successes for a push.** ⚠ It also blocks the
+merge for real now that `license/cla` is required (3d), so an unfired bot on OUR
+OWN PR presents as `BLOCKED` with 11 green checks.
+⚠ **Batching worked**: #490/#491/#492/#493/#500 were all merged before touching
+#443, and it was resolved ONCE instead of five times. That is the lever policy 3b
+leaves when the contributor PR is BLOCKED and cannot go first. `license/cla`
+SURVIVED this push — the opposite of the previous one, so **read the status, do
+not predict it**.
+
+**2026-08-18: #493 + #492 (@rknighton) FIXED BY US via PRs #496 / #498.**
+Unreleased; see CHANGELOG `[Unreleased]`.
+
+**#493 — `index_file` advanced the repo `git_head` after proving one file.**
+`repo_is_stale` is "index SHA differs from live HEAD", so refreshing one file out
+of a two-file commit CLEARED staleness for the file never refreshed, and
+`get_file_content` served commit-A content reading `channels.index: fresh`
+against a clean tree.
+⚠⚠ **THE WRITE IS NOT THE DEFECT; WHAT HAS BEEN PROVEN BEFORE IT IS.**
+`index_folder._refresh_git_head_if_advanced` makes the IDENTICAL write on a
+no-change run (#330) and is CORRECT there, because that run walked the corpus.
+**Two calls, one write, opposite correctness.** The reporter drew that
+distinction himself and the fix is built on it — a diff of the two functions
+would have shown nothing.
+⚠ Fix is one `git diff --name-only --relative` against the stored head; advance
+only if every other moved path is one the index neither carries nor would index.
+`--relative` is load-bearing (a monorepo subtree must not be held back by a
+sibling commit). **An ADDED source file blocks too** — not in the corpus, so not
+"a file we carry that moved", but advancing would certify a complete index over
+a corpus missing a file.
+⚠ **`_paths_changed_between` returns None for "could not ask", NEVER an empty
+set**, or a failed git call reads as a clean diff. Unknown → do not advance,
+same asymmetry as .209.
+⚠ **Branch-delta path deliberately UNCHANGED** (writes `branch_meta`, own
+`base_head`); the reporter made no claim about it. Recorded, not swept.
+⚠ `tests/test_index_file_head_advance.py` (10): **5 red at `b85ef61`, and the
+other 5 pass on BOTH sides BY DESIGN** — they are the constraint tests (#330
+must not regress, a single-file commit must still clear staleness). **A guard
+that never advanced would satisfy every assertion about the bug and leave every
+repo reading stale forever.** Say so, or a reviewer reads them as vacuous.
+
+**#492 — `resolve_repo` answered a repository question with a filesystem fact.**
+Fast path 1 matched `source_root` containment alone, so a path inside an
+independent nested clone returned the PARENT index as `indexed: true`.
+⚠⚠ **Whether it LOOKS wrong depends on something irrelevant to the defect.**
+Gitignored nested repo → read fails, `absent`, indistinguishable from a normal
+empty result. Absorbed into the parent walk → same wrong repo, read SUCCEEDS,
+`state: ok`. **Two symptoms, one mis-resolution** — and only the second case
+proves it without involving absence semantics at all.
+⚠ Guard is a `.git` stat, **never a subprocess**: fast path 1 exists to avoid
+the `resolve_index_identity` walk that can HANG (#303), so a correctness guard
+that spawned a process would trade the reported bug for the one the fast path
+was built to prevent. Asserted by monkeypatching `subprocess.run` to raise.
+⚠⚠ **Classify by where `.git` POINTS, not by file-vs-directory.**
+`.git/worktrees/` vs `.git/modules/` is #372's distinction; submodules still
+resolve to the parent because their content IS indexed into it. **A
+`--separate-git-dir` clone leaves a `.git` FILE pointing at neither, and a
+file/directory test reads it as a submodule** — tested by name.
+⚠ A file outside the parent's corpus (gitignored/oversize/skipped) still
+resolves to the parent: being outside the corpus and belonging to another
+repository are different conditions.
+⚠ `tests/test_resolve_repo_nested_repo_boundary.py` (11): 7 red at `b85ef61`,
+4 boundary tests pass both sides by design. Submodules and linked worktrees
+tested against REAL git layouts (`git submodule add -c protocol.file.allow=always`,
+`git worktree add`), not fabricated `.git` markers.
+⚠ Suite: **7923 passed, 17 skipped, 0 failed** + ruff clean; +21 over #490's
+7919 decomposes as 10 + 11.
+
+⚠⚠ **PROCESS TRAP, NEW AND CHEAP TO REPEAT: `gh pr merge --delete-branch` on a
+PR that is the BASE of a stacked PR CLOSES the stacked PR.** GitHub normally
+retargets a stacked PR when its base merges; deleting the base branch in the
+same operation closes it instead. **A closed PR's base cannot be changed and it
+cannot be reopened while the base is gone** — `gh pr edit --base` returns
+"Cannot change the base branch of a closed pull request", `gh pr reopen` returns
+"Could not open the pull request". #497 died this way and was recovered as #498
+from the same intact head branch. **Merge a stacked base WITHOUT
+`--delete-branch`**, or retarget the child first.
+⚠⚠ **A PR stacked on a branch base GETS NO TEST MATRIX AND LOOKS CLEAN.**
+`test.yml` is `pull_request: branches: [main]`, so #497 showed 3 green checks
+(radar / retrieval gate / CLA) and `mergeStateStatus: CLEAN` with the matrix
+never run — **the fork-PR "only license/cla ran" hazard wearing a different
+costume, and `CLEAN` is the part that sells it.** Remedy is the workflow's own
+escape hatch: `gh workflow run test.yml --ref <branch>` (all 9 jobs green,
+run `32092744385`). **Count the checks; a green rollup is not a run matrix.**
+
+**2026-08-18: #443's conflict was OURS for the SIXTH time, resolved on their
+branch.** Three of our merges (#490, #492, #493) landed in the same
+`[Unreleased]` block, and a CONFLICTING fork PR has no `refs/pull/N/merge` and
+therefore NO CI. Merged `main` in, resolved to one `## [Unreleased]` with
+elfrost's `#447` section first, pushed to their fork. Suite on the merged tree
+**7929 / 17 / 0**, +6 = exactly their tests; all 11 CI checks green on the merge
+ref; `license/cla` PENDING is the only blocker.
+⚠⚠ **Six is not six incidents, it is one wrong merge order repeated** — and
+this round it was avoidable in a way the earlier ones were not: **all three of
+our merges happened while their PR sat blocked, and we batched none of them.**
+Policy 3b governs ORDER when we have a choice; when the contributor PR is
+BLOCKED and we ship anyway, the remaining lever is **how many separate
+`[Unreleased]` merges we make before resolving once**. Resolve after the LAST
+one, not after each.
+⚠ **The CLA status was erased by our push and came back within ~2 minutes as
+`pending`** — both halves of the documented hazard fired in one push (erases an
+existing status, provokes a missing one). `count=0` was observed and is NOT
+"cleared". Said so on the thread so eleven green checks are not read as done.
+
+**2026-08-17: #490 (@rknighton) FIXED BY US via PR #494 — a cache that
+announced readiness one key early.** The BM25 corpus cache publishes FOUR keys
+behind a check-then-build guarded on `idf` alone, and
+`cache["idf"], cache["avgdl"], cache["inverted"] = _compute_bm25(...)` is THREE
+`__setitem__` calls, with `centrality` a fourth statement after a whole pass
+over the corpus. A second caller passed the readiness check and raised
+`KeyError: 'centrality'` — through the dispatcher, `Internal error processing
+search_symbols`. Unreleased; see CHANGELOG `[Unreleased]`.
+⚠⚠ **The window is the entire runtime of `_compute_centrality`, so it WIDENS
+with corpus size** — the installs most likely to hit it are the ones where the
+rebuild is most expensive. Do not file this shape as "a narrow race".
+⚠ **The lock was real and correctly held; the build WAS single-flight** as #370
+intended. What leaked is the readiness SIGNAL, which is read outside the lock by
+design and therefore must not become true early. **Diagnose which of the two the
+defect is before reaching for the lock.**
+⚠⚠ **THREE modules carried the identical block** (`search_symbols`,
+`get_ranked_context`, `plan_turn`), so fixing the reported one leaves two —
+[[feedback_guard_every_path_that_shares_the_hazard]] again. One
+`ensure_bm25_cache()` helper now serves all three; the fast path checks ALL FOUR
+keys, not the sentinel, so a future reorder costs a lock acquisition instead of
+a KeyError.
+⚠ **`pagerank` and `name_map` were CHECKED and deliberately LEFT** — each writes
+the one key it also checks, atomic by construction. Their
+`getattr(index, "_bm25_lock", None) or threading.Lock()` fallback is a separate,
+milder weakness (a fresh lock per caller guards NOTHING, so a lockless index
+would duplicate work rather than crash); unreachable today because both
+`CodeIndex` and `SelectiveIndexView` carry the lock. **Recorded rather than
+swept**, same treatment as #473's module-level `perf_db_path()`.
+⚠⚠ **THE FIRST SHIPPED-PATH TEST PASSED AGAINST THE BROKEN SOURCE.** Signalling
+from inside the build and letting the second thread race is not enough on a
+two-file corpus: the builder finishes before the racer arrives. Only when the
+build is held open until the second caller is demonstrably INSIDE its call does
+it go red. **A concurrency test that does not pin the interleaving is testing
+its own machine's scheduler**, and the tell is the non-vacuity pass: 7 of 8 red
+first time, 8 of 8 after. [[a-concurrency-test-must-pin-the-interleaving]]
+⚠ His `Event` framing said this in the issue body — "it does not create a
+window" — and the first test ignored it. **Read the reporter's note about their
+own harness; it is usually load-bearing.**
+⚠ Suite: **7902 passed, 17 skipped, 0 failed** + ruff clean. Total 7919 against
+.284's 7911 = exactly the 8 new tests, so nothing else moved.
 
 **2026-08-17: #476 (@rknighton) FIXED BY US — one telemetry db spent another's
 trim.** `_perf_rows_since_trim` was one int on the `_State` process singleton
@@ -922,6 +1324,77 @@ change in what a handoff IS, not only in how long it lasts. It is the intended
 trade — our throughput over their commit — and it should be made in the open
 rather than discovered at expiry.
 
+**3d. `license/cla` IS A REQUIRED STATUS CHECK ON `main`** (jjg, 2026-08-17).
+Enabled because it was NOT one: until this date the repo had **no branch
+protection, no rulesets and no required checks**, so the CLA was read but never
+enforced and one distracted click could have merged unsigned code. Open PRs now
+read `MERGEABLE/BLOCKED` rather than `MERGEABLE/UNSTABLE`.
+
+```bash
+GITHUB_TOKEN="" gh api repos/jgravelle/jcodemunch-mcp/branches/main/protection \
+  --jq '{contexts:.required_status_checks.contexts, strict:.required_status_checks.strict, enforce_admins:.enforce_admins.enabled}'
+```
+
+⚠ **`enforce_admins: false` and `strict: false` are both deliberate.** The admin
+override is what lets jjg land a merge pushed to a contributor's fork; `strict`
+would force every PR to be up-to-date with `main` before merging, i.e. a rebase
+after every release — the exact churn that kept #443 dark for five days.
+⚠ Enabling protection also turned OFF force-push and deletion on `main`.
+⚠⚠ **This composes with the status-erasure hazard and now FAILS CLOSED.** Our
+push to a fork wipes `license/cla` from the new head (legacy statuses do not
+follow a SHA); with the check required that reads as `BLOCKED` until the bot
+re-posts, usually under a minute. Correct, and it will look like a new problem
+the first time.
+⚠⚠ **It does NOT solve vendor time-wasting and must not be sold as if it does.**
+Signing costs a campaign nothing — #485's author has 748 merged PRs across
+GitHub, so they clear CLAs routinely. The only contributor this gate blocked in
+its first hour was **elfrost**, who found a real security defect. **Legal
+exposure and spam are different problems; this closes the first, 3c closes the
+second.**
+
+**3c. PROFILE THE AUTHOR BEFORE REVIEWING A VENDOR-SHAPED PR** (jjg,
+2026-08-17). Any PR adding a named third-party provider, gateway, SDK or
+endpoint gets three queries FIRST, before a line of the diff is read:
+
+```bash
+GITHUB_TOKEN="" gh api users/<login> --jq '"created=\(.created_at[0:10]) repos=\(.public_repos) company=\(.company) bio=\(.bio)"'
+GITHUB_TOKEN="" gh api "search/issues?q=is:pr+author:<login>&per_page=1" --jq .total_count
+GITHUB_TOKEN="" gh api "search/issues?q=is:pr+author:<login>+<vendor>+in:title&per_page=1" --jq .total_count
+```
+
+⚠⚠ **The discriminator is the RATIO, not the volume.** A prolific contributor
+is fine. #485's author had **3,089 PRs, 2,242 with "minimax" in the title
+alone (73%), ~19/day since March**, and a profile reading
+`company: Independent Developer`. #487's had 87 forks, 86 PRs, all OrcaRouter,
+on a 7-day-old account. **Both were found in under a minute; #485 was reviewed
+in depth twice before anyone looked.** That is the cost this rule removes.
+
+⚠ **Also check whether we have a DEMAND signal**, which is the actual #380 bar
+and is one query:
+`gh api "search/issues?q=repo:jgravelle/jcodemunch-mcp+<vendor>"`. MiniMax
+cleared it honestly as a summarizer (#184, a user asking); MiniMax TTS did not,
+and the only tracker mention was the PR itself.
+
+⚠⚠ **Quality is NOT the discriminator and must not be used as one.** #485's
+diff was better than most human PRs — a real `output_format`-versus-container
+finding, a three-point review addressed in hours, a self-corrected test count.
+**Good work aimed at something nobody asked for is still something nobody asked
+for.** Close on demand, credit the finding, and say plainly that quality was not
+the reason.
+
+⚠ **Do not assert employment you cannot prove.** State the numbers, ask the
+affiliation question on the thread, and let the ratio speak. #487's author
+volunteered their affiliation unprompted and it cost them nothing — that is the
+contrast worth drawing, not an accusation.
+
+⚠⚠ **A posted timebox's default can be RETRACTED IN THE OPEN when the facts
+change, but never silently.** #485's clock promised that at expiry "we implement
+the same change ourselves" and that the window "never decides whether the
+feature ships." The authorship-and-credit half was honoured; the feature half
+was withdrawn ON THE THREAD, with the reason, because it was written before the
+campaign was known. **Letting a promise lapse quietly is the failure mode;
+retracting it out loud is not.**
+
 **3b. A MERGEABLE contributor PR merges BEFORE any changelog-touching work of
 our own** (jjg, 2026-08-14). Not a courtesy and not a preference — a measured
 cost. Every entry we add lands in the same `[Unreleased]` block a contributor's
@@ -942,6 +1415,25 @@ contributor PR cannot go first: #443 was unsigned-CLA the whole time, so
 resolution**: push the merge to their branch, resolve it ourselves, and say on
 the thread that the conflict was ours. **This rule is about ORDER when we have a
 choice, never about holding our work behind someone else's form.**
+
+⚠⚠ **RE-READ THE THREAD FOR THE OPERATIVE DATE; DO NOT QUOTE ONE FROM HERE OR
+FROM MEMORY.** Measured 2026-08-17 on #443: **2026-08-26 was posted 08-12
+18:19**, elfrost accepted it on 08-13 13:05 quoting that date, and **08-20 was
+posted 85 minutes later at 14:30** and reaffirmed thirteen times since. The
+contributor never acknowledged the change and may still be planning around the
+older date — which is the concrete harm, not the six days. **A thread can carry
+two dates; only the query settles which is in force:**
+
+```bash
+GITHUB_TOKEN="" gh api repos/jgravelle/<repo>/issues/<n>/comments \
+  --jq '.[] | select(.user.login=="jgravelle") | "\(.created_at[0:16])"' # then grep bodies for dates
+```
+
+⚠ The 08-12 wording also promised **"your authorship on the commit"** where the
+08-20 wording promises **"credit"** — a second, quieter downgrade in the same
+swap. When restating a default, restate the STRONGER posted version or say
+explicitly that it changed. jjg's call on 2026-08-17 was that **08-20 stands**;
+the lesson recorded here is the silent substitution, not the date.
 
 ⚠ **Do not shorten a timebox already posted.** State the new window on new PRs.
 A public promise to a contributor outlives the policy that produced it, and

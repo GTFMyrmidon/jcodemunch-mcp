@@ -21,6 +21,7 @@ from mcp.types import Tool, ToolAnnotations, TextContent, Resource, Prompt, Prom
 
 from . import __version__
 from . import config as config_module
+from .embeddings.advice import PROVIDER_HINT as _PROVIDER_HINT
 from . import runtime_identity
 from .tools import _arg_contract
 # Tool modules are imported lazily inside each call_tool() dispatch branch.
@@ -1853,7 +1854,7 @@ def _build_tools_list() -> list[Tool]:
                     },
                     "semantic": {
                         "type": "boolean",
-                        "description": "Enable semantic (embedding-based) search. Requires an embedding provider: JCODEMUNCH_EMBED_MODEL (sentence-transformers), GOOGLE_API_KEY+GOOGLE_EMBED_MODEL (Gemini), or OPENAI_API_KEY+OPENAI_EMBED_MODEL (OpenAI). When false (default) there is zero performance impact.",
+                        "description": "Enable semantic (embedding-based) search. " + _PROVIDER_HINT + " When false (default) there is zero performance impact.",
                         "default": False
                     },
                     "semantic_weight": {
@@ -3937,8 +3938,7 @@ def _build_tools_list() -> list[Tool]:
                 "Optional warm-up: search_symbols with semantic=true lazily embeds missing "
                 "symbols on first use, but embed_repo warms the cache upfront so the first "
                 "semantic query returns immediately. "
-                "Requires an embedding provider (JCODEMUNCH_EMBED_MODEL, "
-                "GOOGLE_API_KEY+GOOGLE_EMBED_MODEL, or OPENAI_API_KEY+OPENAI_EMBED_MODEL)."
+                + _PROVIDER_HINT
             ),
             inputSchema={
                 "type": "object",
@@ -7854,6 +7854,41 @@ def _generate_claude_md_snippet(missing_only: bool = False) -> str:
             logger.debug("front-door snippet unavailable; using the full one", exc_info=True)
 
     categories = _SNIPPET_TOOL_CATEGORIES
+
+    # #495: filter to what this process will actually dispatch.
+    #
+    # ⚠⚠ `disabled_tools` ships as `["test_summarizer"]`, so at SHIPPED DEFAULTS
+    # this guide advertised a tool `call_tool` then refuses — an agent reads the
+    # name here, calls it, and gets an error before the handler runs. Nothing
+    # about that is configuration-dependent; it was the out-of-the-box state.
+    #
+    # ⚠⚠ The filtering already existed and a SECOND generator walked around it.
+    # Commit e086e9a ("claude-md respects tool_profile and disabled_tools", #242)
+    # added exactly this to `cli/init.py`, which is why the CLI policy path
+    # filters correctly today. This function is the other generator and never
+    # received it. **Reuse `_get_active_tools` rather than writing a third
+    # filter** — a copy is how these two drifted apart in the first place.
+    #
+    # ⚠ Profile is honoured too, not just `disabled_tools`. The registered
+    # description promises the guide "Matches the active tool surface, tier and
+    # disabled_tools", and `tier` is the profile. A profile-hidden tool stays
+    # dispatchable by name, so naming it costs context rather than erroring
+    # (#397) — a weaker harm than the reported one, and the same promise.
+    try:
+        from .cli.init import _get_active_tools
+        _active = _get_active_tools()
+    except Exception:
+        logger.debug("active-tool filter unavailable; listing all", exc_info=True)
+        _active = None
+    if _active is not None:
+        categories = [
+            (cat, [t for t in tools if t in _active])
+            for cat, tools in categories
+        ]
+        # A category emptied by filtering is dropped whole; a bare "**Search:**"
+        # with nothing after it reads as a surface with no tools in it.
+        categories = [(cat, tools) for cat, tools in categories if tools]
+
     from . import __version__ as _ver
     lines = [
         f"## jcodemunch-mcp (v{_ver})",
