@@ -2,6 +2,45 @@
 
 ## [Unreleased]
 
+### The guide advertised a tool the same process refuses to run (#495, @rknighton)
+
+`jcodemunch_guide` built its `### All tools` list from a static constant without
+consulting `disabled_tools`. That key ships as `["test_summarizer"]`, so **at
+shipped defaults — no config file, no environment overrides —** the guide named a
+tool `call_tool` then rejected before the handler ran. An agent reads the name,
+calls it, and gets an error.
+
+⚠⚠ **The filtering already existed and a SECOND generator walked around it.**
+Commit `e086e9a` ("claude-md respects tool_profile and disabled_tools", #242)
+added exactly this to `cli/init.py`, which is why the CLI policy path filters
+correctly today. `server.py`'s generator never received it. **The fix reuses
+`_get_active_tools` rather than adding a third copy** — a copy is precisely how
+the two drifted apart, and a third would drift again.
+
+⚠ **Profile is honoured too, not only `disabled_tools`.** The reporter scoped
+their claim to `disabled_tools` deliberately and correctly: a profile-hidden tool
+stays dispatchable by name, so naming it costs context (#397) rather than
+producing a failure. But the tool's own registered description promises the guide
+"Matches the active tool surface, tier and disabled_tools", and `tier` is the
+profile — so filtering by one and not the other leaves the description making a
+claim the code does not keep, which is the defect class this release is full of.
+
+⚠ A category emptied by filtering is dropped whole. A bare `**Search:**` with
+nothing after it reads as a surface with no tools in it.
+
+⚠⚠ **`tests/test_config.py::test_generate_full_snippet` asserted that EVERY
+canonical tool name appears in the snippet, which encoded the defect instead of
+catching it.** `test_summarizer` is canonical and disabled by default, so the
+test could only pass while the bug existed. It now asserts the property actually
+wanted — advertises what it will dispatch — and pins the absence. **That is the
+third test this release found asserting the behaviour it should have prevented.**
+
+⚠ `tests/test_guide_respects_disabled_tools.py` (9), 5 red against the pre-fix
+generator. The other four are constraints: the nothing-disabled control, snippet
+shape, the empty-category rule, and a pin on `DEFAULTS["disabled_tools"]` so the
+issue's premise cannot silently change out from under the case.
+
+
 ### The tool schema advertised three paid-ish providers and hid the free one (#489, @pnm-jgb)
 
 Five places tell a caller how to obtain an embedding provider. Exactly one of
