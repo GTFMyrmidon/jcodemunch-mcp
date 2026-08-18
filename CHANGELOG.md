@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [1.108.286] - 2026-08-18 - Three surfaces that advertised a product we were not running
+
+A config comment describing a precedence the resolver did not use, a tool schema naming three key-requiring embedding providers while hiding the free bundled one, and a guide listing a tool the same process refuses to dispatch. In each case the code was fine and the thing describing it was not.
+
 ### An explicit local embedding model now outranks the zero-config default (#488, @pnm-jgb)
 
 `_detect_provider` returned the bundled ONNX encoder at priority 0, so once
