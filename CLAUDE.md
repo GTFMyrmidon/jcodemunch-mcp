@@ -327,6 +327,94 @@ compaction is near its floor; descriptions are untouched ground.
 a RESUMED conversation counts accumulated context on every step, so the total is
 dominated by how much the agent read early on, which compounds.
 
+**2026-08-18: #491 (@rknighton) FIXED BY US via PR #499 — the two exclusion
+opt-outs never read the project config that documents them.** `security.py` read
+`exclude_skip_directories` / `exclude_secret_patterns` without `repo=`, so the
+project overlay was skipped and the documented per-project opt-out did nothing.
+Unreleased; see CHANGELOG `[Unreleased]`.
+⚠⚠ **The COMMENTS are what make it a defect rather than a missing feature.** The
+note above the skip list says these are ordinary English words that can name a
+real package, "which is why `exclude_skip_directories` exists"; `is_secret_file`'s
+docstring claims it applies the project overrides ONE LINE above the global-only
+read. **Both described an intent the code did not implement** — same shape as
+#500's promise-without-detection, found the same day.
+⚠ Nothing surfaces it: `discovery_skip_counts` gives `skip_dir: 2` with no
+directory or rule name, and the pruned path goes to `logger.debug`.
+⚠ **FOURTH report of one shape** after #300 / #187 / #304, and **#301 audited
+~40 call sites for exactly this, listed `get_extra_ignore_patterns` as fixed and
+named neither of these**; v1.108.197 then fixed the three `max_*` resolvers and
+left them too. **A fifth audit finds a fifth instance; the ratchet finds it on
+the commit that introduces one.**
+⚠ **Signature-only would have been a FALSE GREEN** — adding the parameter and
+leaving callers bare changes nothing observable, so the call-site check walks the
+AST, not the signature.
+⚠ **`index_repo` is exempt BY NAME, not by omission**: a project config is found
+by walking up from a LOCAL path and a GitHub tree has no checkout, so passing the
+owner/repo id would imply a lookup that cannot succeed. This is a stated
+DEVIATION from the reporter's acceptance criterion 5, said so on the PR.
+⚠ `tests/test_security_exclusions_are_project_overridable.py` (13), all red at
+`b85ef61` — but **three are constraints, red only because `repo=` is not a
+parameter there**, so each also asserts the no-argument form. **Do not report
+"all red" without that distinction; it overstates the evidence.**
+
+**2026-08-18: #500 FILED AND FIXED BY US via PR #501 — a promise in a comment
+with no code behind it, found while checking whether #488 was safe to ship.**
+`embed_repo`'s `# Detect dimension mismatch — if the stored model differs, force
+a rebuild` implemented NO detection: `stored_dim` only seeded `dim`, nothing
+compared stored model to active, and `set_dimension` fired only when
+`dim is None` (first-ever embed). A model change wrote new-width vectors beside
+the old under a meta row naming the first.
+⚠⚠ **THE CONSEQUENCE COMPOUNDS AND IS SILENT.** `EmbeddingMatrix` infers width
+from the FIRST row and drops the rest, and the inferred width follows the
+majority of PRE-EXISTING rows — so **every symbol embedded after the change is
+excluded from semantic search, forever, and the gap grows with every new file.**
+Measured `{384: 6, 768: 1}` with meta reporting 384. A recall failure that reads
+as a finding.
+⚠⚠ **THE READ PATH IS NOT THE DEFECT AND WAS LEFT ALONE.** `_build`'s exclusion
+is a faithful port of what `_cosine_similarity` did before the matrix existed and
+its comment says so. **Fixing the consumer would have HIDDEN the producer** —
+the fix must go where the mixed store is CREATED. Same lesson as #493's write:
+find what was proven, not what was written.
+⚠ **Unknown is not a change**: a store with no persisted model name must NOT
+force a rebuild, or every existing user is billed a full re-embed for a model
+that may be identical.
+⚠ **`stored_dim` is cleared inside the `force` branch, which REPAIRS A SECOND
+BUG nobody reported**: the pre-existing `task_type` force path cleared the store
+and left `dim` seeded, so the `dim is None` gate never re-fired and the meta kept
+advertising the old dimension against fresh vectors.
+⚠ **`skipped_dim_mismatch` was computed, stored on the object and read NOWHERE**
+(`grep` found only its three defining lines). **A count that exists and is
+discarded is the same defect as not counting.** Now surfaced as
+`_meta.semantic_partial` + `channels.semantic: "partial"`, because the producer
+fix does not heal stores already mixed.
+⚠ **`evidence/capability.py` has called `get_model()` since v1.108.221 behind a
+`type: ignore` and a bare `except`**, so the capability certificate reported
+`model: "unknown"` for EVERY repo. **Found by adding the method, not by reading
+the call site** — a bare except around a `type: ignore` is a permanent silent
+failure by construction.
+⚠⚠ **THIS IS THE BLOCKER ON #488 AND THAT IS WHY IT WAS FILED SEPARATELY.**
+Making explicit config outrank the ONNX default makes provider changes MORE
+frequent, and until now each one silently degraded the index. **The "migration
+hazard" that looked like a cost of #488's option A was a pre-existing defect
+option A would merely have made more likely to fire.** Check whether a hazard is
+introduced or merely exposed before pricing it against a design choice.
+⚠ `tests/test_embedding_model_change.py` (9), 8 red at pre-fix (2 of those are
+signature-only reds); the same-model no-rebuild control passes both sides.
+
+⚠⚠ **PROCESS, MEASURED THIS SESSION: a push is the RELIABLE way to re-provoke a
+missing `license/cla`; close+reopen is NOT.** #499 opened with **zero** statuses
+on its head (the #479 shape — the bot never fired, which reads identically to
+our-push-erased-it). Close+reopen left `count=0`; `git commit --amend --no-edit`
++ force-push restored it `success` within a minute. **That is now 2 failures and
+1 success for close+reopen and 2 successes for a push.** ⚠ It also blocks the
+merge for real now that `license/cla` is required (3d), so an unfired bot on OUR
+OWN PR presents as `BLOCKED` with 11 green checks.
+⚠ **Batching worked**: #490/#491/#492/#493/#500 were all merged before touching
+#443, and it was resolved ONCE instead of five times. That is the lever policy 3b
+leaves when the contributor PR is BLOCKED and cannot go first. `license/cla`
+SURVIVED this push — the opposite of the previous one, so **read the status, do
+not predict it**.
+
 **2026-08-18: #493 + #492 (@rknighton) FIXED BY US via PRs #496 / #498.**
 Unreleased; see CHANGELOG `[Unreleased]`.
 
