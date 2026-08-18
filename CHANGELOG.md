@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [1.108.285] - 2026-08-18 - Five answers that were asserted, not established
+
+Five fixes, each one a place that reported a result it had not checked: a cache that said ready, an index that said fresh, a resolver that said this repository, an opt-out that said applied, and an embedding store that said one model. Three of the five were a comment or docstring describing behaviour the code did not implement.
+
 ### A model change left the embedding store holding two vector widths (#500)
 
 `embed_repo` carried this comment for four releases:
