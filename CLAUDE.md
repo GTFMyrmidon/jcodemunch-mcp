@@ -327,6 +327,59 @@ compaction is near its floor; descriptions are untouched ground.
 a RESUMED conversation counts accumulated context on every step, so the total is
 dominated by how much the agent read early on, which compounds.
 
+**2026-08-18: #489 (@pnm-jgb) FIXED BY US via PR #502 — the tool schema
+advertised three key-requiring providers and hid the free one.** Unreleased.
+⚠⚠ **The `semantic` PARAMETER DESCRIPTION is the expensive site and the harm is
+invisible from outside.** It is not documentation a human browses — it is the
+tool schema, and the ONLY information an agent has when deciding whether to set
+`semantic: true`. An agent reading "requires one of three env vars" against an
+environment with none set correctly concludes semantic search is unavailable and
+never tries it, **on a machine where it works for free**. No error, no warning,
+no degraded result: **the inverse of a false positive, where the tool
+under-reports its own function.**
+⚠⚠ **THE REPORT NAMED THREE SITES; THE RATCHET FOUND FIVE.** The two extras were
+only visible once a test asserted the PROPERTY instead of the instances: the
+`embed_repo` TOOL DESCRIPTION in `server.py` (equally agent-facing, same
+omission) and `retrieval/embed_drift.py`, whose own copy named the bundled
+encoder **LAST**, behind the two that bill per call. **Write the ratchet before
+concluding the reported list is the list.**
+⚠ All five now derive from `embeddings/advice.py`; `_LOCAL_FIRST` leads both
+strings, mirroring `_detect_provider`'s priority so advice and resolver cannot
+disagree about which wins. Option (3) from the report — a schema stating the
+RUNTIME fact rather than setup instructions — is NOT shipped; noted on the PR
+rather than dropped.
+⚠⚠ **MY BUDGET WARNING WAS WRONG AND MEASURING IS WHAT CAUGHT IT.** I told jjg to
+watch the hard 4,000-token `core_compact` ceiling (10 tokens of headroom) and was
+ready to trim a description. **`semantic` is in `_COMPACT_STRIP_PARAMS` and never
+reaches the compact schema at all** — live `core_compact` is **3,990 before and
+after**. A test pins that, so if `semantic` ever stops being stripped the budget
+question returns visibly. **Measure the constraint before paying for it.**
+⚠⚠ **`tests/test_embed_drift.py` PINNED THE LITERAL OLD WORDING, which is HOW
+that site kept a stale copy** — a test keyed to one spelling of a sentence guards
+the spelling, not the behaviour. **My own ratchet had the identical defect on its
+first pass** (matched `"No embedding provider is configured"` WITH the `is`, and
+caught `embed_drift` only by luck via a different clause), and **my site-2 test
+asserted on the CONSTANT rather than on `search_symbols`** — true the moment the
+constant exists, so it checked the fix instead of the site and passed against a
+tree where that site was still stale. Corrected; it is now among the pre-fix
+reds, and was not before. **Three instances of one mistake in one change.**
+⚠ `tests/test_embedding_provider_advice.py` (10), 4 red against the pre-fix
+CONSUMERS with `advice.py` present — stashing the module too only proves it is
+new. **Keep the new module and revert the call sites; that is the pass that
+means something.**
+⚠ Suite: **7955 passed, 17 skipped, 0 failed** + ruff clean; +10 over .285's 7962.
+
+**2026-08-18: #443 resolved a THIRD time, still ours.** v1.108.285 plus #489 both
+touched the `[Unreleased]` block. Same resolution, suite **7961/17/0**, +6 =
+exactly elfrost's tests, all 11 real CI checks green on the merge ref;
+`license/cla` PENDING is the only blocker.
+⚠ **The erase-on-push hazard fired again** (count=0 on the new head, back as
+`pending` within ~2 minutes). Tally now: erased 2, survived 1. **Read the status
+after every push to a fork; it is not predictable.**
+⚠ **A comment was posted BEFORE CI confirmed it** ("everything green except
+license/cla"). It held, but it was a prediction at the time. Post the claim after
+the run, or say it is expected rather than observed.
+
 **2026-08-18: #491 (@rknighton) FIXED BY US via PR #499 — the two exclusion
 opt-outs never read the project config that documents them.** `security.py` read
 `exclude_skip_directories` / `exclude_secret_patterns` without `repo=`, so the
