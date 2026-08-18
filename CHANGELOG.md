@@ -2,6 +2,51 @@
 
 ## [Unreleased]
 
+### `resolve_repo` no longer answers a repository question with a filesystem fact (#492, @rknighton)
+
+Fast path 1 matched on `source_root` containment alone, so a path inside an
+**independent git repository nested in an indexed parent** came back as the
+parent index with `found: true`, `indexed: true`, `loadable: true` and
+`match_path: source_root_containment`. Nothing in that branch consulted git
+identity. The caller was bound to a corpus built from a different checkout with
+a different history.
+
+⚠⚠ **Whether it looks wrong depends on something irrelevant to the defect.**
+When the nested repository is gitignored by the parent, the read fails and
+returns `absent` — correct for the corpus that was searched, and the reason it
+reads as a normal empty result. When the parent's walk absorbed the nested
+files, the same wrong repository is returned and **the read succeeds with
+`state: ok`**. The mis-resolution is identical; only the symptom differs. Both
+cases change here.
+
+The guard is a `.git` stat between the requested path and the matched
+`source_root`. ⚠ **A subprocess would have been the wrong fix at the right
+place**: fast path 1 exists precisely to avoid the `resolve_index_identity`
+walk that can hang in large agent-worktree environments (#303), so a
+correctness guard on it must not reintroduce a process spawn. A test asserts no
+`subprocess.run` on the ordinary containment path.
+
+⚠ **Classify by where `.git` POINTS, not by whether it is a file.** A `.git`
+directory is an independent repository; a `.git` file carries a `gitdir:`
+pointer, and `.git/worktrees/<name>` versus `.git/modules/<name>` is exactly the
+distinction #372 drew. **Submodules deliberately still resolve to the parent** —
+their content is indexed into it, and #372 excluded linked worktrees without
+changing that. Linked worktrees are also left alone: fast path 2 already answers
+for them via `canonical_candidates`, and diverting them here would change #303's
+answer. `git clone --separate-git-dir` leaves a `.git` file pointing at neither,
+and counts as independent — a file/directory test would have read it as a
+submodule.
+
+⚠ **A file outside the parent's corpus still resolves to the parent.** Being
+gitignored, oversize or in a skipped directory is not the same condition as
+belonging to another repository, and only the second changes which repository is
+returned.
+
+⚠ `tests/test_resolve_repo_nested_repo_boundary.py` (11). Seven are red against
+`b85ef61`; the remaining four are the boundary tests above and pass on both
+sides by design.
+
+
 ### A single-file refresh no longer certifies a corpus it never re-read (#493, @rknighton)
 
 `index_file` wrote live HEAD as the repository's stored SHA. `repo_is_stale` is
