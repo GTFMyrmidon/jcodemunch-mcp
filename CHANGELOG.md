@@ -2,6 +2,62 @@
 
 ## [Unreleased]
 
+### A single-file refresh no longer certifies a corpus it never re-read (#493, @rknighton)
+
+`index_file` wrote live HEAD as the repository's stored SHA. `repo_is_stale` is
+defined as "index SHA differs from live HEAD", so refreshing one file out of a
+two-file commit **cleared the staleness signal for the file that was never
+refreshed**. `get_file_content` on that file then served commit-A content
+reporting `channels.index: fresh`, against a clean working tree.
+
+⚠⚠ **The write is not the defect; what has been proven before it is.**
+`index_folder`'s `_refresh_git_head_if_advanced` performs the *identical* write
+on a no-change run (#330), and it is correct there — that run walked the corpus
+and established that nothing indexed had changed, so the corpus really does
+correspond to the new head. `index_file` established something far weaker, that
+one requested file now matches, and advanced the repository-level head anyway.
+**Two calls, one write, opposite correctness, and the difference is entirely in
+what came before.**
+
+The head now advances only when refreshing this one file is what brought the
+corpus into line: every other path that moved between the stored head and live
+HEAD must be one the index does not carry and would not index. That is one
+`git diff --name-only --relative` against the stored head — no walk, no
+per-file work.
+
+⚠ **Unknown resolves to "do not advance".** A head left behind reads `stale` for
+a repository that may match, costing a re-index; a head advanced without proof
+reads `fresh` for one that does not, costing a wrong answer with no signal
+attached. Same asymmetry as v1.108.209's rule that `classify()` must never
+answer `fresh` for a comparison it could not make. `_paths_changed_between`
+returns `None` for "could not ask" and never an empty set, so a failed git call
+cannot read as a clean diff.
+
+⚠ **`--relative` is load-bearing.** It scopes the diff to `source_root`, so a
+monorepo subtree index is not held back by a commit that touched a sibling it
+never indexed.
+
+⚠ **An ADDED source file blocks the advance too**, though it is in no corpus and
+so cannot be "a file we carry that moved". The indexer would take it, so
+advancing would certify a complete index over a corpus missing a file — an
+absence claim with nothing behind it.
+
+⚠ **A no-change `index_folder` run still advances the head** (#330 does not
+regress), a full re-index still records it, and a single-file commit refreshed
+by `index_file` still clears staleness. Those three are the constraints on the
+fix, not side effects of it: a guard that simply never advanced would satisfy
+every assertion about the reported bug and leave every repository reading stale
+forever.
+
+⚠ **The branch-delta path is deliberately unchanged.** It writes `branch_meta`
+rather than the repository-level `meta` row, and carries its own `base_head`, so
+it is a different question — the reporter said as much and made no claim about
+it. Recorded rather than swept.
+
+⚠ `tests/test_index_file_head_advance.py` (10). Five are red against `b85ef61`;
+the other five are the constraint tests above and pass on both sides by design.
+
+
 ### A cache that announced it was ready one key before it was (#490, @rknighton)
 
 `search_symbols` could raise `KeyError: 'centrality'` — surfacing through the
