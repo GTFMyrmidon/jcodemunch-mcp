@@ -1296,6 +1296,46 @@ ships with disclosure Z"); a date with no stated consequence is a wish.
 being careful can stall a release, careful review becomes expensive to accept,
 which is backwards.
 
+**2e. NEVER BATCH OUR RELEASE BEHIND SOMEONE ELSE'S CLOCK** (jjg, 2026-08-18,
+after it happened). Policy 2 says a release is never blocked on an open issue.
+**The way that rule gets broken is not by someone overruling it — it is by an
+apparently sensible batching argument that never mentions it.**
+
+⚠⚠ **The exact failure, recorded because it was MINE and it sounded reasonable.**
+On 2026-08-18, five fixes were merged and green (#488/#489/#490's siblings,
+#495). I recommended holding the release until 08-19/08-20 so it could include
+#504 and #447, on the grounds that each of our releases re-conflicts elfrost's
+CLA-blocked #443 and batching means resolving once instead of three times. jjg
+accepted it. **That recommendation coupled our shipping schedule to a
+contributor's CLA signature and a first-time reporter's availability, which is
+the precise outcome policy 2 exists to prevent.**
+
+⚠⚠ **It was also wrong ON THE MERITS, which is the part that generalises.**
+Batching reduces the NUMBER of conflict resolutions, not whether they happen —
+#443 conflicts on whatever release comes next, whenever that is. Each resolution
+is a scripted three-way merge plus one suite run, measured at minutes. **The
+trade was "finished, tested, user-facing fixes sit unreleased for two days" in
+exchange for "we do a cheap chore once instead of three times." Weigh the cost
+of the chore against the cost of the delay before proposing a batch; here it was
+not close.**
+
+⚠ **The timeboxes are NOT the problem and must not be "fixed".** Every one names
+a default that ships the work regardless (policy 3a). A posted window decides
+whose commit it is, never whether the fix ships or whether we can release. If a
+window ever appears to block a release, the batching decision is what is
+blocking it, not the window.
+
+⚠ **The test, before proposing to hold a release:** name the thing being waited
+for, and whether it is OURS. If it is anyone else's action — a signature, a PR, a
+reply, a re-run — the answer is ship now and let them ride the next one.
+Contributor work is never worse off for this: their default still fires, their
+credit is unchanged, and their PR merges into a smaller diff.
+
+⚠ **Corollary: "reduce OUR churn" is not a release criterion.** Conflict
+resolution, re-runs and re-merges are our costs to absorb. The moment avoiding
+them starts shaping WHEN users get fixes, the optimisation has inverted — we are
+spending their latency to buy our convenience. [[never-batch-a-release-behind-someone-elses-clock]]
+
 **3. A contributor's PR is never the only path.** Timebox it and keep our own
 path warm (#388 taught this the expensive way).
 
