@@ -2,6 +2,66 @@
 
 ## [Unreleased]
 
+### An explicit local embedding model now outranks the zero-config default (#488, @pnm-jgb)
+
+`_detect_provider` returned the bundled ONNX encoder at priority 0, so once
+`[local-embed]` was installed every lower branch became unreachable **by
+configuration**. `embed_model` / `JCODEMUNCH_EMBED_MODEL` was read after the
+early return and changed nothing — no warning, no log line, no field in any
+response. **Absence of a setting and an explicit setting are different intents,
+and only the first should get the default.**
+
+The reporter's case is the ordinary one: they run jdocmunch on
+`BAAI/bge-base-en-v1.5` and wanted code and docs on the same model. `embed_model`
+is exactly the knob that appears to offer it. They set it, saw no change, and
+learned why only by reading the resolver.
+
+⚠⚠ **ONLY THE FREE, ON-MACHINE OPTION WAS PROMOTED. Gemini and OpenAI still sit
+BELOW the bundled encoder, and that is the load-bearing half of this change.**
+`tests/test_paid_embeddings_optin.py` exists because jdocmunch's resolver
+auto-selected OpenAI from an ambient key and began **billing a remote account and
+shipping the indexed corpus off the machine**; jcm's second line of defence is
+precisely that ONNX wins before any cloud branch is reached. **`embed_model` is
+free and local, so promoting it costs a re-embed; promoting a cloud provider
+costs money and exfiltrates the corpus.** Those are not the same decision and
+they do not get the same answer. A machine with an ambient `OPENAI_API_KEY` and
+`OPENAI_EMBED_MODEL` still embeds locally.
+
+⚠ **The usability probe decides PRECEDENCE, never selection.**
+`_embed_sentence_transformers` raises `ImportError` without its package, so
+promoting an uninstalled backend over a working ONNX install would trade a
+silently-ignored setting for a hard failure at embed time — the same defect,
+louder. When ONNX is unavailable there is nothing to protect and the setting is
+selected as before, which is what hands the caller the actionable
+`pip install 'jcodemunch-mcp[semantic]'` message rather than a bare `None`.
+**Probing unconditionally broke that on every machine without the package**, and
+33 tests said so.
+
+⚠ `embed_repo` now reports `provider_reason` (`embed_model` / `bundled_default`
+/ `google_api_key` / `openai_api_key` / `none_configured`) and, when an explicit
+setting could not be honoured, `provider_skipped` naming it and the remedy. **An
+explicit setting we cannot use is disclosed, never dropped** — silently ignoring
+it is the reported defect, and silently failing on it is that defect with a
+louder symptom.
+
+⚠ **The config comment is corrected**, which matters because it was the only
+place `embed_model` was documented and it described the opposite precedence:
+"takes priority over GOOGLE_API_KEY and OPENAI_API_KEY embeddings" was true of
+the two it named and silent about the one that outranked it.
+
+⚠ **MIGRATION, stated.** If you have `[local-embed]` installed AND `embed_model`
+set, your next `embed_repo` switches provider — and v1.108.285's #500 fix
+detects that, forces the rebuild, and reports `model_changed_from`. Before .285
+it would have left the store holding two vector widths with the newer half
+silently excluded from search, which is why this change waited for that one.
+
+⚠ `tests/test_explicit_embed_model_wins.py` (12). Six are red against the
+pre-fix resolver, **but only two of those are behavioural** — the other four
+fail because `_detect_provider_detailed` does not exist there. The six that pass
+on both sides are the money-safety class and the wrapper-shape controls, which
+pin what must NOT move.
+
+
 ### The guide advertised a tool the same process refuses to run (#495, @rknighton)
 
 `jcodemunch_guide` built its `### All tools` list from a static constant without
