@@ -2,6 +2,65 @@
 
 ## [Unreleased]
 
+### A cache that announced it was ready one key before it was (#490, @rknighton)
+
+`search_symbols` could raise `KeyError: 'centrality'` — surfacing through the
+dispatcher as `Internal error processing search_symbols` — when a second search
+arrived while the first was still building the lexical corpus.
+
+The BM25 corpus cache is built once per loaded index behind a check-then-build
+guarded on `idf`. It publishes **four** keys, and the statement that looked
+atomic is not:
+
+```python
+cache["idf"], cache["avgdl"], cache["inverted"] = _compute_bm25(index.symbols)
+cache["centrality"] = _compute_centrality(...)
+```
+
+That is four separate `__setitem__` calls. `idf` — the key every reader checked
+before deciding the cache was ready — lands first, and `centrality` lands after
+a full pass over the corpus. A caller arriving between the two passed the
+readiness check, skipped the build, and read a key that did not exist yet.
+
+⚠⚠ **The window is not a narrow one.** It is the entire runtime of
+`_compute_centrality`, which walks every import in the repository. The larger
+the corpus, the wider the window — so the installs most likely to hit it are the
+ones where a rebuild is most expensive.
+
+⚠ **The lock was real and was not the problem.** `_bm25_lock` exists on
+`CodeIndex` and was correctly acquired. The build was single-flight, as
+#370's fix intended; what leaked was the *readiness signal*, which is read
+outside the lock by design and must therefore not be true early.
+
+The build now runs in one shared `ensure_bm25_cache(index)` helper that writes
+`avgdl`, `inverted` and `centrality` first and `idf` last, and whose fast path
+checks all four keys rather than the sentinel alone — so a future edit that
+reorders the writes costs an extra lock acquisition instead of a `KeyError`.
+
+⚠ **The same four-key publish existed in three modules** — `search_symbols`,
+`get_ranked_context` and `plan_turn` — so fixing the reported one would have
+left two. All three now call the helper. `tests/test_bm25_cache_single_flight.py`
+fails if a fourth appears.
+
+⚠ **The `pagerank` and `name_map` blocks were checked and deliberately left
+alone.** Each writes the one key it also checks, so they are atomic by
+construction and share none of this hazard. Their
+`getattr(index, "_bm25_lock", None) or threading.Lock()` fallback is a separate
+and milder weakness — a fresh lock per caller guards nothing, so if an index
+ever arrived without `_bm25_lock` they would duplicate work rather than crash.
+Unreachable today, since both `CodeIndex` and `SelectiveIndexView` carry the
+lock. Recorded rather than swept, so a later pass does not read the silence as
+"already handled". The new helper uses a module-level fallback instead.
+
+⚠⚠ **The first version of the shipped-path test passed against the broken
+source**, which is the part worth keeping. Signalling from inside the build and
+letting the second thread race is not enough on a two-file corpus — the builder
+finishes before the racer arrives. The test holds the build open until the
+second caller is demonstrably inside its call. **A concurrency test that does
+not pin the interleaving is testing its own machine's scheduler.** Seven of the
+eight tests were red against the pre-fix tree without it; all eight are now.
+
+
 ## [1.108.284] - 2026-08-17 - A documented setting the storage layer never read
 
 ### `CODE_INDEX_PATH` now moves the index store and the lock directory
