@@ -346,6 +346,82 @@ suggestion rests on it.**
 `model_changed_from` / `rebuild_reason` (#500's fields) rather than discover a
 re-embed by watching the clock.
 
+**2026-08-18: #488 (@pnm-jgb) FIXED BY US via PR #505 — an explicit local model
+now outranks the zero-config default, and the NARROWING is the entry.**
+Unreleased.
+⚠⚠ **JJG DECIDED "OPTION A"; WHAT SHIPPED IS A IN ONE BRANCH ONLY, AND HE
+APPROVED THE NARROWING AFTER IT WAS SURFACED.** Full A turned
+`tests/test_paid_embeddings_optin.py` RED, and that file is not incidental — it
+exists because jdocmunch's resolver auto-selected OpenAI from an ambient
+`OPENAI_API_KEY` and began **billing a remote account and shipping the indexed
+corpus off the machine**. jcm's second line of defence IS that ONNX wins before
+any cloud branch is reached. **A developer with `[local-embed]` and an exported
+`OPENAI_APIKEY`+`OPENAI_EMBED_MODEL` would have silently started paying per call
+and sending their source off the box.**
+⚠⚠ **THE ASYMMETRY THE ISSUE NEVER ADDRESSED, and the reusable half:
+`embed_model` is FREE and ON-MACHINE; Gemini and OpenAI are PAID and REMOTE.
+Promoting the first costs a re-embed. Promoting the others costs money and
+exfiltrates the corpus. A principle stated over a set ("explicit beats default")
+can be right for part of the set and wrong for the rest — check what each member
+costs before applying it uniformly.**
+⚠ **A RED TEST IS SOMETIMES THE SPEC.** The instinct on 33 reds and one
+money-safety red is to fix the tests. Here one of them was the design document
+and the other 33 were reporting a real regression. **Read the docstring of a
+failing test before assuming it is stale.**
+⚠⚠ **The usability probe was WRONG on its first pass and 33 tests caught it.**
+Probing `sentence_transformers` importability UNCONDITIONALLY meant that on any
+machine without the package `JCODEMUNCH_EMBED_MODEL` selected nothing, so the
+caller got a bare `None` instead of the actionable `pip install
+'jcodemunch-mcp[semantic]'` error. **The probe now decides PRECEDENCE, never
+SELECTION**: an uninstalled backend does not displace a WORKING ONNX install,
+but with no ONNX the setting is selected as before.
+⚠ `provider_reason` + `provider_skipped` added to `embed_repo`'s result: an
+explicit setting we cannot honour is DISCLOSED, never dropped. Silently ignoring
+it is the reported defect; silently failing on it at embed time is that defect
+with a louder symptom.
+⚠ **Option (4) from the report (remove branches 1-3 + the `[semantic]` extra +
+~5 GB of torch) was DECLINED ON A FACTUAL ERROR IN THE REPORT** — those branches
+are not vestigial, only SHADOWED, and only when `[local-embed]` is ALSO
+installed. `[semantic]` without `[local-embed]` uses branch 1 today and it works.
+**Said so on the thread; his largest suggestion rested on it.**
+⚠ **This change was only possible because #500 shipped in .285.** Making explicit
+config win makes provider changes more frequent, and before .285 each one split
+the store silently. **The migration hazard was a pre-existing defect the change
+would merely have made more likely to fire.**
+⚠ `tests/test_explicit_embed_model_wins.py` (12), 6 red pre-fix **but only TWO
+behavioural** — the other four fail because `_detect_provider_detailed` does not
+exist there, which is a signature fact and not evidence. **Report that split;
+"6 red" alone overstates it.** The 6 passing both sides are the money-safety
+class and the wrapper-shape controls.
+⚠ Suite: **7976 passed, 17 skipped, 0 failed** + ruff clean; +12 over .285's
+7981-after-#495.
+
+**2026-08-18: #504 (@lsg1103275794) VERIFIED, TIMEBOXED TO 2026-08-19, NOT YET
+FIXED.** Repeat `index_folder` on a GIT ROOT never reaches the incremental
+no-change path: the v1.96 collision guard at `index_folder.py:2224` is
+`if _existing_source_root == _git_root:` with NO `walk_prefix` test, so a
+full-root re-walk assigns `_merge_with_existing` and the incremental branch at
+`:2402` (gated on `_merge_with_existing is None`) is unreachable. **Every
+scheduled freshness check rebuilt the whole corpus.** Reproduced at .285.
+⚠ **He offered to PR and sign the CLA; we said yes and posted the window with
+the default (we implement + credit at expiry).** First-time contributor.
+⚠⚠ **NOT a one-line fix and he said so BEFORE writing it** — `and walk_prefix`
+alone breaks `test_full_root_walk_after_subdir_replaces_everything`, because a
+full-corpus incremental diff cannot be layered onto a `source_roots` marker that
+is still partial. His account: one full rebuild establishes `source_roots ==
+[""]`, after which repeat root walks take the no-change path. **That is a
+DISCLOSED MIGRATION and must reach the CHANGELOG, not be found by a user whose
+first post-upgrade index is unexpectedly slow.**
+⚠ **It makes `_refresh_git_head_if_advanced` fire MORE OFTEN** (no-change runs
+finally happen), which is #493's ground from .285. Correct in `index_folder`
+precisely because that path walks the whole corpus — **verify in review, do not
+assume.**
+⚠ Measured by him: 5.0-5.7s -> 1.58s on 1,132 files / 9,926 symbols. **His
+machine, his number; do not transcribe as canonical.**
+⚠ **Droppable from the release if it needs care.** It is a PERFORMANCE fix — the
+index produced is correct, just rebuilt needlessly — and #447's SECURITY fix must
+not wait behind it.
+
 **2026-08-18: #495 (@rknighton) FIXED BY US via PR #503 — the guide advertised a
 tool the same process refuses to run.** Unreleased.
 ⚠⚠ **AT SHIPPED DEFAULTS, no config file and no env overrides.**
