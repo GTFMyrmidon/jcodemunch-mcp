@@ -327,6 +327,56 @@ compaction is near its floor; descriptions are untouched ground.
 a RESUMED conversation counts accumulated context on every step, so the total is
 dominated by how much the agent read early on, which compounds.
 
+**2026-08-18: #488 DECIDED BY JJG — OPTION A, "explicit config outranks the
+zero-config ONNX default", with disclosure.** NOT YET IMPLEMENTED; queued behind
+#495. `_detect_provider` will check `embed_model` / `JCODEMUNCH_EMBED_MODEL` and
+the cloud key pairs BEFORE returning `local_onnx` at priority 0, the result will
+name the active provider and why, and the `config.jsonc` comment gets corrected.
+⚠⚠ **This was only safe to decide because #500 shipped first.** Making explicit
+config win makes provider changes MORE frequent, and before #500 each one left
+the store holding two vector widths with the newer half silently excluded from
+search. **The migration hazard that looked like a cost of option A was a
+pre-existing defect option A would merely have made more likely to fire.**
+⚠ **Option C (local-only per #302) was REJECTED on a factual error in the
+report**: branches 1-3 are not vestigial, only SHADOWED, and only when
+`[local-embed]` is ALSO installed. `[semantic]` without `[local-embed]` uses
+branch 1 today and it works. **Say that to the reporter — their largest
+suggestion rests on it.**
+⚠ Disclosure is not optional in A: a caller whose provider changes needs to see
+`model_changed_from` / `rebuild_reason` (#500's fields) rather than discover a
+re-embed by watching the clock.
+
+**2026-08-18: #495 (@rknighton) FIXED BY US via PR #503 — the guide advertised a
+tool the same process refuses to run.** Unreleased.
+⚠⚠ **AT SHIPPED DEFAULTS, no config file and no env overrides.**
+`disabled_tools` ships `["test_summarizer"]` and
+`_generate_claude_md_snippet` walked a static constant, so the guide named it,
+`tools/list` omitted it, and `call_tool` rejected it before the handler ran.
+**Reachable out of the box is what makes this worth a release rather than a
+note.**
+⚠⚠ **THE FILTERING ALREADY EXISTED AND A SECOND GENERATOR WALKED AROUND IT** —
+`e086e9a` added it to `cli/init.py` for #242, and `server.py`'s generator never
+got it. **Reused `_get_active_tools`; a third copy is how the first two
+drifted.** Same shape as #491 (the guard existed, the call sites bypassed it) and
+the `src.jcodemunch_mcp` twin sweep.
+⚠ **Widened past the reporter's scope DELIBERATELY and said so on the PR**: they
+scoped to `disabled_tools` correctly (a profile-hidden tool stays dispatchable,
+so it costs context not failure), but the tool's own description promises to
+match "surface, tier and disabled_tools", and `tier` IS the profile. Filtering
+one and not the other leaves the description making a claim the code does not
+keep.
+⚠⚠ **`tests/test_config.py::test_generate_full_snippet` ASSERTED THAT EVERY
+CANONICAL TOOL NAME APPEARS, so it could only pass WHILE THE BUG EXISTED.**
+`test_summarizer` is canonical and disabled by default. **Third test this release
+found asserting the behaviour it should have prevented** (after
+`test_embed_drift.py`'s literal wording and my own two in #489). **When a fix
+turns an old test red, read whether the test was encoding the defect before
+"fixing" the code back.**
+⚠ `tests/test_guide_respects_disabled_tools.py` (9), 5 red pre-fix; the four
+constraints include a PIN ON `DEFAULTS["disabled_tools"]` so the issue's premise
+cannot silently change out from under the case.
+⚠ Suite: **7964 passed, 17 skipped, 0 failed** + ruff clean; +9 over .285's 7972.
+
 **2026-08-18: #489 (@pnm-jgb) FIXED BY US via PR #502 — the tool schema
 advertised three key-requiring providers and hid the free one.** Unreleased.
 ⚠⚠ **The `semantic` PARAMETER DESCRIPTION is the expensive site and the harm is
