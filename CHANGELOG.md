@@ -2,6 +2,73 @@
 
 ## [Unreleased]
 
+### A model change left the embedding store holding two vector widths (#500)
+
+`embed_repo` carried this comment for four releases:
+
+```python
+# Detect dimension mismatch — if the stored model differs, force a rebuild.
+stored_dim = emb_store.get_dimension()
+```
+
+**It implemented no such detection.** `stored_dim` was read only to seed `dim`,
+nothing compared the stored model against the active one, and `set_dimension`
+fired exclusively when `dim is None` — a first-ever embed. Only `task_type`
+forced a rebuild. So changing the embedding model wrote new-width vectors
+alongside the old ones behind a meta row still naming the first.
+
+⚠⚠ **The consequence is a recall failure that reads as a finding, and it
+compounds.** `EmbeddingMatrix` infers its dimension from the FIRST row and drops
+every row that disagrees. The inferred width follows the majority of
+pre-existing rows, so **every symbol embedded after the change is silently
+excluded from semantic search, and the gap grows with every new file.** Measured
+on a 7-symbol repo: store `{384: 6, 768: 1}`, meta reporting 384, one symbol
+excluded — and nothing anywhere said so.
+
+⚠ **No unusual configuration reaches it.** Installing `[local-embed]` on an
+install that used `embed_model`, uninstalling it, deleting the ONNX model
+directory, changing `embed_model`, or rotating a cloud key with a different
+`*_EMBED_MODEL` all swap the active provider on an existing store.
+
+⚠⚠ **The read path is NOT the defect and was left alone.** Excluding a
+mismatched row reaches the same answer `_cosine_similarity` gave before the
+matrix existed — `embedding_matrix._build` says so in a comment and is right.
+The defect is that a mixed store could come into existence at all. **Fixing the
+consumer would have hidden the producer.**
+
+`EmbeddingStore.get_model()` is added and compared against the active model; a
+difference forces the rebuild, and the result carries `model_changed_from` +
+`rebuild_reason` rather than performing an expensive re-embed silently.
+
+⚠ **Unknown is not a change.** A store written before the model name was
+persisted has no row, and forcing a rebuild on it would bill every existing user
+a full re-embed for a model that may be identical.
+
+⚠ **`stored_dim` is now cleared inside the `force` branch**, which also repairs
+the pre-existing `task_type` rebuild path: it cleared the store and then left
+`dim` seeded from the old value, so the `dim is None` gate never re-fired and
+the meta kept advertising the previous dimension and model against freshly
+written vectors.
+
+⚠ **`skipped_dim_mismatch` was computed, stored on the object and read NOWHERE**
+— `grep -rn skipped_dim_mismatch src/` returned only the three lines defining
+it. Stores already mixed stay mixed until the next model change or a forced
+re-embed, so `search_symbols` now reports `_meta.semantic_partial` and grades
+the semantic channel `partial`. **A count that exists and is discarded is the
+same defect as not counting.**
+
+⚠ **`evidence/capability.py` has called `get_model()` since v1.108.221 behind a
+`type: ignore` and a bare `except`**, so the capability certificate reported
+`model: "unknown"` for every repository. It resolves now — found by adding the
+method, not by reading the call site.
+
+⚠ `tests/test_embedding_model_change.py` (9), 8 red against the pre-fix tree.
+Two of those eight are constraints rather than evidence, red only because
+`get_model()` does not exist there; `test_re_embedding_the_same_model_does_not_rebuild`
+passes on both sides and is the control against turning the common path into a
+full re-embed on every call.
+
+
 ### `resolve_repo` no longer answers a repository question with a filesystem fact (#492, @rknighton)
 
 Fast path 1 matched on `source_root` containment alone, so a path inside an
