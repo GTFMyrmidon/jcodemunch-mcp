@@ -23,11 +23,25 @@ from jcodemunch_mcp import server
 
 
 def _advertised(snippet):
-    """Tool names the guide's `### All tools` block presents as callable."""
-    if "### All tools" not in snippet:
-        return set()
-    block = snippet.split("### All tools", 1)[1]
-    return set(re.findall(r"`([a-z_0-9]+)`", block))
+    """Every tool name the guide presents as callable, ANYWHERE in it.
+
+    ⚠⚠ #506: this used to split on `### All tools` and inspect only what
+    followed, so it could not see `### Quick start` — which #495's fix left
+    unfiltered, and which went on recommending a disabled tool. **A helper
+    scoped to the section the report happened to name cannot catch the section
+    it did not.** Scanning the whole document means a section added later is
+    covered on the commit that adds it.
+    """
+    return set(re.findall(r"`([a-z_0-9]+)`", snippet))
+
+
+def _quick_start(snippet):
+    """Just the `### Quick start` block, for assertions specific to it."""
+    if "### Quick start" not in snippet:
+        return ""
+    body = snippet.split("### Quick start", 1)[1]
+    nxt = re.search(r"\n### ", body)
+    return body[: nxt.start()] if nxt else body
 
 
 def _mounted():
@@ -157,3 +171,73 @@ class TestOneFilterNotThree:
                 f"{name}: guide={in_guide} cli_policy={in_cli} — the two "
                 "generators disagree on one config in one process"
             )
+
+
+class TestQuickStartIsFilteredToo:
+    """#506: `### Quick start` was six fixed strings that no filter reached.
+
+    ⚠ Reported by @rknighton against his own #495 — that report's reproduction
+    and acceptance criteria addressed `### All tools`, the fix landed there, and
+    this is the section it did not test.
+    """
+
+    QUICK_START_TOOLS = (
+        "list_repos", "index_folder", "index_repo",
+        "search_symbols", "get_context_bundle", "search_text",
+    )
+
+    @pytest.mark.parametrize("tool", QUICK_START_TOOLS)
+    def test_a_disabled_quick_start_tool_is_not_recommended(self, cfg, tool):
+        """Every name Quick Start uses, not just the reported one — none of the
+        six is in `_UNDISABLEABLE_TOOLS`, so any can be disabled."""
+        cfg["disabled_tools"] = [tool]
+        cfg["tool_profile"] = "full"
+
+        assert f"`{tool}`" not in _quick_start(
+            server._generate_claude_md_snippet()
+        ), f"Quick start still instructs the caller to run {tool!r}"
+
+    def test_nothing_disabled_leaves_quick_start_intact(self, cfg):
+        cfg["disabled_tools"] = []
+        cfg["tool_profile"] = "full"
+
+        block = _quick_start(server._generate_claude_md_snippet())
+
+        for tool in self.QUICK_START_TOOLS:
+            assert f"`{tool}`" in block
+        assert "1. " in block and "4. " in block
+
+    def test_the_remaining_steps_are_renumbered(self, cfg):
+        """Dropping a step must not leave a gap in the numbering."""
+        cfg["disabled_tools"] = ["search_symbols"]
+        cfg["tool_profile"] = "full"
+
+        block = _quick_start(server._generate_claude_md_snippet())
+        numbers = [int(m) for m in re.findall(r"^(\d+)\. ", block, re.M)]
+
+        assert numbers == list(range(1, len(numbers) + 1)), (
+            f"quick-start numbering has a gap: {numbers}"
+        )
+
+    def test_the_continuation_line_drops_only_what_is_disabled(self, cfg):
+        """`index_folder` and `index_repo` share one continuation line; losing
+        one must not orphan the line or take the other with it."""
+        cfg["disabled_tools"] = ["index_repo"]
+        cfg["tool_profile"] = "full"
+
+        block = _quick_start(server._generate_claude_md_snippet())
+
+        assert "`index_folder`" in block
+        assert "`index_repo`" not in block
+        assert "If not:" in block, "the continuation line was dropped entirely"
+
+    def test_the_continuation_line_goes_when_both_are_disabled(self, cfg):
+        cfg["disabled_tools"] = ["index_folder", "index_repo"]
+        cfg["tool_profile"] = "full"
+
+        block = _quick_start(server._generate_claude_md_snippet())
+
+        assert "If not:" not in block, (
+            "an empty 'If not:' line survived with nothing to offer"
+        )
+        assert "`list_repos`" in block, "the step itself should remain"
