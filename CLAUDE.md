@@ -346,6 +346,60 @@ suggestion rests on it.**
 `model_changed_from` / `rebuild_reason` (#500's fields) rather than discover a
 re-embed by watching the clock.
 
+**2026-08-19: #506/#507/#508/#509 (@rknighton) FIXED BY US via PRs #510/#511/#512.**
+All four were filed at 00:24-00:25 and every one probes a surface ADJACENT to
+something we shipped the day before. Unreleased.
+⚠⚠ **THE SAME SHAPE THREE TIMES IN THREE DAYS, and it is the reusable finding:
+we keep fixing the reported call site and leaving the mechanism.** #495 was a
+second GENERATOR carrying its own copy of the filter; #509 a second CALL SITE
+with its own containment check; #507 a second DERIVATION of the tool set. In
+each the fix is one sentence — **ask the authority instead of reproducing its
+logic** — and in each we had applied it only where it was reported.
+**#506** — v1.108.286 filtered `### All tools` and left `### Quick start` as six
+fixed strings no filter reached, so the guide could still instruct a caller to
+run a disabled tool. ⚠⚠ **The previous fix scoped to the reported SECTION, and
+so did its test**: `_advertised()` split on `### All tools` and inspected only
+what followed, so it could not observe this section and would not have observed
+the next. Now scans the whole document. Steps are DATA now, dropped whole and
+RENUMBERED, with the shared `index_folder`/`index_repo` continuation filtered
+per-tool.
+**#509** — `index_file` picked the deepest containing `source_root` with NO
+identity check, so a file from a nested independent clone was WRITTEN into the
+parent's index. ⚠ The check is **imported from `resolve_repo`, not copied** —
+which is the lesson AND which inherited #492's submodule boundary for free, so a
+submodule path still resolves to the parent (his Case 3, untouched). ⚠ The
+refusal NAMES the repository; falling through to "no indexed folder contains
+this path" was wrong on the facts and pointed at the wrong remedy.
+**#508** — `index_file` passes `repo=` to three config reads and nothing on that
+path ever called `load_project_config`, so the overlay was empty and all three
+resolved to GLOBAL config. ⚠⚠ **v1.108.286 threaded that keyword through six
+sites (#491) without checking anything loads what it reads. A parameter that is
+present and does nothing is indistinguishable from the defect it was added to
+fix.** ⚠ Fixed at the ENTRY POINT, not by lazy-loading inside `config.get()` —
+`load_project_config` does not cache a MISS, so a lazy load re-stats on every
+read for any repo without a project file, on the hottest function in the tree.
+**#507** — `_get_active_tools` rebuilt the active set from `tool_profile` + the
+baked `_PROFILE_TIERS`, missing three inputs `tools/list` reads: the SESSION tier
+override, `tool_tier_bundles`, and the `languages` gate on `search_columns`.
+Measured 70 / 15 / 1 unmounted names. ⚠⚠ **The session-override case needs NO
+configuration** — `announce_model` writes the session tier via
+`resolve_model_to_tier`, and `jcodemunch_guide` is in `_ALWAYS_PRESENT_TOOLS` so
+it stays reachable at every tier. ⚠ **Filtering is a SUBTRACTION**, so an empty
+or failed build returns `None` = do not filter: a policy naming a few
+unavailable tools beats a policy with no workflow left in it.
+⚠⚠ **`tests/test_path_entry_point_invariants.py` IS THE DELIVERABLE of that
+batch.** Written over the ENTRY POINTS rather than the two reported functions,
+with `resolve_repo` and `index_folder` as the PASSING CONTROLS in each pair —
+which is what proves an invariant achievable rather than aspirational. It read
+2 failed / 2 passed against the pre-fix tree. **Write the ratchet before
+concluding the reported list is the list** (#489 found 5 sites for a 3-site
+report the same way).
+⚠ **Two of my own guards matched PROSE, not code**: #507's first version matched
+the literal `_PROFILE_TIERS` and failed on the COMMENT explaining why the helper
+must not use it. Walk the AST — it cannot see comments. Same fix the `src.`
+twin-import guard needed.
+⚠ Suite: **7999 passed, 17 skipped, 0 failed** on `main` + ruff clean.
+
 **2026-08-18: #488 (@pnm-jgb) FIXED BY US via PR #505 — an explicit local model
 now outranks the zero-config default, and the NARROWING is the entry.**
 Unreleased.
@@ -1269,6 +1323,22 @@ inspected; the decision rests on none of it.
 **#381 (MCP Toplist badge) CLOSED by jjg** — 120 identical drive-by PRs from that
 author; the badge renders "Top 1% of 81,432", not the rank the PR body promised,
 and it is live third-party-controlled content in a README that also renders on PyPI.
+
+9. **When a fix turns an OLD test red, check whether that test was encoding the
+   defect before "fixing" the code back.** Four instances in one release cycle
+   (2026-08-18/19): `test_generate_full_snippet` required EVERY canonical tool
+   name to appear in the guide, so it could only pass while #495 existed;
+   `test_embed_drift` pinned a literal error wording, which is how that site kept
+   a stale copy through #489; `test_full_surface_still_honours_profile` asserted
+   equality with the baked `_PROFILE_TIERS`, which is #507's premise; and two of
+   my own in #489 asserted on the CONSTANT rather than the call site, so they
+   checked the fix instead of the site.
+   ⚠ **The tell is that the test states the mechanism rather than the outcome.**
+   "every canonical name appears", "equals the tier table", "the message is this
+   string" are all restatements of an implementation. "what it advertises is what
+   it will dispatch" is the property. ⚠ A red suite invites fixing the tests; run
+   the non-vacuity pass on the OLD test too — if it passes only against the
+   pre-fix tree, it was the defect's witness, not its guard.
 
 ## Issue + release policy (2026-07-28)
 
