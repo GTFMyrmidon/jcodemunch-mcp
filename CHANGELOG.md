@@ -2,6 +2,55 @@
 
 ## [Unreleased]
 
+### Both generated policies reconstructed the tool list instead of asking for it (#507, @rknighton)
+
+`_get_active_tools` rebuilt the active set from `tool_profile` and the baked
+`_PROFILE_TIERS`. `tools/list` is built by `_build_tools_list()` from three
+further inputs it never read:
+
+1. **the session tier override** — `set_tool_tier`, and also `announce_model`
+   via `resolve_model_to_tier`;
+2. **`tool_tier_bundles`**, which lets a user redefine what a tier contains;
+3. **the `languages` gate**, which drops `search_columns` when SQL is off.
+
+Two generators depend on it, so `jcodemunch_guide` and the CLAUDE.md that `init`
+writes could both name tools the server does not carry. Measured on one process:
+**70, 15 and 1** unmounted names for the three cases; all are 0 now.
+
+⚠⚠ **The first case needs no configuration at all.** `announce_model` writes the
+session tier, so an agent that announces a small model and then reads the guide
+arrives there without calling `set_tool_tier` — and `jcodemunch_guide` is in
+`_ALWAYS_PRESENT_TOOLS`, so it stays reachable at every tier. The other two are
+config-only and therefore reach `init`, whose output **is written into the
+user's CLAUDE.md and stays there.**
+
+The helper now asks `_build_tools_list()` rather than reproducing its logic.
+**This is the third instance of that shape in three days** — #495 was a second
+generator carrying its own copy of the filter, #509 a second call site with its
+own containment check, and this a second derivation of the tool set.
+
+⚠ **Filtering is a subtraction, so a wrong answer here removes guidance.** An
+empty or failed build returns `None`, meaning "do not filter": a policy naming a
+few unavailable tools is a smaller harm than a policy with no workflow left in
+it. Same shape as v1.108.209's rule that an unmeasurable comparison never
+answers `fresh`.
+
+⚠⚠ **`test_full_surface_still_honours_profile` asserted
+`active == set(_PROFILE_TIERS["core"])`** — the baked tier table, which was never
+what the server advertises, since `_ALWAYS_PRESENT_TOOLS` survives every tier.
+**It encoded the premise of the defect and could only pass while the helper
+reconstructed the answer.** It now compares against `_build_tools_list()`, and
+sets the config rather than monkeypatching `cfg.get` with a signature the real
+resolver does not have. **Fourth test this cycle found asserting the behaviour it
+should have prevented.**
+
+⚠ `tests/test_generated_policy_matches_tools_list.py` (8), 6 red against the
+pre-fix helper. ⚠ Its source-level guard walks the **AST**: the first version
+matched the literal string `_PROFILE_TIERS` and failed on the comment explaining
+why the helper must not use it — a guard that could not tell prose from code,
+the same fix the `src.` twin-import guard needed.
+
+
 ### `index_file` could write a file into another repository's index (#509, #508, @rknighton)
 
 Two defects on one path, both of them the *previous* fix stopping at the call
