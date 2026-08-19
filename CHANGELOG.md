@@ -47,6 +47,42 @@ nested independent repository must not be attributed to the enclosing parent by
 that accepts a path. `resolve_repo` and `index_folder` are the passing controls
 in each pair, which is what proves the invariant achievable rather than
 aspirational. **A third instance now fails on the commit that introduces it.**
+### `### Quick start` could still recommend a disabled tool (#506, @rknighton)
+
+v1.108.286 filtered the guide's `### All tools` list by `disabled_tools` and
+profile. **`### Quick start` was six fixed strings assembled afterwards, which no
+filter reached**, so with `search_text` disabled the guide still said, as a
+numbered instruction, to call it — and `call_tool` rejected it before the handler
+ran.
+
+⚠⚠ **This is the previous fix being scoped to the section that was reported
+rather than to the property.** #495's own diagnosis was "the filtering existed
+and a second generator walked around it"; #506 is the same sentence one level
+down — the filter existed and a second *section* was not behind it. **Fixing the
+reported instance and leaving an adjacent one with the identical defect is the
+failure mode this project keeps hitting, and it has now happened inside the fix
+for it.**
+
+Quick-start steps are data now, not literal lines. A step naming a tool that will
+not dispatch is dropped whole and the remainder **renumbered**, so the list never
+shows a gap. `index_folder` and `index_repo` share one continuation line and are
+filtered individually: disabling one keeps the other, disabling both drops the
+line rather than leaving a bare "If not:" with nothing to offer.
+
+⚠⚠ **The test helper was scoped the same way and that is the durable half.**
+`_advertised()` split the content at `### All tools` and inspected only what
+followed, so it could not observe this section and would not observe the next one
+either. It now scans the whole document, which satisfies the reporter's fourth
+criterion: **a section added outside that block is covered on the commit that
+adds it.**
+
+⚠ All six names Quick Start uses are parametrized, not just the reported
+`search_text` — none of them is in `_UNDISABLEABLE_TOOLS`, so any can be
+disabled.
+
+⚠ `tests/test_guide_respects_disabled_tools.py` grows to 19; the 8 new
+quick-start cases are red against v1.108.286 with #495's fix still in place, so
+they pin this gap specifically rather than the original defect.
 
 
 ## [1.108.286] - 2026-08-18 - Three surfaces that advertised a product we were not running
