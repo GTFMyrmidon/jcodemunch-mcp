@@ -2,6 +2,51 @@
 
 ## [Unreleased]
 
+### `index_file` could write a file into another repository's index (#509, #508, @rknighton)
+
+Two defects on one path, both of them the *previous* fix stopping at the call
+site that was reported.
+
+**#509 — containment is not identity.** `index_file` picked the deepest indexed
+`source_root` containing the requested file and never established that the file
+and that index were the same repository. `resolve_repo` stopped doing this in
+#492/v1.108.285; this path still did — and here the consequence is a **write**
+into an index built from a different repository with a different history, not
+merely a wrong read.
+
+⚠ The check is **imported** from `resolve_repo`, not reimplemented. Copying it is
+exactly how the two call sites diverged, and importing it also inherits #492's
+boundary for free: **a path inside a submodule still resolves to the parent**,
+because submodule content is indexed into the parent.
+
+⚠ The refusal names the repository. Falling through to "no indexed folder found
+that contains this path" would have been wrong on the facts — the parent index
+*does* contain it — and would send the caller to `index_folder` on the parent,
+which is the wrong remedy.
+
+**#508 — a keyword that was present and did nothing.** `index_file` passes
+`repo=` to `is_secret_file`, the context-provider gate and the language gate, but
+nothing on that path ever called `load_project_config`. `config.get(..., repo=)`
+reads an overlay only that function populates, so every one of those resolved to
+**global** config and the project's `.jcodemunch.jsonc` was inert.
+
+⚠⚠ **v1.108.286 threaded that keyword through six sites (#491) without checking
+anything loads the overlay it reads.** A parameter that is present and does
+nothing is indistinguishable from the defect it was added to fix.
+
+⚠ Fixed at the entry point rather than by lazy-loading inside `config.get()`.
+`load_project_config` does not cache a *miss*, so a lazy load would re-stat on
+every read for any repo without a project file — on the hottest function in the
+codebase. The entry point loads it once, and the ratchet below guards the rest.
+
+⚠⚠ **`tests/test_path_entry_point_invariants.py` is the point of this entry.**
+Both defects are the same shape reported twice, so the tests are written over
+the *entry points* rather than over the two reported functions: a path in a
+nested independent repository must not be attributed to the enclosing parent by
+**any** entry point, and a project-only setting must apply at **any** entry point
+that accepts a path. `resolve_repo` and `index_folder` are the passing controls
+in each pair, which is what proves the invariant achievable rather than
+aspirational. **A third instance now fails on the commit that introduces it.**
 ### `### Quick start` could still recommend a disabled tool (#506, @rknighton)
 
 v1.108.286 filtered the guide's `### All tools` list by `disabled_tools` and
