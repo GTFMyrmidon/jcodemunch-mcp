@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [1.108.287] - 2026-08-19 - Yesterday's fixes stopped where the reports did
+
+Four defects, all reported within a minute of each other, and every one probes a surface adjacent to something v1.108.286 shipped. A guide section the filter did not reach, a second call site with its own containment check, a keyword threaded onto a path that never loaded what it reads, and a second derivation of the tool list. Each fix is the same sentence — ask the authority instead of reproducing its logic — and each had been applied only where it was reported.
+
 ### Both generated policies reconstructed the tool list instead of asking for it (#507, @rknighton)
 
 `_get_active_tools` rebuilt the active set from `tool_profile` and the baked
