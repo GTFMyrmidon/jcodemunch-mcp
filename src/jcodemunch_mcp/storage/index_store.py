@@ -532,14 +532,9 @@ class IndexStore:
         Prevents path traversal when writing/reading cached raw files from
         untrusted repository paths.
         """
-        try:
-            base = content_dir.resolve()
-            candidate = (content_dir / relative_path).resolve()
-            if os.path.commonpath([str(base), str(candidate)]) != str(base):
-                return None
-            return candidate
-        except (OSError, ValueError):
-            return None
+        from ..security import resolve_within
+
+        return resolve_within(content_dir, relative_path)
 
     def _write_cached_text(self, path: Path, content: str) -> None:
         """Write cached text without newline translation."""
@@ -931,6 +926,16 @@ class IndexStore:
             return entry
         except Exception:
             return None
+
+    def list_source_roots(self) -> list[str]:
+        """Source roots only — no per-repo COUNT(*) scans (see sqlite_store).
+
+        Legacy JSON-only indexes are deliberately not consulted: reading a
+        whole manifest for one field is the cost this method exists to avoid,
+        and any load migrates them to SQLite anyway. Fail-open for consumers
+        (a missing root silences a nudge, never blocks).
+        """
+        return self._sqlite.list_source_roots()
 
     def list_repos(self) -> list[dict]:
         """List all indexed repositories (SQLite + legacy JSON)."""

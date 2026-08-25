@@ -575,6 +575,64 @@ functionally absent while still costing a schema, a 1.x compatibility promise,
 an output contract and a test matrix. #397 is the sharp end: generated
 `CLAUDE.md` named 25 tools against a server exposing 6.
 
+⚠⚠ **THE MODEL VENDOR NOW PUTS A NUMBER ON THE CATALOG-SIZE COST, AND WE ARE
+2-3x PAST IT** (recorded 2026-08-24 from Anthropic's [tool search
+docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool)):
+
+> "Claude's ability to pick the right tool degrades once you exceed **30-50
+> available tools**."
+
+`jcodemunch-mcp surface` on `full` reports **91 visible of 94**; the canonical
+`benchmarks/schema_baseline.json` puts that payload at **22,741 tokens**
+(`full_full`) against **939** for `counter`. Their "when to use tool search"
+list — 10+ tools, definitions over 10k tokens, a library that grows — describes
+this server exactly.
+
+⚠⚠ **THIS IS EVIDENCE FOR THE FREEZE, NOT AGAINST IT, AND IT IS THE FIRST
+EXTERNAL NUMBER WE HAVE.** Every argument to exit has so far been about whether
+`route` is good enough. This says the catalog is already past the size at which
+the MODEL's own selection degrades, independent of `route`. **A 92nd action
+makes the number worse on an axis the exit conditions do not measure at all.**
+
+⚠⚠ **AND IT DOES NOT TOUCH THE EXIT CONDITIONS — do not cite it as progress.**
+The headline "over 85 percent" reduction is a TOKEN figure over a five-server
+MCP setup. Our wall is that `route` scores **52.2% vs a 51.4% majority
+baseline** on agent wording, i.e. chance. Anyone quoting the 85% at this block
+is answering an accuracy question with a token number — the same category
+error as quoting 71.2% at the emitted distribution.
+
+⚠⚠ **CORRECTION, 2026-08-24, SAME DAY AS THE ENTRY ABOVE: this block first said
+their accuracy claim "carries no number". THAT WAS WRONG** — true of the tool
+search DOCS page, false of the [Advanced tool
+use](https://www.anthropic.com/engineering/advanced-tool-use) post it links,
+which reports tool-selection accuracy **49% -> 74% on Opus 4** and **79.5% ->
+88.1% on Opus 4.5** with tool search enabled, on "MCP evaluations". **Never
+argue from an absence of evidence you did not go looking for.**
+
+⚠⚠ **The verdict is unchanged and the REASON is now better.** It is not that
+they published no number; it is that **their number measures a different
+quantity**. Theirs is the MODEL's selection accuracy with a retrieval layer
+available versus all tools loaded — i.e. it prices the Counter's premise, and
+prices it favourably. Ours is `route`'s OWN rank-1 accuracy on agent-emitted
+wording, measured directly, and it sits at chance. **A vendor number showing
+that retrieval helps in general cannot substitute for our own measurement
+showing that OUR router does not.** Their corpus is unpublished, so it is not
+an instrument we can run either.
+
+⚠ **Read it as raising the value of the Counter, not as clearing `route`.**
+Those are separate claims and only the second is what conditions 1-3 gate.
+
+⚠ **Their 85% and our 95.9% have the SAME epistemic status**: each characterises
+one configuration, neither is a benchmark. Do not present theirs as validating
+ours, and do not let ours be read as competing with theirs.
+
+⚠ **The surface default is split and the distinction matters when quoting 91.**
+`init` writes `tool_surface: "counter"` on a genuinely first-ever install (3
+tools). The config template and the env fallback both resolve to `full`, so an
+upgraded install, or one with no config, serves all 91. **The 30-50 finding
+therefore applies to the carried-forward population, not to new installs** —
+which is an argument about the default, tracked separately from this freeze.
+
 **Exit conditions, named before the work** (same discipline as Arc 4's
 thresholds — neither side picks the bar after seeing results):
 
@@ -586,6 +644,317 @@ thresholds — neither side picks the bar after seeing results):
 by writing queries that paraphrase tool descriptions — the exact failure
 v1.108.218's target audit was run to avoid. Both move together or neither
 counts.
+
+⚠⚠ **CONDITIONS 1 AND 2 BOTH PASS TODAY AND THAT IS NOT CLEARANCE. READ THIS
+BEFORE CONCLUDING THE FREEZE CAN LIFT.** Measured 2026-08-21 on `main`:
+`route@1` = **71.2%** against the 60% bar, mean name leakage = **0.133** against
+the 0.15 ceiling. Both conditions as written are satisfied, and have been since
+v1.108.253.
+
+⚠ **The figure was 69.5% here for two weeks and that was a STALE ARTIFACT, not a
+measurement.** `results.json` had drifted from the code — descriptions moved, two
+queries changed rank, and nothing re-ran the harness. The verdict is unchanged
+(71.2 > 60), which is exactly why it went unnoticed.
+`tests/test_route_recall_artifacts_are_fresh.py` now fails when either artifact
+disagrees with a fresh run. **Maintenance Practice 4 says never hand-type a
+benchmark number; a number read out of a stale artifact is the same defect one
+level up.**
+
+**What the conditions did not anticipate is that they name a CORPUS as well as a
+bar.** `benchmarks/route_recall/queries.json` is human-phrased — the words a
+person types. `route` does not receive those words. It receives the `task`
+string an AGENT emits, and that is a different distribution.
+
+**Measured on the emitted distribution** (`emitted_task_results.json`, run
+2026-08-07, 40 cases sampled seed 421 from the non-pilot rows of
+`rknighton/jcm-route-benchmark-corpus` v0.1.0, MIT-0, so it does not overlap the
+corpus author's own pilot):
+
+| metric | `route@1` | blind floor | vs floor |
+| --- | ---: | ---: | ---: |
+| strict | 30.0% | 45.0% | **-15.0** |
+| exact | 55.0% | 80.0% | **-25.0** |
+| family | 60.0% | 95.0% | **-35.0** |
+
+**A result at or below its own floor is not routing** — a constant answer beats
+it. ⚠ **The floors differ sharply per metric, so no number here may be quoted
+against another metric's bar**, and none of them may be compared to the 60% in
+condition 1, which is a different corpus and a different measurement.
+
+⚠ **v1.108.253 answered the `@3` half and said so.** A content-search rule above
+the broad `find` trigger, plus that trigger now offering `search_text` as an
+appended alternate. On a held-out 20 the fix was never developed against,
+strict@3 went **20% -> 80% against a 70% floor**, and single-recommendation
+returns went 12 of 20 to zero. Human corpora did not regress. ⚠⚠ **`@1` did NOT
+improve and remains far below floor**, deliberately: the `search_text` /
+`search_symbols` split sits inside the labelling uncertainty the corpus author
+flagged himself, and reordering to chase it fits the sample rather than the
+intent.
+
+⚠⚠ **DECIDED 2026-08-20 BY JJG: THE THREE CONDITIONS STAND AS WRITTEN. NO
+FOURTH CONDITION.** A fourth for emitted-task `strict@1` was considered and
+REFUSED, and the reason is the sentence four paragraphs above: **neither side
+picks the bar after seeing results.** The case for adding one was real — the
+discovery was the wrong POPULATION rather than a disappointing number — and it
+was still refused, because "the measurement turned out to be of the wrong thing"
+is exactly what every post-hoc bar change sounds like from the inside. **A gate
+that can be amended once it is inconvenient is not a gate.**
+
+⚠⚠ **THE CONDITIONS ARE THEREFORE NECESSARY AND NOT SUFFICIENT, AND THIS BLOCK
+IS THE DISCLOSURE THAT MUST TRAVEL WITH THEM.** Quote it wherever they are
+cited. Meeting all three permits the freeze to lift; it does not establish that
+`route` selects well on the traffic it actually serves, and the table above is
+the evidence that it does not. **Anyone proposing to exit owes an argument about
+the emitted distribution, not a citation of 71.2%.**
+
+⚠⚠ **AND @3 IS NOT THE ESCAPE HATCH. Corrected 2026-08-21.** The emitted harness
+compared route's THREE guesses against a floor allowed ONE, and a comment in the
+script argued that this was the fair comparison. It is not, and it was wrong in
+route's favour. **A baseline gets as many guesses as the system it is the floor
+for.** Against the best constant 3-SET:
+
+| emitted, n=40 | route | best constant 3-set | delta |
+|---|---|---|---|
+| strict@3 | 62.5% | **92.5%** | **-30.0** |
+| exact@3 | 70.0% | **100%** | **-30.0** |
+| family@3 | 70.0% | **100%** | **-30.0** |
+
+`strict@3` moves from **+17.5** against the 1-set floor to **-30.0** against the
+k-matched one. **@3 does not rescue the emitted result; it deepens it.** Both
+floors are now emitted by the harness (`blind_floor_kset`, `vs_kset_floor_pts`)
+so neither can be re-derived by hand.
+
+⚠⚠ **THE EMITTED CORPUS CANNOT DISCRIMINATE A ROUTER FROM A FIXED LIST, and that
+is a property of the sample rather than a verdict on route.** Its best constant
+3-set scores **100% exact**. 40 cases, **6** distinct primary labels, **87.5%**
+in one family; the holdout is worse at 20 cases and **3** labels. A benchmark a
+constant answer saturates has no discriminative range left at that k.
+
+⚠ **The human corpus is a different instrument and route clears it decisively at
+BOTH k** — now that it reports a floor at all, which it did not until
+2026-08-21: `@1` 71.2% vs a 5.1% 1-set floor (**+66.1**), `@3` 86.4% vs a 13.6%
+3-set floor (**+72.8**). 59 queries, **69** distinct targets. **Do not read the
+emitted failure as "route does not route"; read it as "route does not route on
+agent wording".**
+
+⚠⚠ **THE OBJECTIVE, STATED PRECISELY.** Strip the degeneracy away and the
+emitted corpus is one decision: **87.5% of golds are `search_text` or
+`search_symbols`, split 18/17.** Majority-class baseline **51.4%**; route, on the
+cases where it lands in the pair at all, is **12/23 = 52.2%**. Chance. One rule
+— `/find|locate|where is|look up|search for|definition of/ -> search_symbols` —
+takes 21 of 35 rank-1 picks because agent tasks open with "find".
+
+**So the question is not `route@1` versus `route@3` over 91 actions. It is
+`P(correct | gold in {search_text, search_symbols})`, currently 52.2 against a
+51.4 chance line.** Anyone proposing to optimise route should say which of those
+two numbers they intend to move.
+
+⚠⚠ **AND MOST OF THAT DECISION DOES NOT NEED MAKING. Measured 2026-08-22, now
+emitted by the harness as `pair_availability`: on 25 of the 35 pair-gold cases
+(71.4%) route returns BOTH `search_text` and `search_symbols`.** Those are the
+same 25 where the gold action appears in the recommendation list at all. The
+caller therefore has both candidates in hand, and choosing between two returned
+options costs nothing.
+
+**That reframes 52.2%.** It is not "route gets a coin flip wrong". It is "route
+declines to break a tie it has already surfaced, and `@1` scores that as
+failure" — which is exactly the suspicion this block opened with: **`@1`
+penalises a router for being honest about ambiguity.**
+
+⚠⚠ **The residual is a DIFFERENT and LARGER failure.** In the other 10 cases
+neither search action was offered at all — route went to the wrong
+neighbourhood, not the wrong order:
+
+    gold=search_text     offered=[check_delete_safe, check_edit_safe, check_rename_safe]
+    gold=search_symbols  offered=[get_context_bundle, get_session_context, get_ranked_context]
+    gold=search_symbols  offered=[tune_weights, announce_model, find_implementations]
+
+**28.6% wrong neighbourhood versus 71.4% right-pair-wrong-order.** A single
+"within-family 52.2%" fuses the two and hides which one is worth work; no
+tie-break can fix the 28.6%.
+
+⚠ **Availability is computed over the SAME 3 actions the response carries**, not
+the untruncated internal ranking — crediting route with options the caller never
+saw would be measuring the wrong thing.
+
+**Consequence for H4** (the retrieval-outcome probe, the family's only survivor):
+its prize is re-ranking a pair the caller can already see, on 71.4% of the cases
+it targets. That is much smaller than the 52.2% figure suggests, and it was
+invisible from that figure alone. **The whole motivating gap is 52.2 vs 51.4 on
+23 cases.** Weigh a fresh corpus against that before building one; the last one
+was cancelled for less.
+
+⚠ **This also reframes why H1 and H2 died.** Both failed on COVERAGE — predicates
+firing on 5-15% of queries. But the decision that needs making is not spread
+across 91 actions; it is ONE binary that must be answered every time. **A
+predicate reaching 15% cannot move a decision required at 100%**, which is why
+purity was never the issue.
+
+**H3, untested and named here rather than started:** `search_symbols` matches
+symbol NAMES, `search_text` matches file CONTENT, so the discriminating fact is
+whether the sought thing IS a symbol name in this repo. That is absent from the
+query string — consistent with both refutations — and cheaply knowable from the
+index. **Its coverage is 100% by construction**, which is precisely the failure
+mode that killed H1 and H2. ⚠ It needs the 157 unused corpus rows sampled for
+PAIR BALANCE rather than uniformly (uniform sampling is what produced a corpus a
+constant list saturates), and the predicate declared before labels are read, same
+protocol as H1/H2.
+
+⚠⚠ **H3 WAS RUN AS A GROUNDED PILOT ON 2026-08-21 AND IS REFUTED.** 60 cases,
+balanced 30/30, three repos pinned at the SHAs in `benchmarks/tasks.json`,
+predicate registered before any case existed (`benchmarks/route_binary_pilot/`,
+and `git log` shows `predicate.py` preceding `cases.json`). Full vocabulary
+**53.3%** against a 50% floor, Wilson 95% **[40.9, 65.4]**, **p = 0.699**;
+ablating each target's own name parts returns **50.0%, p = 1.000**. Leakage
+existed (12 of 30 class-S tasks matched their own name) and bought nothing.
+
+⚠⚠ **The mechanism inverts the whole family. The predicate answered
+`search_symbols` on 58 of 60 tasks** — 100% of class S and **28 of 30 of class
+T** — because in a real repository the symbol vocabulary absorbs ordinary
+English. fastapi: 6,841 symbols to **4,303 matchable name parts**, and 14 of 16
+common English words tested are among them (`message`, `path`, `error`,
+`status`, `value`, `name`, `body`, `type`, `data`, `request`, ...). A membership
+test fires on nearly any sentence.
+
+| hypothesis | fires on | fails because |
+|---|---|---|
+| H1 identifier shape | ~15% | decides too few cases |
+| H2 imperative verb | ~5% | decides too few cases |
+| H3 vocabulary probe | **~97%** | decides them all the same way |
+
+⚠⚠ **COVERAGE WAS NEVER THE PROPERTY THAT MATTERED, AND H3 WAS ARGUED FOR ON
+EXACTLY THAT GROUND.** 100% coverage was necessary and not sufficient — the same
+shape as conditions 1 and 2 being met without clearing the freeze. The property
+all three lack is **separation**: a predicate must fire DIFFERENTLY on the two
+classes, and firing often is not firing differently. **Any future hypothesis
+should be screened on separation before anyone counts its coverage.**
+
+⚠⚠ **THE CORPUS PROJECT IS CANCELLED, which is what the pilot was for.** The
+protocol registered the asymmetry in advance: a negative is decisive. Building
+cases bound to real repositories with labels assigned by someone who can see them
+would have cost a project and hit the same wall, because the wall is not the
+corpus — it is that vocabulary membership does not separate these classes in any
+repository large enough to matter.
+
+⚠ **Not ruled out, and it must NOT be run on these 60 cases:** a probe keyed on
+retrieval OUTCOME rather than vocabulary membership — does `search_symbols`
+actually outrank `search_text` for this query against this index? That compares
+two scores instead of testing set membership, and index size does not trivially
+defeat it. **That is H4; this corpus is spent, and reusing it would be a fitting
+pass wearing an experiment's clothes.**
+
+⚠⚠ **H3 IS NOT RUNNABLE ON THIS CORPUS, AND THE BLOCKER KILLS THE WHOLE REMAINING
+HYPOTHESIS CLASS. Established 2026-08-21 before starting it.** The joint H1/H2
+finding says the information is not in the query string and points at a signal
+from OUTSIDE it — the repo, a first-pass retrieval, prior turns. **Every one of
+those needs context the corpus does not carry.**
+
+`emitted_task_cases.json` rows are
+`{case_id, candidate_rank, prompt_text, gold_primary, gold_alts, emitted_task}`.
+**There is no repository field**, and the tasks are heterogeneous by design:
+"this project", "our mod", "the capture button handler". Of the 35 pair-labelled
+cases, **4 name a resolvable repo.** There is nothing to index, so there is
+nothing to probe — and pointing the probe at one shared index would score
+accidental matches, not the property.
+
+⚠ The 157 unused rows do NOT fix this. They come from the same generator and are
+repo-less for the same reason. **"157 rows remain unused" is an asset only for
+hypotheses about the query STRING — which is exactly the class already refuted
+twice.** Do not cite the unused rows as readiness for an outside-the-string test.
+
+⚠ The source corpus (`rknighton/jcm-route-benchmark-corpus` v0.1.0, MIT-0,
+sha256 pinned in the artifact) is NOT vendored here, so even the string-only
+hypotheses need a fetch first.
+
+**What readiness costs, stated so the decision is priced rather than discovered:**
+a corpus where each case is bound to a REAL repository at a pinned commit, tasks
+generated against that repository, and gold labels assigned by someone who can
+see it. That is corpus construction, not an afternoon. Until it exists,
+`P(correct | gold in {search_text, search_symbols})` is a well-posed objective
+with **no instrument that can measure a repo-grounded answer to it.**
+
+⚠⚠ **This is the more useful half of the H3 work and it came from checking
+readiness instead of assuming it.** The previous entry read as "the next
+hypothesis is ready to run, 157 rows are waiting". It was not, and any of H3/H4/H5
+in the same family would have hit the identical wall after the setup cost.
+
+⚠ **This is deliberately the harder-to-abuse arrangement.** Under (b) the
+counter-evidence becomes a number to clear and then forget. Under (a) it stays a
+standing disclosure that has to be argued past every time.
+
+⚠⚠ **THE NAMED NEXT PIECE OF WORK WAS TESTED AND REFUTED, 2026-08-20. DO NOT
+BUILD IT.** v1.108.253 identified the missing rank-1 discriminator — "most
+likely 'does the task name an identifier-shaped token'" — and declined to guess
+without fresh data. It was measured instead of built:
+`benchmarks/route_recall/measure_route_discriminators.py`, artifact
+`route_discriminator_results.json`, over the same corpus digest the emitted-task run
+used.
+
+| sample | rule | majority floor | lift | coverage |
+| --- | ---: | ---: | ---: | ---: |
+| 164 raw prompts | 48.8% | 50.0% | **-1.2 pts** | 15% |
+| 35 emitted tasks | 60.0% | 51.4% | +8.6 pts | 14% |
+
+⚠ **The positive row is n=5.** Identifier-shape fires on five emitted tasks and
+gets four right. Under the null that is **p = 0.17** — a one-in-six coincidence,
+and one case flipping moves it twenty points. **The larger sample is the one to
+read, and there the rule is WORSE THAN A CONSTANT ANSWER.**
+
+⚠⚠ **COVERAGE IS THE FINDING, AND IT KILLS THE IDEA EVEN AT PERFECT PURITY.**
+The predicate fires on ~15% of family cases either way, so **the 85% residue —
+at 51-57% purity, which is the coin flip we started with — is untouched by any
+version of this rule.** A discriminator that cannot reach the majority case is
+not a discriminator for this problem. ⚠ Per-pattern breakdown is in the artifact
+and nothing survives: `snake_case` 3/6, `PascalCase` 7/13, `camelCase` 1/3.
+**Seven patterns were tested on one sample, so expect one to look good by
+chance; none is a finding.**
+
+⚠ **The predicate is declared in the script ABOVE the point labels are read**,
+and that ordering is the only thing separating this from a search for a pattern
+that fits. Anyone re-testing a discriminator hypothesis here does the same or the
+result means nothing.
+
+⚠⚠ **THE VERB HYPOTHESIS WAS TESTED THE SAME DAY AND ALSO REFUTED.** "Where is
+X defined" against "everywhere X appears", predicate declared before labels,
+same script and artifact (H2).
+
+| sample | rule | floor | lift | coverage |
+| --- | ---: | ---: | ---: | ---: |
+| 35 emitted tasks | 48.6% | 51.4% | **-2.9 pts** | 14% |
+| 164 raw prompts | 51.2% | 50.0% | +1.2 pts | **5%** |
+
+⚠⚠ **On emitted tasks the sign is BACKWARDS, not merely absent**: the
+`definition` bucket is **1 `search_symbols` / 4 `search_text`.** n=5, so
+directional rather than proven — but the mechanism is plausible and worth
+stating. **A request that names what it wants DESCRIPTIVELY — "the function that
+parses config" — gives a symbol-name index nothing to match**, so descriptive
+definition-seeking favours `search_text`. The hypothesis assumed the opposite.
+⚠ `occurrence` fires **once in 164 prompts**, partly because .253's content rule
+already covers that phrasing and partly because people do not talk that way.
+
+⚠⚠ **THE JOINT FINDING IS WORTH MORE THAN EITHER REFUTATION: BOTH FAIL ON
+COVERAGE, NOT PURITY.** H1 fires on ~15% of cases, H2 on 5-14%, and in both the
+untouched residue sits at ~50% purity. **Two independent properties of the query
+TEXT, each absent from 85-95% of real requests.** That is not two unlucky
+guesses; it is evidence that **the information needed to route these requests is
+not in the query string at all.** A third text-feature hypothesis should expect
+the same result. ⚠ What is NOT ruled out is a signal from OUTSIDE the string —
+the repository, a first-pass retrieval, or the caller's prior turns.
+
+⚠ **The rows survive both tests.** Each predicate was declared before labels and
+run ONCE; nothing was fitted, so the corpus retains its value for the next
+hypothesis. **A tuning pass would have spent it.**
+⚠⚠ **The likelier reading is that .253 was right on the merits: "find X" is
+genuinely undecidable without more signal.** `route` returns 2-3 candidates on 38
+of 40 cases BY DESIGN, and `strict@3` is 80% against a 70% floor. **`@1` is the
+metric that penalises a router for being honest about ambiguity** — a perfectly
+calibrated one that says "it is one of these two" scores zero on it. Decide
+whether `@1` is the objective before optimising it.
+
+⚠ **157 corpus rows remain unused** (197 minus the 40 sampled) and the author's
+standing offer on #422 holds: *"willing, but do not wait on me... if you or
+anyone else wants to run it, take it."* **That data is still there for the next
+hypothesis; it has now answered this one.**
 
 ⚠ **Progress is measured from 45.8, never from 42.4.** The 3.4-point move
 between them was v1.108.218's corpus correction, not routing work. A reader who
@@ -606,10 +975,25 @@ sound thorough.
 
 **The fastest way out** is route-recall work.
 `benchmarks/route_recall/explain_misses.py` prints the live defect list with
-each miss labelled by the gate that caused it: as of v1.108.218, 7
-`rule_preempted` (a curated rule claims the query and the right action is never
-scored — ranking work cannot touch these) and 8 `no_lexical_overlap` (zero
-shared tokens; unreachable at any weight).
+each miss labelled by the gate that caused it. ⚠ **RUN IT; do not quote from
+here.** The composition has changed twice since this line was written and the
+buckets are not stable across releases.
+
+Measured 2026-08-20 on `main`: **11 misses, 3 `rule_preempted` and 8
+`ranked_below_cutoff`.** Only the second bucket is reachable by ranking work —
+`rule_preempted` means a curated rule claimed the query and the right action was
+NEVER SCORED. ⚠ The v1.108.218 line this replaces read 7 `rule_preempted` and 8
+`no_lexical_overlap`, and **`no_lexical_overlap` is now empty**, so a reader
+working from the old figures would have gone looking for a bucket that no longer
+exists.
+
+⚠ Three of the current misses are one query — *"is this name used anywhere at
+all or can I drop it"* — claimed by `search_text` while wanting
+`check_delete_safe`, `check_references` and `find_references`. ⚠⚠ **The severe
+ones are not near-misses:** `get_churn_rate` at **rank 16**,
+`get_dependency_graph` at **rank 17**, `register_edit` at **rank 34**. ⚠ And
+*"I just edited a file, refresh it"* loses `index_file` at rank 5 to
+`get_file_risk` — about as common an intent as this tool has.
 
 ---
 
@@ -1173,6 +1557,74 @@ alongside the two defects that shipped as v1.108.269. Parked here rather than
 left open per the standing rule that an issue opens when work starts or a user is
 blocked; accepted design with no start date is a plan. #429's close comment
 points here, so the promise that this is tracked resolves to a real entry.
+
+---
+
+## `input_examples` — INVESTIGATED AND DECLINED, 2026-08-24 (NEGATIVE result)
+
+⚠⚠ **Not an accepted entry.** The Conventions below say a rejected proposal
+gets a closed issue, not a roadmap line. This is here anyway because the thing
+worth preserving is a **measurement plus a blocker**, and a closed issue is not
+where anyone looks before asking "why don't we ship tool-use examples?" — the
+same reason the `codex_surface` negative lives in `CLAUDE.md`. It is filed as a
+finding, and it carries the condition that would reopen it.
+
+**The prompt.** Anthropic's [Advanced tool
+use](https://www.anthropic.com/engineering/advanced-tool-use) reports
+`input_examples` improving accuracy **72% -> 90%** on complex tasks. We already
+curate 32 example argument objects in `counter.EXAMPLES`, consumed today only
+by `menu` rows and `route`'s `args_template`. The raw material exists.
+
+**What was measured** (bytes/4, the estimator `jcodemunch-mcp surface` uses):
+
+| | |
+|---|---:|
+| catalog tools | 94 |
+| with a curated example | **32 (34%)** |
+| schema tokens, no examples | 27,474 |
+| schema tokens, + examples | 28,029 |
+| delta | **+555 (2.0%)** |
+| per covered tool | +17.3 |
+| resident set of 5, under deferral | **+62** |
+
+⚠ **The token objection is dead** and should not be raised again. 2.0% overall,
+and consistent with the vendor's own "~20-50 tokens for simple examples".
+
+⚠⚠ **THE BLOCKER IS THAT THE FIELD DOES NOT EXIST FOR US.** `input_examples` is
+an Anthropic **API** field on user-defined tool definitions. The MCP `Tool`
+type has no such field — `name`, `title`, `description`, `inputSchema`,
+`outputSchema`, `icons`, `annotations`, `meta`, `execution`, and nothing else.
+The connector builds tool definitions from our `tools/list`, and no
+documentation maps a non-standard field through.
+
+⚠⚠ **MCP's model allows extras, so we COULD attach it, and that is the trap.**
+The docs state: *"Each example must be valid according to the tool's
+`input_schema`. Invalid examples return a 400 error."* So the downside of
+betting on undocumented behaviour is not "no benefit" — it is **a 400 that
+breaks the user's session**. Unverifiable upside against a session-breaking
+downside is the wrong trade.
+
+⚠ **There IS an available route, and it is NOT this feature.** The tool-use
+system prompt embeds `{{ TOOL DEFINITIONS IN JSON SCHEMA }}` and our
+`inputSchema` passes through verbatim, so the standard JSON Schema `examples`
+keyword reaches the model on every host with no connector support. **Do not
+claim the 72% -> 90% figure for it** — different mechanism, same category error
+as quoting a token figure at an accuracy question. It also collides with the
+hard **4,000-token `core_compact` ceiling**, which currently has about ten
+tokens of slack.
+
+⚠ **Order of levers, from the vendor's own page**: *"Provide extremely detailed
+descriptions. This is by far the most important factor... Prioritize
+descriptions, but consider `input_examples` for complex tools."* Descriptions
+are first-order and we already gate them (`tests/test_description_smells.py`).
+
+### What would reopen this
+
+A **wire test**, and nothing short of it: attach examples, serve over
+`streamable-http`, run a real request through the MCP connector, and read back
+whether the constructed tool definitions carry them. That needs a deployed HTTP
+endpoint and API credits. **Until someone has run that, "the connector might
+pass it through" is a guess, and this entry stays closed.**
 
 ---
 

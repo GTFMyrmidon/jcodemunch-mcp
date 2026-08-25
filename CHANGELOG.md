@@ -2,6 +2,1274 @@
 
 ## [Unreleased]
 
+## [1.108.296] - 2026-08-24 - Four ways a guard can be present without working
+
+### Added - `investigate_reuse_before_write`, and four ways a guard can be present without working
+
+`src/jcodemunch_mcp/investigator/reuse_audit.py`, in the idiom of
+`deletion_safety`: proof obligations, tri-state statuses, and one `_verdict`
+that is the only place a conclusion may be drawn. The claim under test is
+"Nothing in <repo> already implements <intent>, so writing it new is
+justified." Verdicts: `reuse_available` / `adapt_candidate` / `write_justified`
+/ `lexical_only` / `not_established`.
+
+The generation-time failure is the mirror of the deletion-time one. An agent
+about to write a date formatter has every tool it needs to find
+`formatIsoDate` and does not look, because nothing raised the obligation. The
+cost is not the tokens spent writing it, it is that the repository now has two.
+
+⚠⚠ **`lexical_only` is the reason this is not a search wrapper.** An intent of
+"modal" shares no token with an existing `Dialog`, so only the embedding
+channel can connect them. A checker that reports "nothing matches" identically
+whether or not it could see synonyms is wrong exactly when the writer most
+needs it to be right, so an unavailable semantic channel goes UNESTABLISHED and
+the verdict degrades instead of licensing a write. The two ways it goes dark
+get opposite advice: `pip install` is wrong for a repo that has an encoder and
+was never embedded, `embed_repo` is wrong for one embedded by a provider that
+is no longer installed.
+
+⚠ **A dead match is not a reuse candidate.** Pointing a writer at an
+unreferenced helper does not prevent duplication, it doubles the dead code, and
+it is the failure a keyword matcher cannot detect because the match looks
+identical either way. Liveness is established per candidate and is tri-state:
+`live is None` blocks rather than permits.
+
+**The module was written in one pass and never executed past import. Four
+defects fell out of running it, and three of them are the same shape -- a check
+that could not observe the thing it claimed to check.**
+
+**(1) Every candidate scored 0.0.** `search_symbols` emits `score` on a result
+row ONLY under `debug=True`; without it `_squash` returned 0.0 for every row,
+`strong` and `partial` were empty BY CONSTRUCTION, and `strong_match` /
+`adapt_floor` were parameters that graded nothing. ⚠⚠ **Every verdict rode on
+obligation status alone, and the payload published a `match_strength` field
+that was always zero.** Cost of the fix, measured on this repository's index:
+a debug sweep is ~25 ms against ~0.5 ms for a cache hit and ~1.7 s for the cold
+miss -- so the price is the result cache, not the `_bm25_breakdown` the debug
+path also computes. ⚠ Losing that cache is correct rather than incidental: of
+the three result-cache consumers only `search_symbols` revalidates, and an
+absence claim replayed from a cached row is the exact shape #377 item 3 exists
+to refuse.
+
+**(2) `write_justified` was unreachable.** `_absence_blockers` sampled the
+.db-rewritten probe AFTER the scan, and our own semantic channel MOVES the
+mtime that probe compares -- the embedding read opens a read-write connection,
+which runs PRAGMA and CREATE TABLE and touches the file. ⚠⚠ **So on every run
+in which the synonym channel was available, the module reported "the index was
+rewritten while this scan ran" about a rewrite it had performed itself, and
+downgraded the one verdict that requires that channel.** The probe is now
+sampled before any channel runs. That is not a relaxed guard: a file mtime
+stands in for "rows were rewritten", our own connection is a known false
+positive for it, and excluding a known false positive repairs the proxy rather
+than weakening it. What the earlier sample can and cannot see is stated in
+`_meta.rewrite_probe` rather than left to be inferred.
+
+**(3) UNKNOWN collapsed into SATISFIED in the one obligation that exists to
+prevent it.** `EmbeddingStore.has_any()` is tri-state and `None` means
+could-not-establish -- a locked file, a corrupt page, a permission error. The
+`None` case fell through to "used", ran a semantic search with nothing to
+search, and SATISFIED the obligation off an empty result indistinguishable from
+a clean sweep.
+
+**(4) A refutation backed only by dead code read as a reuse instruction.** A
+name twin that is itself unreferenced refuted `no_name_twin` and returned
+`reuse_available`, i.e. advice to depend on dead code. It now yields
+`adapt_candidate`, the symbols surface under `dead_matches`, and the
+recommendation names the revive-or-delete decision. ⚠ It is ordered ahead of
+the absence blockers deliberately: this is not an absence claim, we found the
+thing, and an index that cannot prove absence can still show a positive hit.
+
+⚠ **`_STRONG_MATCH = 0.80` and `_ADAPT_FLOOR = 0.55` remain seeded, not
+calibrated, and that is now a recorded decision rather than an unexamined
+default.** Acceptable because both buckets are returned with their evidence
+either way, so the thresholds pick presentation rather than deciding on the
+caller's behalf, and because they are parameters a repo can move without
+editing the file. ⚠⚠ **Nobody could have had grounded confidence in them before
+this release, because defect (1) meant they had never once been evaluated
+against a non-zero score.** Calibrating them needs a labelled corpus of
+intent-to-symbol pairs across real repositories at pinned commits -- corpus
+construction, the same wall the route work hit, not an afternoon.
+
+⚠ **NOT exposed as an MCP tool.** The catalog moratorium blocks a 92nd action
+until control-subset route@1 clears 55.0%; measured at 40.0% (n=20). An action
+the router would not propose is functionally absent however good it is, so
+exposing it is a separate decision from writing it -- the same call already
+recorded for `investigate_deletion_safety` and `explain_route`. Registered in
+`WITHHELD` in `tests/test_catalog_moratorium.py`, which asserts both that it is
+absent from the catalog and that it still imports: the moratorium withholds a
+SURFACE, never a capability.
+
+`tests/test_reuse_audit.py`, 50 tests. Each of the four fixes was run against
+the reintroduced defect, not only against the fixed tree. ⚠⚠ **One of those
+passes caught a vacuous test of my own**: the end-to-end version of the
+sample-point test used a semantic stand-in that returned rows without opening
+the database, so it never moved the mtime and passed against the defect --
+a mock broad enough to satisfy the assertion bypassing what the assertion was
+about. It is now an ordering assertion plus a sibling that moves the mtime for
+real.
+
+### Fixed - the moratorium guard raised `NameError` instead of explaining itself
+
+`tests/test_catalog_moratorium.py` interpolated `EXIT_ROUTE_AT_1` and
+`EXIT_BASELINE_ROUTE_AT_1` into the ceiling assert's message. Both were renamed
+to `EXIT_CONTROL_AT_1` / `EXIT_BASELINE_CONTROL_AT_1` when the gate moved to
+the control subset, so the message raised `NameError` while being built -- on
+the exact path a contributor hits when they add a 92nd action, replacing the
+policy explanation with a traceback. ⚠ Message text is only reached on failure,
+so a green suite proves nothing about it; verified by forcing the ceiling and
+reading the rendered line.
+
+
+### Docs - `input_examples` investigated and declined, recorded as a negative result
+
+Anthropic's [Advanced tool
+use](https://www.anthropic.com/engineering/advanced-tool-use) reports
+`input_examples` improving accuracy **72% → 90%**, and we already curate 32
+example argument objects in `counter.EXAMPLES` that only `menu` and `route`
+consume. Spiked; not shipping.
+
+⚠ **The token objection is dead** — measured at **+555 tokens, 2.0%** across
+the catalog, **+62** for the five-tool resident set under deferral, consistent
+with the vendor's "~20–50 tokens for simple examples". It should not be raised
+again.
+
+⚠⚠ **The blocker is that the field does not exist for us.** `input_examples` is
+an Anthropic **API** field on user-defined tool definitions; the MCP `Tool`
+type has no such field, and nothing documents the connector mapping a
+non-standard one through. MCP allows extras so we *could* attach it — and that
+is the trap, because an invalid example is documented to return **a 400**, so
+the downside of betting on undocumented behaviour is a broken session rather
+than merely no benefit.
+
+⚠ A route does exist and is **not** this feature: the standard JSON Schema
+`examples` keyword rides inside `inputSchema`, which passes through verbatim.
+Do not claim the 72% → 90% figure for it — different mechanism, and the same
+category error as quoting a token figure at an accuracy question. It also
+collides with the hard 4,000-token `core_compact` ceiling.
+
+Recorded in `ROADMAP.md` with the condition that would reopen it (a wire test
+through the MCP connector, which needs a deployed HTTP endpoint and credits),
+and explicitly marked as not an accepted entry, since the file's own
+conventions send rejected proposals to a closed issue.
+
+### Docs - correcting an argument from absence, made the same day it shipped
+
+1.108.295 recorded the vendor's 30–50 tool degradation threshold beside the
+catalog moratorium, guarded with the claim that **"their accuracy claim carries
+no number."** That was **wrong**. It was true of the tool search docs page and
+false of the [Advanced tool
+use](https://www.anthropic.com/engineering/advanced-tool-use) post that page
+links, which reports tool-selection accuracy **49% → 74% on Opus 4** and
+**79.5% → 88.1% on Opus 4.5** with tool search enabled, on "MCP evaluations".
+
+⚠⚠ **The lesson is the shape of the error, not the number: never argue from an
+absence of evidence you did not go looking for.** One page said "stays high"
+and I read that as nothing published, without following the link it sat next to.
+
+⚠⚠ **The verdict on the moratorium is UNCHANGED and its reason is now
+stronger.** It is not that they published no number — it is that **their number
+measures a different quantity**. Theirs is the MODEL's selection accuracy with
+a retrieval layer available versus all tools loaded, which prices the Counter's
+premise and prices it favourably. Ours is `route`'s own rank-1 accuracy on
+agent-emitted wording, measured directly, sitting at chance (52.2% against a
+51.4% majority baseline). A vendor result showing retrieval helps in general
+cannot stand in for our own measurement showing that *our* router does not, and
+their corpus is unpublished, so it is not an instrument we can run.
+
+⚠ Read it as raising the value of the Counter, not as clearing `route`. Those
+are separate claims and only the second is what the exit conditions gate.
+
+⚠ The 1.108.295 CHANGELOG entry is struck through in place rather than
+rewritten, so the history shows both what shipped and that it was corrected.
+
+## [1.108.295] - 2026-08-24 - What the guard could not see
+
+### Fixed - `_build`, the third spelling of a build tree
+
+`build` and `.build` were both excluded from indexing. `_build` was not — and
+that is the spelling **Elixir/Mix, Sphinx and Dune** use. We index Elixir.
+
+⚠⚠ **This is the same defect as `backup`/`old`/`archive` (v1.108.234), not a new
+one.** `mix` copies dependency **sources** into `_build`, so an Elixir project
+indexed here got every dependency symbol twice and the copies then competed
+with the originals in ranking — the exact outcome the .234 entry describes. The
+only reason it survived is that nobody wrote down the third spelling.
+
+⚠ **Bounded, and listed anyway.** `_build/` is in the standard Elixir
+`.gitignore` and gitignore is honoured, so this bites a project without one or
+indexed outside git. `build/` is in that same `.gitignore` and has been
+excluded since the beginning; the argument for one is the argument for the
+other.
+
+⚠ Reaches both derived exports — `SKIP_DIRECTORIES` (the local walk) and
+`SKIP_PATTERNS` (the GitHub indexer) — because it was added to the canonical
+list rather than to either export. Still overridable per-project via
+`exclude_skip_directories`, which matters because these are ordinary words that
+can name a real package.
+
+⚠ Found by reading Graft's fix titles against our tree
+(`fix(ingest): skip _build, the underscore spelling of a build tree`). Third
+time that probe has paid, after the Gini double-count and the byte-mass basis.
+`tests/test_build_tree_spellings.py` asserts the property across every spelling
+rather than pinning the list; verified by removing `_build` again and watching
+only its three assertions fail.
+
+### Fixed - a strict deny now requires a target the hook can resolve (#541)
+
+Two blindnesses in the same guard, found in ordinary use of the
+`Read|Grep|Glob|Bash` matcher rather than by looking for them. Both only bite
+`JCODEMUNCH_ENFORCE=strict`, where the cost is blocked work; advisory (the
+default) got one extra nudge.
+
+**1. Shell expansions.** `_bash_targets_outside_roots` reads path tokens out of
+the raw command string, so it cannot see `$B`, `${B}`, `$HOME`, `$(...)` or
+backticks. Overlap is then judged on `cwd`, which is the indexed repo, so it
+denied. ⚠⚠ **The reported pair: `grep ~/x.md` allowed, `grep $HOME/x.md`
+denied — same destination, opposite verdicts.**
+
+⚠ Not a regex gap to close: the hook cannot know what `$B` holds and guessing
+is worse than not looking. **A deny now requires a resolvable target**, which
+is the caution already applied everywhere else in that function (`find` is
+never deniable, a pipeline is never denied, `../` returns silent). It
+downgrades to a nudge rather than to silence — a wrong nudge is a sentence of
+text, a wrong deny is blocked work.
+
+⚠⚠ **The detector is deliberately not a bare `\$`.** A trailing `$` is a regex
+end-anchor and `grep -n "foo$" src/` is idiomatic; suppressing on any `$` would
+stop denying one of the commonest in-repo searches and quietly weaken the
+enforcement a strict user opted into. Requiring a name char, `{` or `(` after
+the `$` separates an expansion from an anchor.
+
+**2. Windows absolute paths — surfaced BY the test for the first half.**
+`_BASH_PATH_TOKEN_RE` recognised only POSIX-style roots, so `/c/Users/j/x.md`
+(git-bash) was seen and **`C:/Users/j/x.md` was not**. ⚠⚠ **A strict deny fired
+on a search targeting a path outside every indexed root, on the platform most
+of this project's users are on, and the verdict depended on how the user
+spelled the drive.** Unlike a `$VAR` this is genuinely resolvable, so it gets a
+real fix rather than a downgrade: the token regex now matches `C:/…`, `C:\…`
+and a leading quote. A quoted path containing a space still captures only its
+first segment, which resolves to "not inside any root" and therefore errs
+toward allowing.
+
+⚠ `tests/test_strict_deny_requires_resolvable_target.py` asserts outcomes both
+ways — the outside cases must not deny, and the in-repo cases (including regex
+end-anchors and a drive-letter path inside the repo) must still deny, which is
+what stops either fix from becoming a strict-mode regression. Verified by
+reintroducing each defect separately: each fails only its own half.
+
+⚠ Hermetic by construction. The first draft resolved the real index and
+reported **11 skipped** under conftest's `CODE_INDEX_PATH` isolation — a file
+announcing success while checking nothing, which is the v1.108.293 defect class
+in a new costume. It now owns its roots via `monkeypatch`.
+
+The matcher that surfaced this is @marcelruhf's from
+[#535](https://github.com/jgravelle/jcodemunch-mcp/pull/535); the guard it
+slipped past already handled four other shapes correctly.
+
+### Fixed - a cache hit-rate that counted key-presence as validity
+
+`analyze_perf` published `hit_rate` bare. A "hit" is key-presence in the
+256-entry session LRU, which measures how often the cache **answered** and says
+nothing about whether the answer still described the index.
+
+⚠⚠ **arXiv:2608.20280 measured this exact gap on semantic caches: raw hit rates
+of 51-60% fell to quality-adjusted rates of 1.1-2.2% once validity was
+checked.** Publishing the raw number as a performance result is the defect that
+paper names, and we were publishing it with no basis label at all.
+
+⚠⚠ **The system already knew the difference; the metric did not.** `#377 item 3`
+revalidates a cached ABSENCE against `subject_state` before it stays citable,
+and `#404` re-annotates row freshness when the subject moved. So one hit can be
+known-fresh, another known-stale-but-still-served, and both were reported as one
+undifferentiated number.
+
+⚠ **The raw rate is KEPT and now carries `hit_rate_basis: "raw_key_presence"`.**
+It answers a real question; replacing it would trade one misleading number for
+another. What changes is that it cannot be read alone. Beside it:
+`hits_validated_fresh`, `hits_validated_stale`, `hits_unvalidated`,
+`hit_rate_revalidated`, `validated_share`, per-tool and in total.
+
+⚠⚠ **Three buckets, not two, and `hit_rate_revalidated` is `None` rather than
+`0.0` when nothing was validated** — a could-not-establish must not render as a
+measurement. Of the three result-cache consumers only `search_symbols`
+revalidates; `find_references` and `get_blast_radius` serve cached entries with
+no check, so `hits_unvalidated` is non-empty by construction. Folding it into
+either real bucket would be inventing data, the same rule `ledger_trust`
+applies to unseparable ledger rows.
+
+⚠ **Invalidation is process-local and that is why this matters here.** The five
+invalidation sites fire only for index-mutating tools in *this* process, so the
+PostToolUse `index-file` spawn, the watcher, `refresh`, and a second server
+instance all move the index without the cache hearing about it. Reporting is
+best-effort and wrapped: a telemetry failure can never affect an answer.
+
+⚠ Found in the 2026-08-24 token-cost radar. `tests/test_cache_hit_rate_basis.py`
+asserts the outcome at the surface that reports to a user, verified by
+reintroducing both defects — folding unknown into fresh, and republishing the
+raw rate bare — and watching exactly their own guards fail.
+
+### Docs - deferring our schemas via Anthropic tool search, and a catalog-size number from the vendor
+
+README gains a section on keeping jCodeMunch's tool schemas out of the context
+prefix using [tool search](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool).
+⚠ For an MCP server you do **not** set `defer_loading` per tool — it goes once
+on the `mcp_toolset` entry's `default_config`, with per-tool `configs`
+overriding it. The snippet keeps `resolve_repo` / `search_symbols` /
+`get_ranked_context` resident, which is Anthropic's own 3–5-resident-tools
+advice. ⚠ Both halves of the connector are required and the beta header is
+named, because the `tools`-only form is a validation error; and the connector
+is URL-based, so this is for `sse` / `streamable-http`, not default stdio.
+⚠ Deferred definitions are excluded from the prefix and appended as
+`tool_reference` blocks, so **prompt caching is preserved** — worth stating,
+since a dynamic tool list normally invalidates it.
+
+ROADMAP records a number beside the catalog moratorium:
+
+> "Claude's ability to pick the right tool degrades once you exceed **30–50
+> available tools**."
+
+⚠⚠ **We serve 91 on `full` and that is 2–3x past it** — the first EXTERNAL
+evidence for the freeze, and it is on an axis the exit conditions do not
+measure. Every prior argument has been about whether `route` is good enough;
+this says the catalog is already past where the *model's* selection degrades,
+independent of `route`. ⚠⚠ **It moves conditions 1–3 in neither direction and
+must not be cited as progress**: the "over 85 percent" headline is a TOKEN
+figure over a five-server setup, ~~their accuracy claim carries no number~~
+[**corrected 2026-08-24 — see the Unreleased entry; it does, in the linked
+Advanced tool use post: 49% → 74% on Opus 4, 79.5% → 88.1% on Opus 4.5**], and
+our wall is `route` at 52.2% against a 51.4% majority baseline. ⚠ Their 85% and
+our 95.9% have the same epistemic status — one configuration each, neither a
+benchmark. ⚠ The 91 applies to carried-forward installs; `init` writes
+`counter` (3 tools) on a first-ever install.
+
+## [1.108.294] - 2026-08-24 - The hook layer, and the three seconds behind it
+
+### Fixed — the Claude Code hooks: ten confirmed defects in the steering layer
+
+Contributed by **@marcelruhf** in
+[#535](https://github.com/jgravelle/jcodemunch-mcp/pull/535) — the whole of
+this section is their work, including the write-up.
+
+An adversarially-verified audit of the "Claude forgets to call jCodeMunch"
+symptom found the enforcement hooks failing from several directions at once.
+Every fix below was reproduced against the unfixed tree first.
+
+⚠ **Several of these were features that RAN, returned nothing, and reported
+success** — the failure mode with no symptom. Three loops read `owner`/`name`
+keys off `list_repos()` entries that only ever carry `repo`, so the briefing,
+the landmarks and the task diagnostics skipped every repo, always. **The only
+thing producing the wrong shape was a test mock**, which is why a green suite
+never noticed.
+
+- **Bash/Glob were unhooked** — the PreToolUse matcher was `Read|Grep`, so
+  `Bash(grep/rg/find ...)` and `Glob`, the dominant native search routes, never
+  fired the hook; strict mode actively funneled the model from a denied Grep
+  into unmonitored Bash. Matcher is now `Read|Grep|Glob|Bash`; the handler
+  intercepts Glob like Grep and Bash command lines that OPEN with a search
+  command (a grep after a pipe filters other output jcm can't serve, and stays
+  untouched).
+- **Symlinked paths disabled all steering** — `index_folder` stores
+  `source_root` resolved (`Path.resolve()`), the hook compared `abspath` only,
+  so any symlink component (macOS `/tmp` → `/private/tmp`, symlinked
+  worktrees) made nudge AND strict deny silently inert. All root comparisons
+  now go through `realpath`.
+- **Three hook features read `owner`/`name` keys `list_repos()` never returns**
+  (entries carry `repo`) — the SubagentStart repo briefing, the
+  PreCompact/SessionStart landmarks, and the TaskCompleted diagnostics skipped
+  every repo, always. The masking test mocks used the wrong entry shape.
+- **TaskCompleted diagnostics were dead by construction** — the handler read
+  the empty in-process journal (the exact #334 defect fixed for PreCompact);
+  it now reads the persisted live journal first.
+- **The PostToolUse reindex spawned a bare-name `jcodemunch-mcp`** — dead
+  under the hook shell's minimal PATH on exactly the installs (pipx,
+  pip --user) whose absolute-path resolution `init` exists for. Spawns now
+  reuse this process's own invocation, falling back to `python -m`; the
+  Copilot hooks.json command gets the absolute path too, `install`/`uninstall`/
+  `install-status` match it by subcommand rather than the bare-name prefix
+  (which could never match the new form), and a pre-existing bare-name Copilot
+  rule is upgraded in place on re-install.
+- **Re-running `init` never upgraded a stale matcher** — a pre-1.108.47
+  install kept `Read` forever while install reported success, and
+  `config --check` printed the EXPECTED matcher for present hooks, masking the
+  drift. Merge now upgrades matchers in place; the check prints the installed
+  matcher and warns on drift.
+- **PreCompact emitted its snapshot into a discarded field** — Claude Code
+  documents that a PreCompact hook's `systemMessage` is discarded, so the
+  user-facing snapshot report reached nobody, ever. The emission is removed;
+  SessionStart(compact) remains the delivery route.
+- **The advisory Read nudge fired outside every indexed repo** — recommending
+  `get_file_outline` on files jcm cannot serve, teaching the model the hints
+  are unreliable. It is now gated on indexed-root overlap like strict mode
+  always was.
+- **The SubagentStart catalog was surface-blind** — under the default
+  `tool_surface="counter"` it briefed 41 raw tool names the subagent's client
+  does not advertise and never mentioned `order`/`menu`/`route`. The briefing
+  now matches the effective surface.
+- **Robustness** — a garbage `JCODEMUNCH_HOOK_MIN_SIZE` no longer crashes
+  every hook at import (parses to the default), and hostile payload shapes
+  (non-dict payloads, null `tool_input`, non-string `source`, list-shaped
+  Copilot `toolArgs`, NUL-byte paths, malformed live-journal entries) no
+  longer raise.
+
+  Boundaries set by the adversarial review of the fixes themselves: strict
+  mode denies only pure-search Bash commands (`grep`/`rg`/…, never `find` —
+  `find … -delete` opens with the same word and a deny steering to search
+  routes cannot delete) and stays silent when the command names an absolute
+  path outside every indexed root, since jcm cannot serve that search. The
+  TaskCompleted live-journal read carries a 240-minute freshness bound so an
+  abandoned journal cannot present a dead session's edits as this task's.
+  The re-spawn path refuses a relative `argv[0]` (the hook's cwd is the
+  checked-out repo — a file named `jcodemunch-mcp` there must never be what
+  gets executed). Known cost: matching `Bash` in the PreToolUse matcher puts
+  a ~0.4s (warm) hook process in front of every Bash call; a fast hook entry
+  path that skips the server import is the follow-on if that bites.
+
+  Strict-mode Bash denies apply only to PURE search commands: a pipeline or
+  compound command (`rg | xargs sed -i`, `grep -q x && make`) is nudged, never
+  blocked, and a `../` target is treated as outside the repo (silence). The
+  realpath fix covers symlinked checkout paths — a `git worktree` checkout is
+  a genuinely different directory and stays outside indexed roots. Known
+  limit: the TaskCompleted live-journal read is one file per store, so two
+  concurrent sessions against the same CODE_INDEX_PATH can attribute each
+  other's edits in the advisory diagnostics (inherent to the #334 bridge).
+
+  The SubagentStart briefing now scopes to the repo(s) containing the
+  subagent's `cwd` when it names one (brief-everything stays the fallback):
+  reviving the repo loop exposed that it hydrates and PageRanks EVERY indexed
+  repo per spawn, which is minutes-scale on big multi-repo boxes. The rest of
+  the revived-loop bill is paid too: the steering gate reads roots via a new
+  `IndexStore.list_source_roots()` (one meta row per .db, no per-repo
+  `COUNT(*)` scans), the TaskCompleted/landmark loops probe file membership
+  read-only before hydrating an index (any doubt hydrates), transcript-root
+  registration takes an exact-string fast path in the steady state, leading
+  env assignments (`FOO=1 grep …`) and a subshell paren no longer slip the
+  Bash search regex, and tool-surface resolution has ONE authority —
+  `counter.resolve_tool_surface` — shared by the server and the hooks
+  (whitespace-only env now falls through to config on both sides).
+
+### Fixed - three seconds of startup spent proving nothing
+
+`verify_package_integrity()` runs on every CLI invocation and answers one
+question: which distribution owns the running `jcodemunch_mcp`. It answered it
+with `importlib.metadata.packages_distributions()`, which builds a
+top-level-name to distribution map for **every** distribution on `sys.path`.
+
+⚠⚠ **Measured on a Windows dev box carrying 894 top-level names: 3.35 s,
+uncached, on every invocation — and it then returned nothing**, because the
+code was running from source and no distribution described it. The targeted
+lookup that settles the same question for an ordinary install is **5 ms**. The
+checks are now ordered cheapest-first: a source or editable tree returns
+immediately, an official install that owns the running code returns after the
+5 ms lookup, and the full map is reached only when the official distribution is
+absent or did not provide the code that is actually running.
+
+⚠⚠ **The expensive map is still reached and must stay reachable.** It is the
+only thing that can NAME the offending distribution, which is the entire
+content of the warning. A guard that merely banned the call would be satisfied
+by deleting the security check.
+
+⚠⚠ **Installed-and-correctly-named is not sufficient on its own, so the fast
+path does not stop there.** The official distribution can sit on a box while
+the imported code came from somewhere else — the arrangement the warning exists
+to catch. The fast path clears only when the official distribution is the one
+that provided the running module.
+
+⚠ **This was invisible for as long as the CLI was something a human typed
+once.** It stops being invisible the moment hooks spawn it per tool call, where
+it is essentially the whole cost of the hook. End-to-end on the same box, one
+`hook-pretooluse` spawn goes **4.0 s to 0.94 s**; the ~0.74 s that remains is
+the server import, which is a separate change.
+
+⚠ Found while reviewing #535, which reported the hook cost at ~0.4 s on Linux
+and prompted measuring it here. The first attribution was wrong — the suspect
+was the 45-subparser argparse tree, which is **7 ms**. `tests/test_integrity_check_cost.py`
+asserts the cost as a property (the common paths settle without the full map)
+rather than pinning the call order, and separately asserts that a renamed fork
+is still named.
+
+## [1.108.293] - 2026-08-23 - Ten skipped modules that hid 209 tests
+
+### Fixed - ten skipped modules that hid 209 tests between them
+
+Test-only; nothing user-facing moves. Every module-scope `pytest.importorskip`
+in the suite is now `importlib.util.find_spec`, because importorskip RAISES
+during import and collapses a whole file to one `1 skipped` line however many
+tests it holds.
+
+⚠⚠ **Nothing was being lost, and that is the reason to fix it.** Every
+optional package happens to be installed on the dev box and in CI. A CI image
+that quietly stopped installing `watchfiles` would have reported a clean run
+**49 tests short**, and `N passed` cannot show that. The guards stood in front
+of 209 tests: watchfiles 105, yaml 51, starlette 44, tiktoken 9.
+
+⚠⚠ **Three of the ten sat PARTWAY DOWN their file**, so the import abort
+also took out tests defined ABOVE the guard that never touched the package.
+Measured with the dependency actually removed, then and now:
+
+| file | dep absent, before | dep absent, now |
+|---|---|---|
+| `test_dbt_provider.py` | 1 skipped | **15 passed**, 16 skipped |
+| `test_provider_metadata_and_perf.py` | 1 skipped | **16 passed**, 4 skipped |
+| `test_v1_108_95.py` | 1 skipped | **3 passed**, 9 skipped |
+
+⚠ Imports that genuinely need the package moved under an `if _HAS_X:` flag;
+without that they raise ImportError and turn a clean skip into a collection
+error. Collection counts are unchanged with the packages present, and the ten
+files' lint findings are identical before and after.
+
+⚠⚠ **Found in the sibling repo first, the expensive way.** jdatamunch's
+`test_excel_parser.py` reported one skip while holding 29 tests, **19 of which
+passed on an ordinary dev box and had never run**. It surfaced only by
+comparing TOTALS across two interpreters - 819 against 839 - never from a
+passed count. **A setting fixed in one repo of a suite is fixed in one repo.**
+
+⚠ `tests/test_optional_dep_skips_are_visible.py` bans the pattern and
+separately asserts the heaviest files still collect real items, so a rewrite
+that hides them another way fails too. Verified by restoring an old guard.
+Inside a fixture or test body `importorskip` stays correct and visible.
+
+## [1.108.292] - 2026-08-23 - The one string that survives tool deferral
+
+### Added — the one string that survives tool deferral
+
+The MCP `initialize` response now carries an `instructions` string. It did not
+before: all three transports called `server.create_initialization_options()`
+bare, so the field went out empty and nothing anywhere said so.
+
+⚠⚠ **The cost is invisible in a normal session and concentrated in a deferred
+one.** A host over its schema budget sends tool NAMES and withholds the
+JSONSchemas until a `ToolSearch`-style lookup fetches them. On the default
+surface that is 91 bare strings. Every description we budget and smell-test
+(`test_description_smells.py`, the 4,000-token `core_compact` ceiling) is
+absent at exactly the moment the agent has the least to go on. The spec
+delivers `instructions` on a separate track from the tool list, so it arrives
+whole either way — it is the entire steering budget a plain MCP client gives us.
+
+The string does two things, in this order: it says to load the working set in
+ONE lookup (a round trip for the session instead of two calls per use), and it
+gives a decision rule per tool rather than a feature summary. It is
+surface-aware — `counter` names `route`/`menu`/`order` and nothing else,
+because on that surface the other 91 names are not reachable and pointing an
+agent at one strands it.
+
+⚠ Budget of 1,000 characters, currently 931 on `full` and 599 on `counter`.
+Nothing proves a longer string survives un-truncated.
+
+⚠⚠ **The prose is bound to the catalog, because prose is what rots.**
+`tests/test_mcp_instructions.py` fails when the string names a tool the server
+does not dispatch on that surface, when the `select:` query and the bullet list
+disagree about which tools to load, and — parsing the dispatcher's own AST —
+when any of the three `server.run()` sites goes back to a bare
+`create_initialization_options()`. **A handshake that sends nothing raises no
+error and serves every request normally**, so the only witness is a test.
+Verified by reintroducing both defects and watching them fail, not only by
+watching them pass.
+
+### Fixed — `serverInfo` named the SDK's version, not ours
+
+`Server("jcodemunch-mcp")` was constructed with no `version=`, so the SDK filled
+the field with its own package version. Every host that displays a server
+version displayed `1.26.0` while we shipped 1.108.x.
+
+⚠ Found by smoke-testing the handshake the change above touches, not by a
+report. Nothing errors, nothing logs, and the field is wrong on every single
+initialize — the same shape as the empty `instructions` beside it, which is why
+one probe found both.
+
+⚠⚠ **Green tests do not prove the wire carries a real number.** `__version__`
+falls back to `"unknown"` when distribution metadata is absent, which is every
+`PYTHONPATH=src` run. That fallback is deliberate and older than this fix:
+`"unknown"` is an honest could-not-establish, where `1.26.0` was a confident
+answer about a different package.
+
+⚠ An SDK predating the field is handled: we allow `mcp>=1.10.0`, so the field
+is checked before it is set. Nothing to say, and nowhere to say it.
+
+## [1.108.291] - 2026-08-22 - Counting each byte of source once
+
+### Added — the savings meter can say which tool earned it
+
+`_savings.json` gains `by_tool`, a lifetime token count per tool, alongside the
+scalar it has always kept. `get_session_stats` reports it as `lifetime_by_tool`.
+
+The gap it closes is a question we could not answer about our own meter: after
+correcting the baseline above, "how much did that change the total" had no
+answer at any scale, because the ledger stored one number and the wire payload
+carries no breakdown. It is answerable from the next call onward.
+
+⚠⚠ **LOCAL ONLY, and pinned by a test.** The telemetry payload stays exactly
+`{delta, total, anon_id}`; per-tool data is never shared.
+`test_savings_by_tool.py::TestAttributionStaysLocal` reads the sender's own
+source and fails if that dict changes shape or if `by_tool` reaches it —
+verified by putting the leak in and watching it fail, not only by watching it
+pass. Disclosed in `SECURITY.md` beside the meter it sits next to.
+
+⚠⚠ **The history cannot be backfilled and is NOT quietly dropped.** A ledger
+predating this holds savings that no tool can be credited with, so
+`sum(by_tool)` starts below `total_tokens_saved`. The difference is reported as
+`lifetime_unattributed` and `by_tool_since` dates the start. **An unexplained
+shortfall between two numbers in the same payload reads as missing data**, which
+is how a disclosure becomes a bug report.
+
+⚠ Tool names only — no code, paths, queries or repo names — and an absent
+`tool_name` opens no key. Savings still count toward the total when the caller
+is unknown; only the attribution is absent, and it shows up in
+`lifetime_unattributed` rather than being assigned to a guess.
+
+### Fixed — the savings baseline counts each byte of source once
+
+`raw_bytes` is the "what would this have cost to read by hand" half of the
+`tokens_saved` figure these tools report. Two ways of building it over-counted,
+in seven places, so the affected tools credited themselves with more than they
+had saved. Found and corrected on our own tree.
+
+**Shape 1, nested spans.** `sum(byte_length for s in symbols)` counts a class's
+span and then each of its methods again. **25.1% above the merged spans**, and
+**2.85x the real size of the files it describes**. Nobody reads a method twice
+for being inside a class. Five sites: `assemble_task_context`,
+`find_implementations`, `find_similar_symbols`, `winnow_symbols`,
+`get_group_contracts`.
+
+**Shape 2, a file charged per symbol.** `get_ranked_context` looked
+`index.file_sizes` up once per packed symbol, so a file with eight symbols in
+the answer was billed eight times: **12.3x at 40 symbols, 32.2x at 1000**.
+
+⚠⚠ **The second shape was ALSO under-reporting, and saying only the 32x would be
+cherry-picking in the direction that flatters us.** `file_sizes` is populated
+from retained raw content, which covers **244 of 858 source files (28.4%)** on a
+local-folder index — for the other 71.6% that expression contributed **zero**.
+Two errors in opposite directions in one line, so the corrected figure for that
+tool is not simply lower; it is computed on the right basis for the first time,
+and the sign for any single call depends on how much of the pack came from files
+whose size was known.
+
+Two helpers, one definition each, in `tools/_utils`: `symbol_span_bytes()` merges
+spans, `distinct_file_bytes()` charges a file once. ⚠ **Both are deliberately
+CONSERVATIVE** — bytes outside every symbol span (imports, comments, module
+docstrings, data literals) are not counted, and a file whose spans cannot be
+trusted contributes 0 rather than a guess. Understating our own savings is the
+safe way to be wrong about a number we publish.
+
+⚠⚠ **The lifetime total is STAMPED, not restated.** `SAVINGS_BASIS_GENERATION`
+is 2; `_savings.json` records the generation it was first written under, and
+`get_session_stats` reports `total_tokens_saved_basis` beside the figure, so a
+total spanning the change reads `mixed_basis: true` instead of passing as one
+consistent measurement. **A recomputed history would be a guess wearing a
+measurement's clothes.** ⚠ A ledger holding counts but naming no generation IS
+generation 1 — defaulting that to the current one would quietly claim every
+historical count was taken the corrected way, which is the single thing this
+field exists to prevent. A fresh install reads `mixed_basis: false`.
+
+⚠ **The reported list was four sites; the property found seven.** Both shapes are
+ratcheted in `tests/test_savings_baseline.py` over the whole of `src/`.
+⚠⚠ **The first ratchet was written wrong and the non-vacuity pass is what caught
+it**: a depth-limited regex walked straight past
+`sum(int(s.get("byte_length", 0) or 0) for ...)`, two parens deep, and PASSED
+against the reintroduced defect. It scans paren depth now. A third test pins
+that summing distinct file sizes over `source_files` still passes, so the
+ratchet cannot become standing pressure to "fix" the two sites already correct.
+
+⚠ **Scope, because `tokens_saved` values move and readers will ask how far.**
+The affected sites are six analytical tools. The high-volume retrieval path is
+NOT among them and never was: `search_symbols`, `search_text` and
+`get_symbol_source` accumulate their baseline under a `seen_files` guard, and
+`get_file_content` measures one file. Those were already counting each file
+once, which is checkable in the diff.
+
+### Fixed — a class and its methods are not two files' worth of source
+
+`get_architecture_metrics` summed `byte_length` over every symbol in a file to
+get that file's byte mass. A class's span already covers its methods, and each
+method is a symbol of its own, so those bytes were counted twice.
+
+⚠⚠ **The inflation is not uniform, which is why it corrupts the metric rather
+than scaling it.** It tracks how class-heavy a file is. Measured on this repo:
+**33.4% overall** (12,201,425 vs 9,143,088 real bytes) and up to **2.28x on a
+single file** — `test_watcher_serve.py` x2.28, `sqlite_store.py` x1.81,
+`extractor.py` x1.40. A Gini coefficient is a comparison ACROSS files, so an
+error that varies with each file's style is bias, not a constant factor.
+
+⚠ **Two things were wrong, and the second is the one callers act on.**
+`bytes_per_file` moves 0.5682 -> **0.5519**, and the top-concentrator ranking
+changes: `sqlite_store.py` drops from 2nd to 3rd. A ranking is the output of
+this tool that turns into someone's refactoring decision.
+
+Byte mass now merges each file's symbol spans, in ONE definition —
+`tools/_utils.file_byte_mass()` — rather than at the call site that reported it.
+`tests/test_architecture_metrics.py::TestByteMassRatchet` fails on any
+`x[f] += ... byte_length` anywhere in `src/`, so a second spelling cannot
+reappear.
+
+⚠ **Untrustworthy spans are UNKNOWN, never 0.** More than one symbol carrying
+real length at `byte_offset == 0` is the signature of a parser that never set
+offsets (the field defaults to 0, so "unset" and "starts at byte 0" are
+indistinguishable for one symbol but not for two). Those files leave the metric
+and are disclosed as `bytes_unmeasurable_files`; `bytes_files_measured` says how
+many the byte axis actually covered, which can be fewer than `files_measured`.
+With nothing measurable `bytes_per_file` is **`None`** — `0.0` would read as
+"perfectly even", a confident wrong answer.
+
+⚠⚠ **The same mechanism ran in the token-savings baseline, and the sweep for it
+found seven sites where the report named four.** Fixed in the entry above, in
+the same release rather than filed as follow-up work: a metric that credits us
+is the one direction a defect must never be left to sit.
+
+### Changed — 71.4% of the routing decision does not need making
+
+The emitted harness now emits `pair_availability`, and it reframes the figure the
+whole moratorium argument has been resting on.
+
+On **25 of the 35** pair-gold cases (**71.4%**) `route` returns **both**
+`search_text` and `search_symbols`. Those are the same 25 where the gold action
+appears in the recommendation list at all. The caller has both candidates in
+hand, and choosing between two returned options costs nothing.
+
+⚠⚠ **So the 52.2% within-family figure is not "route gets a coin flip wrong". It
+is "route declines to break a tie it has already surfaced, and `@1` scores that
+as failure"** — which is precisely the suspicion the moratorium block opened
+with: `@1` penalises a router for being honest about ambiguity.
+
+⚠⚠ **The residual is a different and larger failure.** In the other 10 cases
+neither search action was offered at all — the wrong neighbourhood rather than
+the wrong order:
+
+    gold=search_text     offered=[check_delete_safe, check_edit_safe, check_rename_safe]
+    gold=search_symbols  offered=[get_context_bundle, get_session_context, get_ranked_context]
+
+**28.6% wrong neighbourhood against 71.4% right-pair-wrong-order.** A single
+fused "52.2%" hides which half is worth work, and no tie-break can fix the 28.6%.
+
+⚠ Availability is computed over the **three actions the response carries**, not
+the untruncated internal ranking. Crediting route with options the caller never
+saw would measure the wrong thing.
+
+⚠ **Consequence for H4**, the retrieval-outcome probe and the family's only
+survivor: its prize is re-ranking a pair the caller can already see, on 71.4% of
+the cases it targets — much smaller than 52.2% suggests, and invisible from that
+number alone. The whole motivating gap is 52.2 against 51.4 **on 23 cases**. The
+recommendation is to weigh a fresh corpus against that rather than build one; the
+previous corpus project was cancelled for less.
+
+⚠ Computed by the harness rather than derived by hand, so it is covered by
+`tests/test_route_recall_artifacts_are_fresh.py` and cannot drift the way
+`results.json` did.
+
+⚠ Benchmarks and docs only — no source change, no version bump, and the
+moratorium does not move.
+
+### Added — the grounded route pilot, and H3 is refuted
+
+`benchmarks/route_binary_pilot/` runs the third hypothesis about the
+`search_text` vs `search_symbols` decision, on 60 cases bound to real
+repositories at the SHAs published in `benchmarks/tasks.json`. **One predicate,
+one run, nothing fitted.** The predicate and the protocol were committed before
+a single case existed; `git log` for that directory is the evidence, because an
+assertion in prose is not.
+
+**Result: indistinguishable from a coin.** Full vocabulary **53.3%** against a
+50% floor, Wilson 95% **[40.9, 65.4]**, **p = 0.699**. Ablating each target's own
+name parts returns **50.0%, p = 1.000**. Leakage existed — 12 of 30 class-S tasks
+matched their own target's name — and bought nothing.
+
+⚠⚠ **The predicate answered `search_symbols` on 58 of 60 tasks** — 100% of class
+S and 28 of 30 of class T. It is a constant classifier wearing a probe's
+clothing, because **in a real repository the symbol vocabulary absorbs ordinary
+English**: fastapi has 6,841 symbols yielding 4,303 matchable name parts, and 14
+of 16 common English words tested are among them (`message`, `path`, `error`,
+`status`, `value`, `name`, `body`, `type`, `data`, `request`, …).
+
+⚠⚠ **Coverage was never the property that mattered, and H3 was argued for on
+exactly that ground.** H1 fires on ~15% of queries, H2 on ~5%, H3 on ~97% — and
+all three fail. The first two decide too few cases; the third decides them all
+the same way. **The property is SEPARATION: a predicate must fire differently on
+the two classes, and firing often is not firing differently.** 100% coverage was
+necessary and not sufficient — the same shape as moratorium conditions 1 and 2
+being met without clearing the freeze. Screen the next hypothesis on separation
+before counting its coverage.
+
+⚠⚠ **The repo-grounded corpus project is cancelled, which is what the pilot was
+built to decide.** The protocol registered the asymmetry in advance: a negative
+is decisive, a positive would have certified nothing. Building the full corpus
+would have cost a project and hit the same wall, because the wall is not the
+corpus — it is that vocabulary membership does not separate these classes in any
+repository large enough to matter.
+
+⚠ Not ruled out, and deliberately not run: a probe keyed on retrieval OUTCOME
+rather than vocabulary membership — does `search_symbols` outrank `search_text`
+for this query against this index. That compares two scores instead of testing
+set membership. **These 60 cases are spent; reusing them for it would be a
+fitting pass wearing an experiment's clothes.**
+
+⚠ One correction made mid-build and disclosed rather than buried: the first
+generated corpus filled class T with `it('should …')` test titles, which would
+have made it a test-title detector. Test paths are excluded now. The fix landed
+after inspecting the cases and **before the predicate was run once** — no
+prediction was computed against the discarded version, and `predicate.py` is
+untouched since its registration commit.
+
+⚠⚠ **A spent corpus is an attractive nuisance, so it is GATED rather than
+labelled.** `tests/test_route_binary_pilot_is_frozen.py` pins `predicate.py` by
+digest: editing it while `cases.json` still exists is a fitting pass, and the
+test cannot judge whether a given edit is one — **it makes the judgement happen**,
+the same design as the LICENSE digest pin. The digest is over line-ending-
+normalised text, because hashing raw bytes pins a property of the checkout rather
+than of the file (that mistake went red on every Ubuntu leg and green on every
+Windows one when the LICENSE pin shipped).
+
+⚠ **The pilot cannot have a freshness gate** — re-running it needs three external
+checkouts and three local indexes, none of which exist in CI — so the guard runs
+the other way: every number quotable from `RESULT.md` must match `results.json`,
+the verdict must still be stated, and the at-chance conclusion must still follow
+from the artifact (interval spans the floor, p is not significant). That last one
+is asserted as the PROPERTY rather than the literals, so a genuinely separating
+re-run would fail it and force a re-reading instead of quietly inheriting the old
+conclusion.
+
+⚠ The gate found two prose/artifact mismatches on its first run: `RESULT.md`
+rounded `0.6989` to `0.699` and never used the word "cancelled". The prose was
+corrected, not the gate.
+
+⚠ Benchmarks, tests and docs only — no source change, no version bump, and the
+moratorium does not move.
+
+### Fixed — the route benchmark compared three guesses against a baseline allowed one
+
+`run_emitted_task.py` reported route's `@3` recall against the best constant
+SINGLE action, and a comment in the script argued that this was the fair
+comparison because "the floor is RANK-INVARIANT". It is not fair, and it was
+wrong in route's favour: **a baseline gets as many guesses as the system it is
+the floor for.**
+
+Against the best constant 3-SET, on the same 40 emitted cases:
+
+| | route | best constant 3-set | delta |
+|---|---|---|---|
+| strict@3 | 62.5% | 92.5% | **-30.0** |
+| exact@3 | 70.0% | 100% | **-30.0** |
+| family@3 | 70.0% | 100% | **-30.0** |
+
+`strict@3` moves from **+17.5** against the 1-set floor to **-30.0** against the
+k-matched one. **`@3` does not rescue the emitted-task result; it deepens it.**
+Both floors are emitted by the harness now (`blind_floor_kset`,
+`vs_kset_floor_pts`) so neither can be re-derived by hand.
+
+⚠⚠ **The emitted corpus cannot discriminate a router from a fixed list.** Its
+best constant 3-set scores **100% exact**: 40 cases, 6 distinct primary labels,
+87.5% in one family; the holdout is 20 cases and 3 labels. That is a property of
+the SAMPLE, not a verdict on route, and it is now asserted so it stays visible.
+
+⚠ **The human harness reported no floor at all** until now — its headline
+figures had never been compared to a baseline in the artifact, and the 1-set
+number existed only in the OTHER script's docstring. It reports k-matched floors
+now: `@1` 71.2% vs 5.1% (**+66.1**), `@3` 86.4% vs 13.6% (**+72.8**), over 59
+queries with 69 distinct targets. Route routes decisively on human phrasing at
+both k; what it does not do is route on agent wording.
+
+### Fixed — `results.json` had drifted from the code, and CLAUDE.md cited it
+
+The committed human artifact reported `route@1 69.5 / @3 88.1`; a fresh run of
+the same harness against the same corpus returns `71.2 / 86.4`. Two queries had
+moved — one gained rank 1, one fell out of the top 3 — because tool descriptions
+drifted under a frozen artifact. `catalog_actions` was unchanged at 91, so
+nothing about the corpus size gave it away.
+
+**`CLAUDE.md` cited 69.5% as the evidence that catalog-moratorium condition 1 is
+met.** The verdict is unchanged (71.2 is still above the 60% bar), which is
+exactly why it went unnoticed for two weeks. Maintenance Practice 4 forbids
+hand-typing a benchmark number; **a number read out of a stale artifact is that
+defect one level up.**
+
+`tests/test_route_recall_artifacts_are_fresh.py` re-runs both harnesses (about a
+second each) and fails when either committed artifact disagrees. Restoring the
+real stale `results.json` from `HEAD` turns it red — the non-vacuity pass is
+against the actual defect, not a synthetic one.
+
+⚠ A red there on a PR that only touched tool descriptions is the signal working.
+Descriptions are the router's input, and the moratorium conditions are stated
+over these exact numbers.
+
+### Changed — the moratorium's open question is restated as one binary
+
+Stripping the degeneracy away, the emitted corpus is a single decision: **87.5%
+of golds are `search_text` or `search_symbols`, split 18/17.** Majority-class
+baseline **51.4%**; route, on cases where it lands in the pair at all, is
+**12/23 = 52.2%**. Chance. One rule —
+`/find|locate|where is|look up|search for|definition of/ -> search_symbols` —
+takes 21 of 35 rank-1 picks, because agent-emitted tasks open with "find".
+
+So the objective is not `route@1` versus `route@3` over 91 actions. It is
+`P(correct | gold in {search_text, search_symbols})`. Anyone proposing to
+optimise route should say which of those two numbers they intend to move.
+
+⚠ This also explains why the identifier-shape and verb hypotheses died: both
+failed on COVERAGE at 5-15%, but the decision needing an answer is one binary
+required **100%** of the time. A predicate reaching 15% cannot move it, so purity
+was never the issue. H3 is named in `ROADMAP.md` and deliberately not started.
+
+⚠⚠ **H3 was checked for readiness and is NOT runnable — the blocker kills the
+whole outside-the-string hypothesis class.** The corpus rows carry no repository
+(`case_id`, `candidate_rank`, `prompt_text`, `gold_primary`, `gold_alts`,
+`emitted_task`) and the tasks are heterogeneous by design — "this project", "our
+mod", "the capture button handler". **Four of the 35 pair-labelled cases name a
+resolvable repo.** There is nothing to index, so there is nothing to probe, and
+every remaining hypothesis in that family — repo state, first-pass retrieval,
+prior turns — needs exactly the context the corpus does not carry.
+
+⚠ **The 157 unused rows do not fix it.** Same generator, repo-less for the same
+reason. They are an asset only for query-STRING hypotheses, which is the class
+already refuted twice. The previous note read as "the next hypothesis is ready,
+157 rows are waiting"; it was not, and H4 or H5 of the same shape would have hit
+the identical wall after paying the setup cost.
+
+⚠ Readiness costs a corpus bound to real repositories at pinned commits, with
+tasks generated against them and labels assigned by someone who can see them.
+That is corpus construction. Priced here so the decision is made rather than
+discovered.
+
+⚠ Benchmarks and tests only — no source change, no version bump, and the
+moratorium does not move.
+
+### Fixed — the lock tests bet on the scheduler, and the bet lost during a release
+
+`test_wait_seconds_polls_until_lock_released` failed on windows-3.12 during the
+1.108.290 release, green on the other eight jobs and on two local Windows runs.
+It released the lock from a thread that slept 0.5s and asserted the elapsed time
+landed inside `0.4 < elapsed < 3.0`. Its sibling `test_wait_seconds_gives_up`
+asserted `elapsed < 1.5` on a 0.3s wait — a 5x jitter tolerance and no more.
+
+Both now pin the INTERLEAVING instead of the clock. A `_FakeClock` replaces the
+`time` module inside `process_locks`, advancing by the sleep amount from inside
+the patched sleep; the polls test releases the lock on the third poll and asserts
+the poll sequence, and the gives-up test asserts the deadline arithmetic exactly.
+No wall-clock assertion survives in either.
+
+⚠⚠ **The property under test was never "this takes about half a second".** It is
+"the loop polls, and it acquires once the lock is free". A test that states the
+timing instead of the property is testing its own machine's scheduler — and this
+one had already been re-tuned once for "Windows CI jitter", which is the tell
+that the assertion was never about the code.
+
+⚠ **The fake clock RAISES on unknown attributes rather than falling through to
+the real module.** A pass-through would look harmless and be the worse outcome:
+if `held` ever switched its deadline to `time.perf_counter()`, half the clock
+would be fake and half real, and the test would go quietly wrong instead of
+loudly absent.
+
+⚠ Non-vacuity, per falsification: removing the poll loop turns both red;
+replacing the retried `acquire` with a constant `False` turns only the polls test
+red (the gives-up test expects False either way, which is the correct
+discrimination); hardcoding a poll interval other than `poll_seconds` turns both
+red.
+
+⚠ Test-only, no source change and no version bump; rides the next release.
+`Path` and `_is_pid_alive` are unused imports in that file, were unused before
+this change, and are left alone — recorded, not swept.
+
+## [1.108.290] - 2026-08-21 - Charging ourselves for the calls before the one that worked
+
+### Added — retrieval inflation: what one information need actually cost
+
+`analyze_regret` now returns an `inflation` block beside its six cluster
+signals, and `suggest_corrections` and `digest` surface it. The clusters have
+always named WHICH queries went wrong; this says what the wrongness cost.
+
+Inflation is the ratio of calls actually made to information needs served. A
+need is `(session_uid, query_hash)`. A clean ledger reads `1.0`; a repo where
+the agent re-asks reads above it, and `excess_calls` is the count of calls that
+bought nothing.
+
+The shape follows arXiv:2608.13571, which defines token inflation as the ratio
+of true workflow cost to single-call cost — the gap between what one call is
+priced at and what the workflow spent once the failures are counted. We had
+never charged ourselves for that gap: `_meta.tokens_saved` reports the saving on
+the call that worked and says nothing about the two before it.
+
+⚠⚠ **The basis is CALLS, not tokens, and the `basis` field says so on every
+shape the block can take.** `ranking_events` carries no token column. A ratio
+named after tokens while counting calls would be measuring one thing and named
+for another; renaming it needs a column, not a better adjective.
+
+⚠⚠ **A row with no `session_uid` is UNKNOWN and is excluded, never folded into a
+synthetic session.** #456 added that column by `ALTER`, so every row written
+before it carries NULL — and treating NULL as one shared session fuses the
+entire historical ledger into a single need with a spectacular fake ratio. The
+excluded count is reported as `events_without_session`.
+
+⚠⚠ **`repeats_after_index_change` is disclosed and NOT subtracted.** A re-ask
+after the index moved under the query is arguably a different question, so it is
+arguably not waste — but subtracting it lowers our own inflation number, and a
+self-flattering adjustment applied silently is the one direction this metric
+must not drift. Both numbers are reported; the reader can adjust.
+
+⚠ Unmeasurable is a first-class answer, and it is passed through rather than
+omitted. A ledger with no session column, a window with too few needs, and a
+repo with no events each return `measurable: false` with a reason — because a
+caller who cannot see WHY the ratio is absent reads its absence as no inflation
+(#500: a number computed and then discarded is the same defect as not computing
+it).
+
+⚠ The reader is a second query, `token_tracker.ranking_db_inflation_rows`,
+returning **None for could-not-ask and never `[]`**. `ranking_db_query`'s
+12-tuple is read positionally by `regret`, `tuning`, `ledger_trust` and
+`analyze_perf`, and it opens the database directly rather than through
+`_ensure_perf_db` — so selecting a column that may not exist there would raise,
+hit that function's catch-all, and return `[]` for every ledger consumer. One
+missing column would have silently disabled all six regret signals.
+
+⚠ Read-only, no new tables, no schema change, and nothing is billed. Requires
+`perf_telemetry_enabled` like the rest of the ledger.
+
+⚠ `tests/test_retrieval_inflation.py` (17). Non-vacuity run per falsification:
+keying a need on `query_hash` alone turns 10 red, folding NULL sessions into a
+synthetic one turns 2 red, subtracting the index-change repeats turns 1 red, and
+returning `[]` instead of `None` from the reader turns 1 red.
+
+### Changed — `CLAUDE.md` rotates, and the budget is now the whole file
+
+`CLAUDE.md` reached 200,543 characters and stopped loading. Closed dated issue
+and PR history moved verbatim to `ISSUE-HISTORY.md`, which no session
+loads; the `Tests:` line dropped its per-release counts below the three-release
+rotation to the same place. 200,543 → 113,074, nothing deleted.
+
+⚠⚠ **Maintenance Practice 5 was followed and the file broke anyway.** It said
+"keep `Current State` to the 3 newest releases", and `Current State` was 14% of
+the file. The growth was in dated issue history (82k) and a `Tests:` line
+carrying counts back to 1.108.268 (16k). **A rule that names one section
+licenses every other section to grow.** The practice now covers the whole file
+and `tests/test_claude_md_size.py` enforces it, on the same argument as
+`test_claude_md_rotation.py`: a convention that has already failed needs a gate.
+
+⚠ The lessons those entries earned stayed behind as a **Standing lessons** list,
+each naming a date to grep for in the archive. A stray Maintenance Practice 9
+that had been sitting 300 lines above the Practices list moved into it.
+
+⚠⚠ **The archive was first written to `docs/`, which this repo gitignores.**
+Every check passed -- the file existed, the pointer resolved, the budget was met
+-- while the history would have vanished on the next clone and taken CI red with
+it. `test_the_archive_is_tracked_by_git` closes that: **"does the file exist"
+answers a question about one working tree, not about the repository.**
+
+⚠ Suite on the settled tree: **8105 passed, 17 skipped, 0 failed** + `ruff check
+src/` clean. Reconciled against 1.108.289's 8101 total: +17 inflation +4 size
+gate = 8122 exactly, so nothing else moved.
+
+## [1.108.289] - 2026-08-21 - A licence you can point at, and one you cannot churn
+
+A licensing release, no behaviour change. 1.108.288 was the first version to
+publish a licence identifier at all; this is the one that makes it stable.
+
+⚠ **Allowlist `LicenseRef-jCodeMunch-Dual-Use-1` for `>=1.108.289`.** 1.108.288
+carries `-1.1` and keeps it permanently — PyPI metadata is immutable per version,
+and that release is the only one that will ever have it.
+
+### The aside came out of the LICENSE files
+
+`He's kinda full of himself.` sat inside condition 2 of all three LICENSE files,
+in the middle of the derivation-and-attribution obligation. It stays in the
+README, where it reads as the author's voice; a licence is the document a
+customer's counsel reads before allowlisting, and a joke inside an operative
+clause makes a reader stop and work out whether it is operative.
+
+⚠ **This is the first exercise of the digest pin shipped an hour earlier, and it
+routed correctly.** The edit grants and removes nothing, so it is EDITORIAL:
+`_LICENSE_DIGEST` was updated and the version, the identifier and the suffix were
+left alone. **A downstream allowlist on `LicenseRef-jCodeMunch-Dual-Use-1` is not
+churned by this**, which is the whole reason the identifier is major-only.
+
+⚠ Removed from jdocmunch-mcp and jdatamunch-mcp too, where the same line sat in
+the same clause.
+
+### The licence identifier tracks the MAJOR version only (@marcelruhf)
+
+1.108.288 shipped `LicenseRef-jCodeMunch-Dual-Use-1.1`, which invalidates a
+downstream allowlist on every minor bump — including a typo fix. @marcelruhf,
+who operates an allowlist against this identifier, proposed keying it to the
+major version instead: a minor bump is editorial and must not churn anyone, a
+major bump means the terms changed substantively and re-approval is the honest
+outcome. The identifier is `LicenseRef-jCodeMunch-Dual-Use-1` from the next
+release.
+
+⚠ **1.108.288 keeps `-1.1` permanently** — PyPI metadata is immutable per
+version. Since .288 is the only release that has ever carried an identifier at
+all, this is the cheapest moment this change will ever have; every further
+release makes the transition wider.
+
+⚠⚠ **We have already broken the promise this identifier makes, which is why it
+is not left as a convention.** `f3c925c` (2026-07-10) ADDED a redistribution and
+attribution obligation to condition 2 — a substantive change to what a licensee
+may do — while the header stayed at `Version 1.1 — effective 2026-06-30`.
+**Nothing failed, because a version line is a convention and conventions do not
+fail builds.** A licensee reading the identifier would have been told the terms
+were unchanged.
+
+So `test_the_license_text_cannot_change_without_a_decision_being_made` pins the
+LICENSE text to the declared version by digest. Any edit fails it, and clearing
+the failure means choosing: substantive (bump the major version, the identifier
+and the digest) or editorial (update the digest alone). **It cannot make that
+judgement and does not try — it forces the judgement to happen where the text
+moves, rather than be discovered downstream.**
+
+⚠ The three behaviours were proven against a temporarily edited LICENSE: terms
+changed under a static version FAILS, a major bump with a static identifier
+FAILS, and a minor bump does NOT churn the identifier. LICENSE restored
+byte-for-byte after each.
+
+⚠⚠ **The digest is taken over the NORMALISED text, and the first version was not
+— it was red on all four Ubuntu legs and green on all four Windows legs.** Git
+rewrites line endings on checkout, so a digest over raw bytes pins a property of
+the CHECKOUT rather than of the terms. **A licence says the same thing in either
+encoding**, and a pin that disagrees is measuring the wrong object.
+
+⚠ jdocmunch-mcp and jdatamunch-mcp state no licence version at all, so their
+identifiers stay suffix-less and the bidirectional check is already correct
+there. Giving those files a version line is a licence edit, not a packaging one.
+
+### The license-identifier ratchet asserted this repo's accident (@marcelruhf)
+
+`test_the_version_suffix_tracks_the_license_file` required the identifier to
+carry a `-X.Y` suffix unconditionally, which is only correct while this LICENSE
+happens to state a version. @marcelruhf ported the ratchet into jdocmunch-mcp
+and jdatamunch-mcp, whose LICENSE files carry no `Version` line, and wrote the
+general form: **a version line and a suffix imply each other, in both
+directions.** Adopted here.
+
+⚠ The half that only his version catches is the one nobody would think to test —
+an identifier claiming a version the licence text does not state. Both directions
+were proven to fail against a temporarily edited LICENSE.
+
+## [1.108.288] - 2026-08-20 - The reported surface was never the only one
+
+Four fixes, and in three of them the report named one site while the tree held
+several. v1.108.287's own entry says we keep fixing the reported call site and
+leaving the mechanism; this release is what checking first looks like. The rule
+`install-pack` needed had three spellings already and the new call site would
+have been a fourth. The licence identifier @marcelruhf could not allowlist was
+declared on three surfaces, and he could only see the one PyPI publishes. The
+default @rknighton found mis-documented was one cell in a table nothing checked,
+so the whole column is checked now. **In each, the fix is the same sentence — ask
+the authority instead of reproducing its logic — and in each we had to go looking
+to find out where else it applied.**
+
+### `install-pack` extracted drive-absolute archive members outside the install directory ([#447](https://github.com/jgravelle/jcodemunch-mcp/issues/447))
+
+The pre-scan rejected a leading separator and `..` anywhere in a member name,
+which is necessary and not sufficient. `C:/Windows/Temp/evil.txt` contains
+neither — and `base / relative` **discards `base`** when `relative` is absolute,
+so the write went wherever the archive said. `dest.parent.mkdir(parents=True)`
+ran first, so a hostile member created directories outside the install root
+before a byte of content was written.
+
+Confinement is by RESOLUTION now, not by pattern. A string test can never finish
+enumerating separator and drive spellings; resolving the destination and refusing
+anything outside the base does not have to. The pre-scan is kept as an early
+abort — it refuses an obviously hostile archive before any work — with the
+per-member check as the authority.
+
+⚠ **Reported by [@elfrost](https://github.com/elfrost), who also wrote a correct
+fix in [#443](https://github.com/jgravelle/jcodemunch-mcp/pull/443) that we could
+not merge because the CLA went unsigned.** The vulnerability, the analysis and
+the design of the remedy are theirs. What shipped applies our own pre-existing
+`_safe_content_path` pattern to the call site that lacked it — an independent
+path, not a clean-room copy of their diff — and their PR is closed with that said
+plainly on the thread.
+
+⚠ **One definition of the rule.** Three spellings of resolve-and-compare existed
+(`security.validate_path` plus a private copy on `IndexStore` and another on
+`SQLiteIndexStore`). The new call site would have been a fourth. `resolve_within`
+in `security.py` is now the one definition and both stores delegate to it;
+`SQLiteIndexStore` keeps its resolved-base cache by passing it in, so the hot
+path is unchanged and the rule is not duplicated to preserve it.
+
+⚠ **The refusal is deliberately NOT pinned to a platform.** `C:/Windows/...` is
+absolute on Windows and an ordinary relative name on Linux and macOS, where
+resolving it under the base is correct behaviour. The tests assert **confinement**
+— nothing appeared outside the install directory — rather than that a particular
+string was rejected, which would encode platform trivia as a security property.
+
+⚠⚠ **The first version of the regression test named the reported path verbatim
+and PASSED against the unfixed source**, because the escape landed outside the
+directory the assertion was looking in. Worse, the non-vacuity pass — which runs
+the unfixed source on purpose — wrote a real file into a real Windows system
+directory. **A test for an arbitrary-write defect executes that defect every time
+you prove the test is not vacuous, so the target must be somewhere the test
+owns.** Rebuilt against a `tmp_path` sentinel: 3 red at the call site, 1 red on
+the one-definition guard, controls green both sides.
+
+⚠ A second test of ours asserted an OS accident rather than the rule — that an
+embedded NUL byte fails to resolve — and it passed serially and failed under
+xdist, where the longer worker temp path takes the other branch. **The rule is
+that a raising resolve refuses; which inputs happen to raise is the OS's
+business.** Rewritten to force the raise.
+
+### PyPI published the whole LICENSE file where an identifier belonged (#517, @marcelruhf)
+
+`license = { file = "LICENSE" }` makes PyPI put the entire licence text into
+`info.license`, so a commercial user could not allowlist us by identifier — there
+was no identifier to allowlist. Packaging metadata is PEP 639 now:
+`license = "LicenseRef-jCodeMunch-Dual-Use-1.1"` plus
+`license-files = ["LICENSE"]`, and the deprecated
+`License :: Other/Proprietary License` classifier is gone, which PEP 639 requires
+beside an expression.
+
+The LICENSE file is unchanged and still ships — `dist-info/licenses/LICENSE` in
+the wheel, repo root in the sdist. Verified on a built artifact, not inferred from
+the diff: `License-Expression` and `License-File` both present at
+`Metadata-Version: 2.5`, `twine check` green on both.
+
+⚠ **PyPI metadata is immutable per version, so this starts at the next release.**
+Every version up to 1.108.287 keeps the full-text `info.license`.
+
+⚠⚠ **The report named one surface and we declared the licence on three.**
+`.claude-plugin/plugin.json` and the mcpb manifest both said
+`LicenseRef-Dual-Use` — no product prefix, no version — so an allowlist keyed on
+the identifier still needed two entries. **That is the reported defect one surface
+over, and fixing only what was reported would have left it.** Both now name the
+same identifier, and the mcpb generator DERIVES it from `pyproject.toml` rather
+than carrying its own copy, which is how the two spellings drifted apart to begin
+with.
+
+⚠ **The version suffix is load-bearing, not decoration.** LICENSE 1.2 must
+produce a new identifier, or an allowlist that approved 1.1's terms keeps matching
+terms nobody read — consent inherited by silence.
+`tests/test_license_identifier_agreement.py` pins the suffix to the `Version X.Y`
+line in the file, so a licence bump that forgets the identifier fails the build
+instead of shipping quietly. 5 red against the pre-#517 tree, 2 red against the
+reported-surface-only fix, 5 green now.
+
+### `CONFIGURATION.md` gave the wrong default for `disabled_tools` (#515, @rknighton)
+
+The Tools table documented the default as `[]`. The shipped default is
+`["test_summarizer"]`, so a reader following the reference page expected all 91
+canonical tools in the schema and got 90.
+
+Three other surfaces state it correctly — the generated config template writes
+`// Default: test_summarizer disabled` above the key, `config --init` carries the
+same comment, and `test_guide_respects_disabled_tools.py` pins
+`DEFAULTS["disabled_tools"] == ["test_summarizer"]`. The reference table was the
+only one that disagreed, and it is the page a user opens when a tool they
+expected is missing.
+
+The row now spells the value out and names the tool, so the 90-of-91 count is
+explained where it is discovered.
+
+⚠ **`tool_tier_bundles` was wrong the same way and the reporter said so while
+scoping it out**: documented `{}`, ships populated. Nothing observable changed
+because the shipped value is set-identical to the `_TOOL_TIER_CORE` /
+`_TOOL_TIER_STANDARD` fallback the row already described. Fixed here too — a cell
+that is accidentally harmless is still a cell that will be read.
+
+⚠⚠ **The deliverable is `tests/test_configuration_md_defaults.py`, written over
+the TABLE rather than the two reported rows.** It parses every `Default` column
+in the document and compares each cell against `config.DEFAULTS`, so the next key
+someone documents is covered on the commit that documents it. 3 red against the
+pre-fix document, 63 green after.
+
+⚠ **The exemption is load-bearing, not a hole.** `tool_tier_bundles` cannot be
+inlined, so its cell is prose — and the test asserts its repr is genuinely too
+long to fit, which means a small wrong value cannot hide behind the same escape
+hatch, plus it asserts the claim the prose makes (that the bundles carry the
+built-in tier names) rather than trusting it.
+
 ### A full-root re-walk was treated as a subdir merge, so every repeat index rebuilt the corpus (#504, @lsg1103275794)
 
 The v1.96 collision guard assigned `_merge_with_existing` whenever an existing

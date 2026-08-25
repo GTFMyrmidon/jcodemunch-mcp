@@ -40,6 +40,7 @@ Run:
 from __future__ import annotations
 
 import argparse
+import itertools
 import collections
 import json
 import sys
@@ -124,6 +125,7 @@ def main() -> int:
     depth = collections.Counter()
     rank1_picks = collections.Counter()
 
+    _ordered_by_case: dict = {}
     for c in cases:
         gold = c["gold_primary"]
         targets = {gold} | set(c.get("gold_alts") or ())
@@ -131,6 +133,11 @@ def main() -> int:
         rule_fired += 1 if recs else 0
         depth[len(recs) if recs else ROUTE_FALLBACK_LIMIT] += 1
         ordered = _route_actions(counter, rows, names, c["emitted_task"])
+        # ⚠ Sliced to the same 3 the per_case row records, so the availability
+        # figures below describe WHAT THE CALLER WAS SHOWN rather than the full
+        # internal ranking. Reporting the untruncated list would credit route
+        # with options the response never carried.
+        _ordered_by_case[c["case_id"]] = ordered[:3]
         if ordered:
             rank1_picks[ordered[0]] += 1
 
@@ -178,6 +185,13 @@ def main() -> int:
     prim = collections.Counter(c["gold_primary"] for c in cases)
     fam_share = sum(prim[a] for a in SEARCH_FAMILY)
 
+    _pair = set(SEARCH_FAMILY) & {"search_text", "search_symbols"}
+    _pair_cases = [c for c in cases if c["gold_primary"] in _pair]
+    _pair_n = len(_pair_cases)
+    _pair_both = sum(1 for c in _pair_cases if _pair <= set(_ordered_by_case.get(c["case_id"], [])))
+    _pair_gold_in = sum(1 for c in _pair_cases
+                        if c["gold_primary"] in _ordered_by_case.get(c["case_id"], []))
+
     # EVERY metric needs its own floor. Reporting one floor beside two metrics
     # is how a result gets read as a win on the metric that has no bar. The
     # family metric's floor is much higher than the exact metric's, because a
@@ -202,6 +216,41 @@ def main() -> int:
                 best_family = (a, fam)
         return best_exact, best_family, best_strict
 
+    # ⚠⚠ A CONSTANT ANSWER IS ALLOWED AS MANY GUESSES AS THE SYSTEM IT IS THE
+    # FLOOR FOR. The single-action floor above is the right bar for @1 and the
+    # WRONG bar for @3: it compares route's three guesses against a baseline
+    # holding one. Correcting it moves strict@3 from +17.5 against the 1-set
+    # floor to -30.0 against the 3-set floor, i.e. @3 does not rescue this
+    # result, it deepens it. Computed here so the number cannot be re-derived
+    # by hand and cannot drift (Maintenance Practice 4).
+    def _best_constant_kset(k, hits):
+        """Best constant k-action answer under a per-case hit predicate."""
+        best = ((), -1)
+        for combo in itertools.combinations(sorted(label_actions), k):
+            s = set(combo)
+            c = sum(1 for case in cases if hits(case, s))
+            if c > best[1]:
+                best = (combo, c)
+        return list(best[0]), round(best[1] / n * 100, 1)
+
+    # Candidates are the LABELLED actions, not the whole catalog: a constant
+    # answer naming an action no case labels can never score, and including all
+    # 91 makes the search 100x slower for the same result.
+    label_actions = {c["gold_primary"] for c in cases}
+    for c in cases:
+        label_actions |= set(c.get("gold_alts") or ())
+
+    def _hit_strict(case, s):
+        return case["gold_primary"] in s
+
+    def _hit_exact(case, s):
+        return bool(({case["gold_primary"]} | set(case.get("gold_alts") or ())) & s)
+
+    def _hit_family(case, s):
+        if case["gold_primary"] in SEARCH_FAMILY:
+            return bool(s & set(SEARCH_FAMILY))
+        return _hit_exact(case, s)
+
     (fl_ex_a, fl_ex_n), (fl_fam_a, fl_fam_n), (fl_st_a, fl_st_n) = _best_constant()
     floor_strict = round(fl_st_n / n * 100, 1)
     floor_action, floor_hits = fl_ex_a, fl_ex_n
@@ -225,11 +274,29 @@ def main() -> int:
                     "floor is not routing. The floors differ sharply, so no number may be "
                     "quoted against another metric's bar.",
         },
-        # The floor is RANK-INVARIANT: a constant answer emits exactly one action,
-        # so it scores the same at @1 and @3. That makes route@3-vs-floor a fair
-        # comparison and the one that matters -- route's job is to hand the caller
-        # a usable shortlist, not to win a single guess on a corpus where 87.5%
-        # of labels sit in one family.
+        # ⚠⚠ CORRECTED 2026-08-21. This block used to argue that the floor is
+        # RANK-INVARIANT -- a constant answer emits one action, so it scores the
+        # same at @1 and @3 -- and concluded that route@3-vs-floor was "the fair
+        # comparison and the one that matters". **That is wrong, and it was
+        # wrong in route's favour.** A baseline must be allowed as many guesses
+        # as the system it is the floor for. Against the best constant 3-SET,
+        # strict@3 is -30.0 rather than +17.5 and exact@3 is -30.0 against a
+        # 3-set that scores 100%. Both are reported below; quote the k-matched
+        # pair, never a @3 result against a 1-set floor.
+        "blind_floor_kset": {
+            "strict": dict(zip(("actions", "pct"), _best_constant_kset(3, _hit_strict))),
+            "exact": dict(zip(("actions", "pct"), _best_constant_kset(3, _hit_exact))),
+            "family": dict(zip(("actions", "pct"), _best_constant_kset(3, _hit_family))),
+            "k": 3,
+            "note": "best constant 3-ACTION answer, the k-matched bar for any @3 "
+                    "figure. A corpus whose best constant 3-set scores 100% cannot "
+                    "discriminate a router from a fixed list at that k.",
+        },
+        "vs_kset_floor_pts": {
+            "strict@3": round(strict[3] / n * 100 - _best_constant_kset(3, _hit_strict)[1], 1),
+            "exact@3": round(exact[3] / n * 100 - _best_constant_kset(3, _hit_exact)[1], 1),
+            "family@3": round(family[3] / n * 100 - _best_constant_kset(3, _hit_family)[1], 1),
+        },
         "vs_floor_pts": {
             "strict@1": round(strict[1] / n * 100 - floor_strict, 1),
             "strict@3": round(strict[3] / n * 100 - floor_strict, 1),
@@ -250,6 +317,30 @@ def main() -> int:
                     "search_symbols, and agent-emitted task strings almost all open with "
                     "'find'. Human wording varies far more, so this collapse is specific to "
                     "the emitted distribution and invisible in the human-phrased corpora.",
+        },
+        # ⚠⚠ WHAT THE 52.2% WITHIN-FAMILY FIGURE ACTUALLY MEANS. On most
+        # pair-gold cases route returns BOTH search_text and search_symbols, so
+        # the binary does not need deciding -- the caller has both candidates and
+        # picking between two returned options costs nothing. `within_family` and
+        # every @1 figure score that as failure, which is `@1` penalising a router
+        # for being honest about ambiguity.
+        #
+        # ⚠ The residual is a DIFFERENT failure and the larger prize: cases where
+        # neither search action was offered at all, i.e. route went to the wrong
+        # neighbourhood rather than mis-ranking a pair. Reported separately
+        # because a single "wrong" number fuses the two and hides which one is
+        # worth work.
+        "pair_availability": {
+            "pair_gold_cases": _pair_n,
+            "both_offered": _pair_both,
+            "both_offered_pct": round(_pair_both / _pair_n * 100, 1) if _pair_n else 0.0,
+            "gold_offered_anywhere": _pair_gold_in,
+            "gold_offered_anywhere_pct": round(_pair_gold_in / _pair_n * 100, 1) if _pair_n else 0.0,
+            "neither_offered": _pair_n - _pair_gold_in,
+            "note": "cases whose gold is search_text or search_symbols. "
+                    "`both_offered` is where the decision is already made for "
+                    "the caller; `neither_offered` is route recommending the "
+                    "wrong neighbourhood, which no tie-break can fix.",
         },
         "label_concentration": {
             "search_family_share_pct": round(fam_share / n * 100, 1),

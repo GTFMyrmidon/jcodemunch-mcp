@@ -55,6 +55,15 @@ _CURRENT_CALL_UID: ContextVar[Optional[str]] = ContextVar(
 
 _SAVINGS_FILE = "_savings.json"
 
+# Basis generation for the savings meter. Bumped when the DEFINITION of a
+# tool's raw_bytes baseline changes, so a lifetime total spanning the change is
+# never read as one consistent measurement. Generation 2 (2026-08-22) stopped
+# summing nested symbol spans and stopped charging a file once per symbol
+# selected from it; both over-counted, so pre-2 counts read HIGH. Nothing is
+# rewritten — a recomputed history would be a guess wearing a measurement's
+# clothes — the mixed basis is disclosed instead.
+SAVINGS_BASIS_GENERATION = 2
+
 # Days of per-day savings history kept in _savings.json's "daily" map. Two years
 # covers every window a dashboard offers ("this year", year-over-year) while
 # keeping the file a few KB.
@@ -103,6 +112,12 @@ class _State:
     def __init__(self):
         self._lock = threading.Lock()
         self._loaded = False
+        self._basis_first = SAVINGS_BASIS_GENERATION
+        # Lifetime savings attributed per tool. LOCAL ONLY — never added to
+        # the telemetry payload, which stays {delta, total, anon_id}.
+        self._tool_totals: dict = {}
+        self._tool_unflushed: dict = {}
+        self._by_tool_since: Optional[str] = None
         self._total: int = 0          # cumulative total (disk + in-flight)
         self._unflushed: int = 0      # delta not yet written to disk
         self._encoding_total: int = 0    # cumulative MUNCH encoding savings
@@ -128,6 +143,12 @@ class _State:
         self._result_cache: OrderedDict = OrderedDict()  # (tool, repo, key) -> result
         self._cache_hits: dict = {}    # tool_name -> hit count
         self._cache_misses: dict = {}  # tool_name -> miss count
+        # A hit is key-presence, which is NOT the same as a hit that still
+        # describes the current index. Only the consumers that revalidate
+        # against subject_state can tell, so they report back here; a hit
+        # nobody validated stays UNKNOWN and is never counted as fresh.
+        self._cache_hits_fresh: dict = {}  # tool_name -> validated, unchanged
+        self._cache_hits_stale: dict = {}  # tool_name -> validated, subject moved
         # Per-tool latency ring (process-lifetime; cap _LATENCY_RING_DEFAULT entries)
         self._tool_latencies: dict[str, deque] = {}
         self._tool_errors: dict[str, int] = {}
@@ -189,8 +210,25 @@ class _State:
             logger.debug("Failed to load savings data from %s", path, exc_info=True)
             data = {}
         self._total = data.get("total_tokens_saved", 0)
+        # A ledger that already holds counts but names no generation was written
+        # before generations existed, so its history IS generation 1 — the
+        # over-counting basis. Defaulting THAT to the current generation would
+        # silently claim every historical count was taken the corrected way,
+        # which is the one thing this field exists to prevent. A ledger with no
+        # counts (fresh install, or a file holding only an anon_id) starts clean
+        # at the current generation: there is no history to have taken wrongly.
+        recorded = data.get("basis_generation_first", data.get("basis_generation"))
+        if recorded is not None:
+            self._basis_first = int(recorded)
+        elif self._total:
+            self._basis_first = 1
+        else:
+            self._basis_first = SAVINGS_BASIS_GENERATION
         self._encoding_total = data.get("total_encoding_tokens_saved", 0)
         self._anon_id = data.get("anon_id")
+        by_tool = data.get("by_tool")
+        self._tool_totals = dict(by_tool) if isinstance(by_tool, dict) else {}
+        self._by_tool_since = data.get("by_tool_since")
         self._loaded = True
 
     def add(self, delta: int, base_path: Optional[str], tool_name: Optional[str] = None) -> int:
@@ -204,6 +242,13 @@ class _State:
             self._session_tokens += delta
             self._session_calls += 1
             if tool_name:
+                # Lifetime attribution, alongside the session breakdown. Keys come
+                # from our own tool registry, so the map is bounded; an absent or
+                # empty tool_name is skipped rather than opening a junk key.
+                if self._by_tool_since is None:
+                    self._by_tool_since = datetime.now().date().isoformat()
+                self._tool_totals[tool_name] = self._tool_totals.get(tool_name, 0) + delta
+                self._tool_unflushed[tool_name] = self._tool_unflushed.get(tool_name, 0) + delta
                 self._session_tool_breakdown[tool_name] = (
                     self._session_tool_breakdown.get(tool_name, 0) + delta
                 )
@@ -255,12 +300,67 @@ class _State:
                 del self._result_cache[k]
             return len(to_delete)
 
+    def cache_hit_validated(self, tool_name: str, stale: bool) -> None:
+        """Record that an already-counted hit was checked against the index.
+
+        Called by a consumer that revalidates a cached entry against
+        ``subject_state.changed``. Never counts a hit — ``cache_get`` already
+        did — so this cannot inflate ``hit_rate``.
+
+        ⚠ Exactly ONE of the three result-cache consumers does this today:
+        ``search_symbols``. ``find_references`` and ``get_blast_radius`` serve
+        cached entries with no check at all, which is why `hits_unvalidated`
+        is a reported number rather than an edge case.
+        """
+        with self._lock:
+            bucket = self._cache_hits_stale if stale else self._cache_hits_fresh
+            bucket[tool_name] = bucket.get(tool_name, 0) + 1
+
+    @staticmethod
+    def _revalidated_block(h: int, fresh: int, stale: int) -> dict:
+        """The three-bucket view of `h` hits. Unvalidated is UNKNOWN, not fresh."""
+        validated = fresh + stale
+        return {
+            "hits_validated_fresh": fresh,
+            "hits_validated_stale": stale,
+            # ⚠ Never folded into either. Nobody checked these.
+            "hits_unvalidated": max(0, h - validated),
+            # None, NOT 0.0 and NOT the raw rate: with nothing validated this
+            # is a could-not-establish, and a number here would be read as a
+            # measurement.
+            "hit_rate_revalidated": (
+                round(fresh / validated, 3) if validated else None
+            ),
+            "validated_share": round(validated / h, 3) if h else None,
+        }
+
     def cache_stats(self) -> dict:
-        """Return cache hit/miss stats. Thread-safe."""
+        """Return cache hit/miss stats. Thread-safe.
+
+        ⚠⚠ ``hit_rate`` is the RAW rate: a hit is key-presence in the LRU, which
+        is not the same as a hit that still describes the current index. The
+        cache is invalidated only by index-mutating tools **in this process**,
+        so an out-of-process reindex (the PostToolUse ``index-file`` spawn, the
+        watcher, a second server instance) leaves entries serving happily.
+        arXiv:2608.20280 measured raw rates of 51-60% falling to 1.1-2.2% once
+        validity was checked; quoting a raw rate as a performance result is the
+        defect it names.
+
+        ⚠ So the raw rate is kept (it is the right measure of how often the LRU
+        answered) and the revalidated view is reported BESIDE it, never instead:
+        ``hits_validated_fresh`` / ``hits_validated_stale`` / ``hits_unvalidated``.
+        ⚠⚠ **Three buckets, not two.** Of the three result-cache consumers only
+        ``search_symbols`` revalidates; ``find_references`` and
+        ``get_blast_radius`` serve cached hits with no check at all. The
+        unvalidated bucket is therefore non-empty by construction, and folding
+        it into either real bucket would be inventing a measurement.
+        """
         with self._lock:
             total_hits = sum(self._cache_hits.values())
             total_misses = sum(self._cache_misses.values())
             total_lookups = total_hits + total_misses
+            total_fresh = sum(self._cache_hits_fresh.values())
+            total_stale = sum(self._cache_hits_stale.values())
             by_tool = {}
             all_tools = set(self._cache_hits) | set(self._cache_misses)
             for tool in all_tools:
@@ -271,12 +371,19 @@ class _State:
                     "hits": h,
                     "misses": m,
                     "hit_rate": round(h / t, 3) if t else 0.0,
+                    **self._revalidated_block(
+                        h,
+                        self._cache_hits_fresh.get(tool, 0),
+                        self._cache_hits_stale.get(tool, 0),
+                    ),
                 }
             return {
                 "total_hits": total_hits,
                 "total_misses": total_misses,
                 "hit_rate": round(total_hits / total_lookups, 3) if total_lookups else 0.0,
+                "hit_rate_basis": "raw_key_presence",
                 "cached_entries": len(self._result_cache),
+                **self._revalidated_block(total_hits, total_fresh, total_stale),
                 "by_tool": by_tool,
             }
 
@@ -514,6 +621,21 @@ class _State:
             "session_duration_s": round(elapsed, 1),
             "session_response_tokens": self._session_response_tokens,
             "total_tokens_saved": self._total,
+            # A lifetime total that spans a basis change is not one measurement.
+            # mixed_basis=True says the figure includes counts taken before the
+            # baseline definition was corrected downward on 2026-08-22.
+            "total_tokens_saved_basis": {
+                "generation": SAVINGS_BASIS_GENERATION,
+                "first_generation": self._basis_first,
+                "mixed_basis": self._basis_first != SAVINGS_BASIS_GENERATION,
+            },
+            # Lifetime per-tool attribution, and the honest complement: what the
+            # meter earned before it could attribute anything. A caller that sees
+            # only `lifetime_by_tool` would read the shortfall against
+            # total_tokens_saved as missing data.
+            "lifetime_by_tool": dict(self._tool_totals),
+            "lifetime_by_tool_since": self._by_tool_since,
+            "lifetime_unattributed": max(0, self._total - sum(self._tool_totals.values())),
             "tool_breakdown": dict(self._session_tool_breakdown),
             # Sibling of tool_breakdown, not a replacement: tool_breakdown is
             # tokens per tool and has consumers. Reported savings scales with
@@ -1075,6 +1197,26 @@ class _State:
         else:
             data["anon_id"] = self._anon_id
         data["total_tokens_saved"] = data.get("total_tokens_saved", 0) + self._unflushed
+        # Record the first generation this file was ever written under, and the
+        # current one. Equal => the lifetime total is one consistent basis.
+        data.setdefault("basis_generation_first", data.get("basis_generation", SAVINGS_BASIS_GENERATION))
+        data["basis_generation"] = SAVINGS_BASIS_GENERATION
+        # Per-tool attribution. ⚠⚠ It starts EMPTY and can never be backfilled —
+        # the meter only ever stored a scalar — so sum(by_tool) is less than
+        # total_tokens_saved by however much was earned before this shipped.
+        # `by_tool_since` dates the start so that gap reads as unattributed
+        # history rather than as loss; session_stats reports it as a number.
+        if self._tool_unflushed:
+            merged = data.get("by_tool")
+            merged = dict(merged) if isinstance(merged, dict) else {}
+            for tool, amount in self._tool_unflushed.items():
+                merged[tool] = merged.get(tool, 0) + amount
+            data["by_tool"] = merged
+            data.setdefault(
+                "by_tool_since", self._by_tool_since or datetime.now().date().isoformat()
+            )
+            self._by_tool_since = data["by_tool_since"]
+            self._tool_unflushed = {}
         # Daily rollup alongside the lifetime total, so windowed views ("today",
         # "this month") can come from THIS meter — the authoritative record —
         # instead of transcript scans, which miss cleared history and model
@@ -1403,8 +1545,22 @@ def result_cache_invalidate(repo: Optional[str] = None) -> int:
     return _state.cache_invalidate(repo)
 
 
+def result_cache_hit_validated(tool_name: str, stale: bool) -> None:
+    """Report that a served cache hit was checked against the current index.
+
+    ``stale=True`` means the subject moved since the entry was filled — the
+    entry may still be served (the v1.108.178 cached-positive policy), but it
+    must not be counted as a fresh hit.
+    """
+    _state.cache_hit_validated(tool_name, stale)
+
+
 def result_cache_stats() -> dict:
-    """Return cache hit/miss stats for the current session."""
+    """Return cache hit/miss stats for the current session.
+
+    ``hit_rate`` is RAW (key-presence). Read it beside `hit_rate_revalidated`
+    and `hits_unvalidated` — see ``_TokenState.cache_stats``.
+    """
     return _state.cache_stats()
 
 
@@ -1525,6 +1681,63 @@ def ranking_db_query(
     except Exception:
         logger.debug("ranking_db_query failed at %s", path, exc_info=True)
         return []
+
+
+def ranking_db_inflation_rows(
+    base_path: Optional[str] = None,
+    window_seconds: Optional[float] = None,
+    repo: Optional[str] = None,
+    limit: int = 10_000,
+) -> "Optional[list[tuple]]":
+    """Rows for the retrieval-inflation ratio: ``(session_uid, query_hash, tool,
+    query, ts, repo_is_stale)``, newest first.
+
+    ⚠⚠ **Returns ``None`` for could-not-ask, never ``[]``.** ``session_uid`` was
+    added by ALTER in #456, so a ``telemetry.db`` whose ``ranking_events`` table
+    predates it and has not since been opened by a writer does not carry the
+    column. An empty list would read as "no inflation", which is the one answer
+    this must never invent -- same asymmetry as ``_paths_changed_between`` and
+    ``freshness.classify``.
+
+    ⚠ Deliberately a SECOND query rather than a wider ``ranking_db_query``. That
+    function's 12-tuple is a documented contract read positionally by
+    ``regret``, ``tuning``, ``ledger_trust`` and ``analyze_perf``, and it opens
+    the db directly rather than through ``_ensure_perf_db`` -- so selecting a
+    column that may not exist would raise ``OperationalError``, hit that
+    function's catch-all, and return ``[]`` for **every** ledger consumer. One
+    missing column would silently disable all six regret signals.
+    """
+    path = perf_db_path(base_path)
+    if not path.exists():
+        return None
+    try:
+        conn = sqlite3.connect(str(path), timeout=2.0)
+        try:
+            columns = {r[1] for r in conn.execute("PRAGMA table_info(ranking_events)")}
+            if not columns or "session_uid" not in columns:
+                return None
+            sql = (
+                "SELECT session_uid, query_hash, tool, query, ts, repo_is_stale "
+                "FROM ranking_events"
+            )
+            args: list = []
+            clauses: list[str] = []
+            if window_seconds is not None:
+                clauses.append("ts >= ?")
+                args.append(time.time() - float(window_seconds))
+            if repo:
+                clauses.append("repo = ?")
+                args.append(repo)
+            if clauses:
+                sql += " WHERE " + " AND ".join(clauses)
+            sql += " ORDER BY ts DESC LIMIT ?"
+            args.append(int(limit))
+            return conn.execute(sql, args).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        logger.debug("ranking_db_inflation_rows failed at %s", path, exc_info=True)
+        return None
 
 
 def perf_db_query(

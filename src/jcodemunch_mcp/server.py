@@ -247,10 +247,10 @@ _COUNTER_FRONT_DOOR: frozenset[str] = _counter.FRONT_DOOR
 _RAW_CATALOG: "Optional[list]" = None
 
 
-# The only two tool surfaces that exist. Anything else has always BEHAVED as
-# "full" (only "counter" is ever special-cased); v1.108.260 makes the reported
-# value agree with that instead of echoing whatever was typed.
-VALID_TOOL_SURFACES = ("counter", "full")
+# One authority for surface resolution: counter.resolve_tool_surface (pure,
+# also readable from the out-of-process hooks without paying this module's
+# import). v1.108.260 made the reported value agree with what is served.
+VALID_TOOL_SURFACES = _counter.VALID_TOOL_SURFACES
 _UNRECOGNIZED_SURFACES_LOGGED: set = set()
 
 
@@ -270,14 +270,12 @@ def _surface_resolution() -> tuple:
     the receipt can say the setting was REJECTED, not merely that something else
     is active.
     """
-    env = os.environ.get("JCODEMUNCH_TOOL_SURFACE")
-    if env:
-        requested = env.strip().lower()
-    else:
-        requested = (config_module.get("tool_surface", "full") or "full").strip().lower()
-
-    if requested in VALID_TOOL_SURFACES:
-        return requested, requested, True
+    effective, requested, recognized = _counter.resolve_tool_surface(
+        os.environ.get("JCODEMUNCH_TOOL_SURFACE"),
+        config_module.get("tool_surface", "full"),
+    )
+    if recognized:
+        return effective, requested, recognized
 
     if requested not in _UNRECOGNIZED_SURFACES_LOGGED:
         _UNRECOGNIZED_SURFACES_LOGGED.add(requested)
@@ -299,6 +297,107 @@ def _effective_surface() -> str:
     it used to be reported differently.
     """
     return _surface_resolution()[0]
+
+
+# --- MCP `instructions` (initialize response) ------------------------------ #
+# The one piece of jcodemunch prose that survives TOOL DEFERRAL. When a host has
+# more tools than its schema budget allows it sends tool NAMES only and withholds
+# the JSONSchemas until a ToolSearch-style lookup fetches them. We ship 91 tools
+# on the default surface, so in a deferred session every description we budget
+# and smell-test (`test_description_smells.py`, the 4,000-token core_compact
+# ceiling) is invisible at exactly the moment steering matters most.
+#
+# The MCP spec delivers `instructions` on a separate track from the tool list, so
+# it arrives whole even then. Two jobs, in this order:
+#   1. Defuse the deferral tax. ONE lookup loads the whole working set for the
+#      session, so the cost is a single round trip and not two calls per use.
+#   2. Say what each tool is FOR as a decision rule, not a feature summary. In a
+#      plain MCP client with no hooks and no skill listing, this string plus the
+#      tool descriptions are the entire steering budget we get.
+#
+# ⚠ Budget: under _MCP_INSTRUCTIONS_MAX_CHARS. Nothing proves a longer one
+# survives un-truncated, and observed sibling servers sit at 660-984.
+# ⚠ Every tool named here must be a real dispatchable name on the surface it is
+# named for; `tests/test_mcp_instructions.py` binds the prose to the catalog so
+# this cannot rot into advertising a tool we do not serve.
+
+_MCP_INSTRUCTIONS_MAX_CHARS = 1000
+
+# Default host prefix for MCP tool names. The real prefix comes from whatever key
+# the user wrote in their MCP config, so this is the common case, not a promise.
+_MCP_TOOL_PREFIX = "mcp__jcodemunch__"
+
+# Named in the order an agent should reach for them, most-used first.
+_INSTRUCTION_TOOLS_FULL: tuple = (
+    ("resolve_repo", "is this repo indexed? Call it first."),
+    ("get_ranked_context", '"how does X work" in ONE budgeted call, not chained hops.'),
+    ("search_symbols", "a symbol by name; search_text for strings and config."),
+    ("get_file_outline", "before opening any file."),
+    ("get_symbol_source", "one id, or an array to batch."),
+    ("find_references", "every use of a name, before a rename or delete."),
+)
+
+_INSTRUCTION_TOOLS_COUNTER: tuple = (
+    ("route", "start here: the task in plain words, back an action to run."),
+    ("menu", "search the catalog when you know roughly what you want."),
+    ("order", "dispatch any action by name: order(action, args). Read-only by default."),
+)
+
+
+def _instruction_tool_names(surface: str) -> list:
+    """Tool names named in the instructions for `surface`, in reach-for order."""
+    rows = _INSTRUCTION_TOOLS_COUNTER if surface == "counter" else _INSTRUCTION_TOOLS_FULL
+    return [name for name, _ in rows]
+
+
+def _tool_search_query(surface: str, prefix: str = _MCP_TOOL_PREFIX) -> str:
+    """The `select:` argument that loads every named tool in one lookup."""
+    names = _instruction_tool_names(surface)
+    return "select:" + ",".join(prefix + n for n in names)
+
+
+def _mcp_instructions(surface: "Optional[str]" = None, prefix: str = _MCP_TOOL_PREFIX) -> str:
+    """The `instructions` string for the initialize response, surface-aware."""
+    surface = surface or _effective_surface()
+    rows = _INSTRUCTION_TOOLS_COUNTER if surface == "counter" else _INSTRUCTION_TOOLS_FULL
+    if surface == "counter":
+        opening = (
+            "This repo can be indexed by jcodemunch. Its whole tool catalog sits "
+            "behind a 3-verb front door. Prefer it over Read/Grep/Glob/Bash for "
+            "code navigation."
+        )
+    else:
+        opening = (
+            "This repo can be indexed by jcodemunch: a prebuilt index of every "
+            "symbol, its file:line span, and who references what. Prefer them "
+            "over Read/Grep/Glob/Bash: one call usually replaces several reads."
+        )
+    lines = [
+        opening,
+        "",
+        "**If these tools are deferred (names shown, schemas withheld), load them "
+        'in ONE lookup:** ToolSearch "%s". One round trip for the session, '
+        "never one at a time." % _tool_search_query(surface, prefix),
+        "",
+    ]
+    lines += ["- %s: %s" % (name, why) for name, why in rows]
+    return "\n".join(lines)
+
+
+def _initialization_options():
+    """`create_initialization_options()` carrying our `instructions` string.
+
+    ⚠ Built per run() rather than passed to `Server(...)` at import: the surface
+    is resolved from env + config, and neither is settled when this module is
+    imported.
+    """
+    opts = server.create_initialization_options()
+    if "instructions" not in type(opts).model_fields:
+        # mcp SDK predates the field (we allow >=1.10.0). Nothing to say, and
+        # nowhere to say it.
+        logger.debug("InitializationOptions has no `instructions` field; skipping")
+        return opts
+    return opts.model_copy(update={"instructions": _mcp_instructions()})
 
 
 def _counter_front_door_tools() -> list:
@@ -989,7 +1088,7 @@ atexit.register(_save_session_state)
 # ---------------------------------------------------------------------------
 # Live journal persistence (#334) — feeds the out-of-process PreCompact hook.
 #
-# The hook (`jcodemunch-mcp hook-precompact`) runs in a separate process from
+# The hook (`jcodemunch-mcp hook-sessionstart`) runs in a separate process from
 # this server, so it sees a fresh, empty SessionJournal. We persist a compact
 # snapshot of the live journal to a small file the hook reads back. Writes are
 # throttled (not every tool call) and best-effort. Disable with
@@ -1140,8 +1239,13 @@ async def _ensure_tool_schemas() -> dict[str, dict]:
     return _TOOL_SCHEMAS
 
 
-# Create server
-server = Server("jcodemunch-mcp")
+# Create server.
+# ⚠ `version` is not optional in practice: omit it and the SDK reports ITS OWN
+# version in `serverInfo`, so every host that shows a server version showed the
+# mcp package number (1.26.0) while we shipped 1.108.x. Nothing errors, nothing
+# logs, and the field is wrong on every handshake. Pinned by
+# tests/test_mcp_instructions.py.
+server = Server("jcodemunch-mcp", version=__version__)
 
 
 # Handshake watchdog: a stderr diagnostic that fires when the client never
@@ -7339,7 +7443,7 @@ async def run_stdio_server():
             await server.run(
                 read_stream,
                 write_stream,
-                server.create_initialization_options(),
+                _initialization_options(),
             )
     finally:
         if not _watchdog_task.done():
@@ -7458,7 +7562,7 @@ async def run_sse_server(host: str, port: int):
             await server.run(
                 read_stream,
                 write_stream,
-                server.create_initialization_options(),
+                _initialization_options(),
             )
 
     middleware = []
@@ -7636,7 +7740,7 @@ async def run_streamable_http_server(host: str, port: int):
                     await server.run(
                         read_stream,
                         write_stream,
-                        server.create_initialization_options(),
+                        _initialization_options(),
                     )
             except asyncio.CancelledError:
                 pass
@@ -8581,14 +8685,26 @@ def _run_config(check: bool = False, init: bool = False, upgrade: bool = False) 
                 # `C:/.../jcodemunch-mcp.EXE hook-pretooluse` install and the
                 # check reported every hook missing on a correctly-installed box.
                 _present = False
+                _installed_matcher = ""
                 for _rule in _installed_hooks.get(_event, []):
                     for _h in _rule.get("hooks", []):
                         if _extract_jcm_subcommand(_h.get("command", "")) == _hook_cmd:
                             _present = True
+                            # Report the matcher actually INSTALLED, not the
+                            # shipped one — a pre-upgrade settings.json can
+                            # carry a stale matcher, and printing the expected
+                            # value here masked exactly that defect.
+                            _installed_matcher = _rule.get("matcher", "")
                             break
                 if _present:
-                    _label = f"{_event}({_matcher})" if _matcher else _event
+                    _label = f"{_event}({_installed_matcher})" if _installed_matcher else _event
                     print(f"  {green(CHECK)} {_hook_cmd} installed [{_label}]")
+                    if _installed_matcher != _matcher:
+                        print(
+                            f"  {yellow(WARN)} {_hook_cmd} matcher is stale: "
+                            f"installed '{_installed_matcher}', current is "
+                            f"'{_matcher}'. Re-run: jcodemunch-mcp init --hooks"
+                        )
                     _found_any = True
                 else:
                     print(f"  {dim(f'  {_hook_cmd} not installed')}")
@@ -9652,7 +9768,7 @@ def main(argv: Optional[list[str]] = None):
     # --- hook-precompact ---
     subparsers.add_parser(
         "hook-precompact",
-        help="PreCompact hook: generate session snapshot before context compaction (reads stdin)",
+        help="PreCompact hook: register the transcript root before compaction (reads stdin; the snapshot is delivered by hook-sessionstart)",
     )
 
     # --- hook-taskcomplete ---

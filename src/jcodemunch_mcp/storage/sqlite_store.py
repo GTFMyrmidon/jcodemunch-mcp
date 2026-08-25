@@ -2459,6 +2459,33 @@ class SQLiteIndexStore:
         repos.sort(key=lambda repo: repo["repo"])
         return repos
 
+    def list_source_roots(self) -> list[str]:
+        """Source roots of every indexed repo — one meta read per .db.
+
+        For callers that need ONLY the roots (the hook steering gate, per
+        tool call): `list_repos()` pays `SELECT COUNT(*)` over symbols and
+        files per repo, a full b-tree scan the roots never needed.
+        """
+        from .generation import connect_readonly
+        _pairs = parse_path_map()
+        roots: list[str] = []
+        for db_file in self.base_path.glob("*.db"):
+            if db_file.name in _NON_REPO_DB_FILES:
+                continue
+            try:
+                conn = connect_readonly(db_file)
+                conn.row_factory = sqlite3.Row  # _read_meta indexes by name
+                try:
+                    meta = self._read_meta(conn)
+                finally:
+                    conn.close()
+                sr = remap(meta.get("source_root", "") or "", _pairs)
+                if sr:
+                    roots.append(sr)
+            except Exception:
+                logger.debug("skipping %s for source roots", db_file, exc_info=True)
+        return roots
+
     def _list_repo_from_db(self, db_path: Path, _pairs: Optional[list] = None) -> Optional[dict]:
         """Read repo metadata from a .db file for list_repos."""
         if _pairs is None:
@@ -2713,18 +2740,17 @@ class SQLiteIndexStore:
 
     def _safe_content_path(self, content_dir: Path, relative_path: str) -> Optional[Path]:
         """Resolve a content path and ensure it stays within content_dir."""
-        try:
-            dir_key = str(content_dir)
-            base_str = self._resolved_content_dirs.get(dir_key)
-            if base_str is None:
+        from ..security import resolve_within
+
+        dir_key = str(content_dir)
+        base_str = self._resolved_content_dirs.get(dir_key)
+        if base_str is None:
+            try:
                 base_str = str(content_dir.resolve())
-                self._resolved_content_dirs[dir_key] = base_str
-            candidate = (content_dir / relative_path).resolve()
-            if os.path.commonpath([base_str, str(candidate)]) != base_str:
+            except (OSError, ValueError):
                 return None
-            return candidate
-        except (OSError, ValueError):
-            return None
+            self._resolved_content_dirs[dir_key] = base_str
+        return resolve_within(content_dir, relative_path, base_resolved=base_str)
 
     def _write_cached_text(self, path: Path, content: str) -> None:
         """Write cached text atomically, without newline translation.

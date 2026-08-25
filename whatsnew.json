@@ -1,23 +1,23 @@
 {
-  "current": "1.108.287",
+  "current": "1.108.296",
   "entries": [
     {
-      "version": "1.108.287",
-      "date": "2026-08-19",
-      "title": "Yesterday's fixes stopped where the reports did",
-      "summary": "Four defects, all reported within a minute of each other, and every one probes a surface adjacent to something v1.108.286 shipped. A guide section the filter did not reach, a second call site with its own containment check, a keyword threaded onto a path that never loaded what it reads, and a second derivation of the tool list. Each fix is the same sentence \u2014 ask the authority instead of reproducing its logic \u2014 and each had been applied only where it was reported."
+      "version": "1.108.296",
+      "date": "2026-08-24",
+      "title": "Four ways a guard can be present without working",
+      "summary": "A reuse-before-write audit that refuses to say \"nothing already implements this\" when it could not see synonyms, could not prove the index complete, or found only dead code. Not exposed as a tool \u2014 the catalog moratorium holds at 91. It imported clean and had **four defects on first execution**, three of them a check that could not observe the thing it claimed to check."
     },
     {
-      "version": "1.108.286",
-      "date": "2026-08-18",
-      "title": "Three surfaces that advertised a product we were not running",
-      "summary": "A config comment describing a precedence the resolver did not use, a tool schema naming three key-requiring embedding providers while hiding the free bundled one, and a guide listing a tool the same process refuses to dispatch. In each case the code was fine and the thing describing it was not."
+      "version": "1.108.295",
+      "date": "2026-08-24",
+      "title": "What the guard could not see",
+      "summary": "`build` and `.build` were both excluded from indexing. `_build` was not \u2014 and that is the spelling **Elixir/Mix, Sphinx and Dune** use. We index Elixir."
     },
     {
-      "version": "1.108.285",
-      "date": "2026-08-18",
-      "title": "Five answers that were asserted, not established",
-      "summary": "Five fixes, each one a place that reported a result it had not checked: a cache that said ready, an index that said fresh, a resolver that said this repository, an opt-out that said applied, and an embedding store that said one model. Three of the five were a comment or docstring describing behaviour the code did not implement."
+      "version": "1.108.294",
+      "date": "2026-08-24",
+      "title": "The hook layer, and the three seconds behind it",
+      "summary": "Contributed by **@marcelruhf** in [#535](https://github.com/jgravelle/jcodemunch-mcp/pull/535) \u2014 the whole of this section is their work, including the write-up."
     }
   ]
 }
