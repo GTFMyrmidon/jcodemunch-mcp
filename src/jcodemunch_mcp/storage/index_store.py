@@ -70,7 +70,156 @@ INDEX_VERSION = 17
 #   got a name taken from an unrelated run of source. The wrong name is baked
 #   into the symbol id, and re-indexing does NOT fix it — the file content is
 #   unchanged, so the incremental path never re-parses it.
-PARSER_GENERATION = 1
+#
+# gen 2 (2026-08-25): NOT a new defect — the counter simply was not bumped
+#   when four parser changes altered which symbols exist. All four are the
+#   shape this exists for: the file content is unchanged, so the incremental
+#   path never re-reads it and the new symbols never appear.
+#     .246 a class field initializer no longer donates members to its class
+#     .254 Python package-relative imports built no graph edge
+#     .267 Kotlin and Bash constants are extracted
+#     #428 Rust, Go, Java and PHP constants are extracted
+#
+#   ⚠⚠ The 8 indexes measured at generation 1 on 2026-08-25 were
+#   PERMANENTLY EXEMPT from repair, because a stamp EQUAL to the constant is
+#   indistinguishable from a current one. That is the half with no other
+#   remedy, and it is why this is a bump rather than a trigger change:
+#   re-running the upgrade more often cannot reach an index that already
+#   claims to be current.
+#
+#   ⚠ Effect size is SMALL and should not be oversold: measured on NestJS at
+#   a pinned commit, 0.5% of ids changed (58 gone, 61 new, 10,652 identical).
+#   The case is the drift, not corruption.
+#
+#   ⚠⚠ THE REAL LESSON, and it outlives this bump: this counter is a MANUAL
+#   assertion about an AUTOMATED thing, so it drifts silently and the drift
+#   is invisible precisely where it matters. Bumping it fixes today and not
+#   the mechanism. Deriving it from the extractor sources and the grammar
+#   versions is specced in docs/prd-extraction-fingerprint.md; until that
+#   exists, ANY parser change that alters which symbols exist must bump this
+#   line in the same commit.
+#
+# gen 3 (1.108.299, #549): Racket `struct` forms now contribute the accessors,
+#   predicate, setters and constructors the macro generates — names that occur
+#   NOWHERE in the file text, so they exist in an index only if synthesised.
+#
+#   ⚠ #548 shipped Racket itself WITHOUT a bump and that was correct: `.rkt`
+#   was `wrong_extension` in every existing index, so the language arrived
+#   through DISCOVERY. This one is the opposite case and the distinction is
+#   the whole test — 1.108.297 and 1.108.298 both parse `.rkt`, so an index
+#   built by either holds Racket files at generation 2 with the old symbol
+#   set, the content is unchanged, and the incremental path will never re-read
+#   them. Coverage does not need a bump; extraction does.
+#
+#   ⚠ Scope is NARROW and should not be oversold: `.rkt`/`.rktl`/`.rktd` only,
+#   and the window of affected indexes opened on 2026-08-24. It is bumped
+#   anyway because a stamp equal to the constant is unrepairable later, which
+#   makes the cheap decision now and the impossible one afterwards.
+#
+# gen 4 (1.108.300, #550): `from . import <sibling>` now builds an edge to the
+#   SIBLING MODULE instead of to the package's `__init__.py`, and a Python file
+#   whose prose contains a line starting `import ` no longer loses every edge it
+#   has to an IndexError.
+#
+#   ⚠ Import EDGES, not symbols, and the counter covers them: `.254` (Python
+#   package-relative import edges) was one of the four changes that justified
+#   gen 2, on the identical argument. File content is unchanged, so incremental
+#   never re-reads, and the edges that were never built stay never built.
+#
+#   ⚠ Effect is the largest yet measured for this counter and is not a drift
+#   argument: 87 sibling edges on this repo's own `src/` that did not exist, 30
+#   modules made reachable, and the reporter measured `find_dead_code` going
+#   from 42 dead files to 22 -- i.e. 20 live files were being reported dead.
+#   Two bumps in two releases is the cost of the mechanism being manual, which
+#   is the standing complaint above, not a reason to skip one.
+#
+# ⚠ The Racket extraction changes of 2026-08-27 (the `#lang` gate,
+#   `define-struct` supertype headers, `define-generics`, docstring adjacency,
+#   call references ...) did NOT bump this counter, although every one alters
+#   what unchanged `.rkt` content yields and the gate REMOVES fabricated
+#   symbols that a 1.108.297-.301 index still holds. The counter is one
+#   integer for the whole tree, so a bump re-parses every language for
+#   everybody, and Racket support was three days old with (as far as anyone
+#   knows) one user. Gens 5 and 6 below, bumped the same day for other
+#   languages, carry every existing index through the full re-parse anyway;
+#   what remains is the narrower, forward-looking mechanism in
+#   `CodeIndex.racket_config_digest`: an index built before the stamp existed
+#   has NO such meta key, and a local index holding Racket files with no key
+#   re-parses once (`tools/_utils.racket_reparse_reason`). Unlike a skipped
+#   bump, that stays repairable later -- an absent key is detectable at any
+#   date, where a stamp equal to the constant is not.
+#
+# gen 5 (1.108.302-dev): RUST EXTRACTION -- three definition classes that
+#   yielded no symbol at all.
+#
+#   `union Foo { .. }` was absent from RUST_SPEC entirely; a trait method with
+#   a signature and no default body is a `function_signature_item`, a different
+#   node type from `function_item`, so the half of a trait an implementor MUST
+#   provide was the half we could not find; and a `const`/`static` inside a
+#   function body was excluded by the locals gate.
+#
+#   ⚠⚠ SYMBOLS on UNCHANGED CONTENT, which is the clearest case this counter
+#   has. Unlike `.mts`/`.cts` (an extension nobody had parsed, so coverage
+#   arriving through DISCOVERY) and unlike #548's Racket (same), every `.rs`
+#   file in an existing index was already parsed at gen 4 with the old symbol
+#   set. Incremental never re-reads unchanged content, so without a bump those
+#   definitions stay missing forever.
+#
+#   ⚠ Measured on ripgrep @ 3fce3b5b: 3474 -> 3514 symbols (+1.2%), coverage
+#   95.0% -> 95.8%, and `missing_unexplained` went from three kinds to none.
+#   `benchmarks/rust_fidelity/` is the artifact; `extra` and `wrong_span` stay
+#   at 0 either side.
+#
+# gen 6 (1.108.303-dev): max_nesting could not see Python's control flow.
+#
+#   `_max_nesting_depth` counted BRACKETS to stay language-agnostic. In a brace
+#   language `{` tracks blocks; in Python `if`/`for`/`while` open a block with a
+#   colon and an indent and contribute NO bracket depth, so the field reported
+#   the deepest EXPRESSION instead -- a different quantity under the same name.
+#
+#   ⚠⚠ Measured on this repo's `index_folder`: brackets 3, AST truth 6. An
+#   underreport by HALF on the one axis that separates a wide flat dispatcher
+#   from deeply tangled logic, i.e. it supported the opposite conclusion about
+#   the symbol. Now max(bracket, indentation), which can only raise a depth, so
+#   brace languages and minified bodies are unchanged.
+#
+#   ⚠ SYMBOLS on UNCHANGED CONTENT again, same argument as gen 5: max_nesting is
+#   stored per symbol, incremental never re-reads unchanged files, so without a
+#   bump every existing index keeps the wrong depth forever.
+#
+#   ⚠ Second bump in two releases. That is the cost of this counter being
+#   MANUAL, not a reason to skip one -- and the value is user-facing via
+#   get_symbol_complexity, get_hotspots, get_extraction_candidates and
+#   get_pr_risk_profile. It feeds NO score, so no grade moves.
+# gen 7 (1.108.303-dev): Rust impl methods had no owner.
+#
+#   `impl Foo { fn new }` and `impl Bar { fn new }` both emitted a bare `new`,
+#   kind `function`, parent None -- distinguished only by a `~1`/`~2` suffix on
+#   the id. The trait's own declaration qualified correctly (`T.go`), so traits
+#   had an owner and impls did not. `impl_item` sat in `symbol_node_types`
+#   mapped to "class" for the extractor's whole life and never produced one
+#   symbol, because no `name_fields` entry could name it -- and a container
+#   becomes a parent only if it EMITTED one.
+#
+#   ⚠⚠ Measured on ripgrep @ 3fce3b5b: 1,331 of 3,514 symbols (37.9%) shared a
+#   bare name with a sibling in the SAME file, across 44 of 110 files.
+#   `crates/core/flags/defs.rs` alone repeated `is_switch` 108 times, one per
+#   flag. After: 55 (1.6%). Also +3 symbols -- `associated_type` (a trait's
+#   `type Carried;`) was absent from the spec, the same shape as gen 5's
+#   `function_signature_item`.
+#
+#   ⚠⚠ The fidelity harness scored all of this as a PERFECT run and could not
+#   have done otherwise: it keyed bare names in a SET, and a set cannot count.
+#   Proven by deleting the second symbol of every duplicated name in the
+#   fixtures -- `extra` and `missing` did not move. `undercount` and
+#   `qual_mismatch` now gate at 0 beside them, and the oracle emits `qual`.
+#
+#   ⚠ SYMBOLS on UNCHANGED CONTENT, third time running: `qualified_name`,
+#   `kind` (2,199 Rust symbols promoted `function` -> `method`) and `parent`
+#   are all stored per symbol. `search_symbols`, `find_references` and
+#   `check_rename_safe` all read them, so an unbumped index keeps answering
+#   `Foo::new` and `Bar::new` as one name forever.
+PARSER_GENERATION = 7
 
 
 @dataclass(frozen=True)
@@ -208,6 +357,8 @@ class CodeIndex:
     branch: str = ""                 # Git branch name at index time (empty = base/default branch or non-git)
     file_cap_status: dict = field(default_factory=dict)  # v1.108.126: {truncated, files_discovered, files_indexed, files_skipped_cap, max_folder_files} when the max_folder_files walk cap dropped files; {"truncated": False} otherwise. Empty = pre-v1.108.126 index (unknown).
     parser_generation: int = 0  # v1.108.244: extraction-semantics generation this index's symbols were produced by. ⚠ Defaults to 0 (= unknown/legacy) deliberately: a construction site that forgets to carry it costs one re-parse, while defaulting to the current generation would silently certify symbols nobody re-parsed.
+    racket_config_digest: Optional[str] = None  # config.racket_config_digest() at save time: `racket_definition_forms` + `racket_langs` change what the Racket parser emits for UNCHANGED content, and the incremental path never re-reads unchanged content, so a mismatch at the next index forces one full re-parse. Same rule as parser_generation, scoped to one project's config. ⚠ None means NEVER STAMPED (the meta key is absent): an index built before the stamp existed. A local index holding Racket files with None re-parses once. ⚠ That was written to stand IN PLACE OF a PARSER_GENERATION bump (#556), and 1.108.303 bumped the counter to 7 anyway for an unrelated Rust fix -- so those particular indexes are reached twice over. The stamp is not redundant: a bump fires once per release, and this fires whenever a PROJECT edits `racket_definition_forms` or `racket_langs`, which no global counter can see. "" is a stamped, unconfigured project and never differs from itself.
+    racket_reader_generation: Optional[int] = None  # racket_reader.READER_GENERATION at save time, stamped beside the digest above under the same rule (every LOCAL index holding Racket files; None = never stamped = parsed by tree-sitter). A mismatch forces one full re-parse with reason `racket_reader_changed`, so a reader change reaches exactly the indexes that hold `.rkt` files without a PARSER_GENERATION bump for everybody.
     coverage: dict = field(default_factory=dict)  # v1.108.145: coverage contract for absence claims — {files_discovered, files_indexed, skip_counts{reason:count}, no_symbols_count, walk, recorded_at} from the last full discovery walk. Empty = unknown (pre-upgrade index or no full walk recorded).
 
     def __post_init__(self) -> None:
@@ -240,6 +391,19 @@ class CodeIndex:
                     self.psr4_map = build_psr4_map(self.source_root)
             except Exception:
                 pass
+        # Racket: a collection path names a DIRECTORY declared by info.rkt,
+        # so `(require foo/bar)` from `foo-lib/` resolves through a map the
+        # way PHP's PSR-4 does. The map's edges are ADDED here, beside the
+        # collection-path edge, rather than threaded through the resolver's
+        # 26 call sites (the #550 shape). Runs at construction, so an index
+        # built by the indexer carries them into its save, and an older index
+        # gains them on load; idempotent, so both are safe.
+        if self.imports and self.source_root and "racket" in (self.languages or {}):
+            try:
+                from ..parser.imports import augment_racket_collection_edges
+                augment_racket_collection_edges(self.imports, self.source_root, self._source_file_set)
+            except Exception:
+                logger.debug("racket collection edges unavailable", exc_info=True)
 
     def get_callers_by_name(self) -> dict[tuple[str, str], list[str]]:
         """Lazy reverse lookup: (caller_file, called_name) -> [symbol IDs].

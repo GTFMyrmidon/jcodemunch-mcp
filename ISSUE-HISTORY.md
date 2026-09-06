@@ -14,6 +14,156 @@ The standing lessons drawn from these entries live in `CLAUDE.md` under
 
 ---
 
+**1.108.307 — "A phase boundary drawn at the wrong place" (2026-08-29).**
+Rotated out of CLAUDE.md's Current State on 2026-08-30 under Maintenance
+Practice 5, verbatim. Lessons it earned are in CLAUDE.md: derive a skip list
+from its authority, a cache invalidated on every write is not a cache, and a
+phase boundary drawn at the wrong place names the wrong subsystem confidently.
+
+- **Prior (1.108.307):** **A phase boundary drawn at the wrong place.** #557 (@Ticki84) closed by the reporter, who cloned the repo and instrumented his own long-running `watch-all` after three of our hypotheses died on the thread. ⚠⚠ **`_walk_tsconfigs` descends into Rust's `target/` on EVERY watcher event: 13.58s of a 13.75s reindex, against 0.27s once excluded** — and it fires even when the watcher reports `no indexable changes`, which rules out parsing and persistence by itself. ⚠⚠ **`_TSCONFIG_SKIP_DIRS` WAS THE FOURTH COPY OF A SKIP LIST IN THIS TREE AND THE ONLY ONE DERIVING FROM NOTHING**, while `security._SKIP_DIRECTORY_NAMES` already contained `target` (rules at `imports.py` / `security.py`). **Adding `"target"` was the REPORTED fix and would have been our own "fix the call site, leave the mechanism" error.** ⚠⚠ **Second half: `index_folder` evicted the alias-map cache UNCONDITIONALLY**, so every watcher-driven single-file re-index re-paid the walk that `_load_tsconfig_aliases`' module-level cache exists to make once. **A cache invalidated on every write is not a cache** (`index_folder.py`): a targeted run keeps the map unless a tsconfig was touched; a run that cannot know still evicts. ⚠⚠ **THE RELEASE'S REAL LESSON IS ABOUT OUR OWN INSTRUMENT: .304's phase breakdown blamed `save=9.906s` and we believed it.** `save` includes rebuilding the in-memory `CodeIndex` after the SQLite transaction, and THAT reconstruction triggers the walk — so **a phase boundary drawn at the wrong place names the wrong subsystem CONFIDENTLY, which is worse than no breakdown at all**: it sent us hunting lock contention that was never there, and `process_locks.waited_seconds` (shipped in .305 for this) correctly reported nothing. ⚠ The build-tree regression asserts BEHAVIOUR, not timing: a poisoned `tsconfig.json` inside `target/` whose aliases must never appear in the map, which holds on any machine at any speed. A separate test fails if the skip set is re-hardcoded — **the derivation is the fix; `target` being present is only its first visible consequence.** ⚠ Measured here 0.617s -> 0.003s on a synthetic 9,200-entry `target/`, and that is a LOWER BOUND on a synthetic tree, not his number. [[grep-a-persisted-field-for-its-readers]] [[close-on-criteria-not-on-judgment]]
+
+---
+
+**1.108.306 — "A count taken after the page, and a field nobody read"
+(2026-08-28).** Rotated out of CLAUDE.md's Current State on 2026-08-29 under
+Maintenance Practice 5, verbatim. Standing lessons it earned are in CLAUDE.md:
+a count taken after the page describes the page, a refusal is not a zero, and
+grep a persisted field for its readers.
+
+- **Prior (1.108.306):** **A count taken after the page, and a field nobody read.** Four issues from @lilubot, two sharing a root cause and a third falling out of the first. ⚠⚠ **`get_untested_symbols` computed `untested_count = len(symbols)` AFTER the `max_results` slice and derived `reached_pct` from it, and `get_repo_health` asks for `max_results=1` because it "only needs the count"** — so the PUBLISHED health/radar test axis read ~100% reach on every repository with untested code (**4,893 of 6,352, 23.0%, published as 100**). It reached the grade and the observatory. ⚠⚠ **The sweep for other instances found NONE, and that is the finding** — `find_importers`/`find_references`/`get_dead_code_v2` all count before slicing. Invisible to any single call; `test_counts_survive_truncation.py` holds the property. ⚠⚠ **`detect_framework` persists `entry_point_patterns` into `context_metadata` on every index, and a tree-wide search found that key WRITTEN IN ONE PLACE AND READ IN NONE.** Three tools each reproduced their own answer to "is this a root?" and every one was Python (`_ENTRY_POINT_FILENAMES` is eleven `.py` names plus `Makefile`), so a Next.js repo detected ZERO entry points: v2 returned `dead_symbols: []`, and 203 of 366 "unstable" files were `route.ts` handlers whose Ca is 0 BY CONSTRUCTION. ⚠⚠ **Consuming that field naively would have been FAR WORSE than the defect: Flask and FastAPI shipped `"*.py"` in it**, and under fnmatch a `*` crosses `/`, so the first reader would have declared every Python file in a Flask repo a live root — dead-code detection off across an ecosystem, silently, with those repos' coupling denominators emptied. Removed at the source AND refused by `_is_catch_all`, gated over every profile; **directory SCOPE is what saves a pattern** (`routes/*.php` fine, `**/*.php` not). ⚠⚠ **Coupling excludes entry points from the DENOMINATOR as well as the numerator** — numerator-only shrinks a count without shrinking what it is a fraction of, **the 84.0 B -> 88.8 B sign error of .305 pointing the other way**. So an entry point with a real `Ce` problem is graded by nothing; the count and profile are disclosed. ⚠ Only the DETECTED profile excludes (see `get_repo_health.py`). ⚠⚠ **A REFUSAL IS NOT A ZERO** — v2 returning `[]` WITH a `signal_warning` became `dead_code_pct: 0.0` and an axis of 100, the strongest claim assembled from an admission that nothing was established; it withholds composite and grade through .305's own `unmeasurable_axes` now. ⚠ Toolchain manifests leave the dead-code population by NAME (nothing imports a lockfile by design; **`package.json` was reported dead by the same run that READS it to find entry points**) — never by extension, so an orphaned `data/fixtures.json` is still a finding. ⚠ #560 was VERIFIED, not fixed: all four type-only import spellings resolve. Tested anyway, because the claim rested on nothing. ⚠⚠ **Found on the way: THREE consumers reading keys their producers never emit, two in one renderer** — the post-task untested diagnostic and `assemble_task_context`'s audit stage were dark for their whole lives. **The test guarding the first was the reason nobody noticed: its mock returned the INVENTED key**, and a fabricated producer makes an absent-key defect structurally invisible to a test written about that exact code path. ⚠⚠ **The unmocked replacement PASSED against the reintroduced defect on its first version** — it asserted the name appeared in the message, and the name appears in three sections. **An assertion that does not name which producer put the string there proves nothing about that producer.** [[a-mock-can-supply-a-contract-the-producer-lacks]] [[grep-a-persisted-field-for-its-readers]]
+
+---
+
+**1.108.305 — "Only the reader was never fixed" (2026-08-28).** Rotated out
+of CLAUDE.md's Current State on 2026-08-29 under Maintenance Practice 5,
+verbatim. Standing lessons it earned are in CLAUDE.md: the shallow-clone
+reader, NOT APPLICABLE vs COULD NOT MEASURE, `.get(k, default)` is not a None
+guard, the host timezone selecting a test's input format, and the sdist
+allowlist.
+
+- **Prior (1.108.305):** **Only the reader was never fixed.** Nine tools run `git log --since=N days`; a shallow clone answers every churn question with a small number and exit 0, so `churn_surface` ranked nothing but complexity and the grade came out FLATTERING. ⚠⚠ **We had fixed this TWICE — Practice 6's Action `fetch --depth=1`, and the observatory's cloner (81.3 B vs 75.6 C at ONE identical commit) — and both times we made OUR clones deep.** `actions/checkout` defaults to `fetch-depth: 1`, so every user running the Action or `jcodemunch-mcp health` in their own CI kept the defect **on their own pull requests**. Third instance of the standing lesson. ⚠ `tools/_git_history.py` asks COVERAGE, not shallowness, tri-state. ⚠⚠ **THE FIRST FIX MADE THE NUMBER WORSE, which is the release.** Omitting `churn_surface` the way `runtime_coverage` is omitted took the tree **84.0 B -> 88.8 B** against a truth of **77.3 C**: dropping a LOW-scoring axis RAISES a mean. **NOT APPLICABLE and COULD NOT MEASURE are different states and only the first may be dropped silently.** `compute_radar` takes `unmeasurable_axes` and **withholds composite AND grade**; measured axes stand. Default path byte-for-byte unchanged. ⚠⚠ **Two `None` sites the tests then found, both user-facing**: `diff_radar`'s `.get("composite", 0.0)` — **the default NEVER fires for a present key holding None** — and `_verdict`, which would have printed **"no meaningful change"** on a contributor's PR on the one occasion nothing was measured. ⚠⚠ **CI caught a 3.10 break I could not reproduce on ANY local version: git renders a UTC offset as `Z`, unparseable by `fromisoformat` before 3.11 — and git only emits `Z` on a UTC host.** Runners are UTC, this box is CDT and got `-05:00`. **The host's timezone selected the input format**, so the version matrix was not the axis; the guard is a UNIT test over all four spellings. The tri-state held under the fault (`complete: None`, not a wrong verdict). ⚠⚠ **Also: `relnotes.md`, a scratch copy of the release notes, SHIPPED INSIDE THE PUBLISHED 1.108.304 SDIST** via `git add -A`. The canary tests prove NAMED bad paths are absent and could never have caught it — **a denylist catches the instance, an allowlist catches the class** — and `ALLOWED_ROOT_FILES` found a SECOND instance minutes later: `suite.log`, from this session's own gate runs. ⚠⚠ **@Ticki84 ran the new breakdown on the first build that had it and it answered at once: `save=9.906s` of a `10.000s` total, everything else summing to 0.094s** — the cost is entirely `incremental_save`. **That lock is taken BEFORE the write, so from the caller's timer a CONTENDED LOCK and a SLOW WRITE are the same number**; `process_locks` now reports `waited_seconds` and NAMES the holder past 1s. ⚠ The round `10.000s` says contention, but that is a HYPOTHESIS and shipping the instrument beats asking the reporter to test it — three earlier ones on this issue were each measured dead by him. [[a-module-that-imports-clean-has-been-tested-for-nothing]] [[a-one-directional-check-certifies-its-blind-side]]
+
+---
+
+**1.108.304 — "Three hypotheses, each measured, each wrong" (2026-08-28).**
+Rotated out of CLAUDE.md's Current State on 2026-08-29 under Maintenance
+Practice 5, verbatim. ⚠⚠ **Read it beside 1.108.307**: the phase breakdown
+this release shipped is the instrument that then blamed `save=`, and #557's
+real cause turned out to be inside that phase boundary rather than the
+subsystem it named.
+
+- **Prior (1.108.304):** **Three hypotheses, each measured, each wrong.** #557 (@Ticki84, Windows, ~10s to reindex one file where `index_file` took ~0.2s) drew an old version, the watcher's hash-cache reload, the `JCODEMUNCH_INDEX_CACHE_TTL` cliff and context providers. He answered all of it: **1.108.303, TTL unset, providers confirmed off FROM THE LOG'S OWN SILENCE, and the DEBUG line's `(10.31s)` is `index_folder`'s OWN duration** — so the time is inside indexing and every hypothesis we offered is dead. ⚠⚠ **He answered SIX HOURS BEFORE our next comment, which re-asked all three.** ⚠⚠ **What the hunt found instead: the fast path OPENED with `store.load_index(owner, repo_name)  # always load base for branch check`** — a full symbol hydration on every watcher event, INSIDE the block whose entire purpose is to skip loading the index and THREE LINES ABOVE the `use_memory_hash_cache` flag that exists to make the store's hashes unnecessary. **The saving that flag names was never realised on a cold read, because this ran first regardless.** Every question that path asks of it is metadata (`branch`, `git_head`, `file_hashes`, `has_source_file`, the two re-parse stamps), so it is a `SelectiveIndexView` now: **zero symbol rows, 0.172s -> under 1ms cold on 13,906 symbols.** ⚠⚠ **`parser_generation` and `racket_config_digest` HAD TO JOIN `EXACT_FIELDS` or the fix moves the cost instead of removing it** — absent from that tuple they fall through `__getattr__`, which promotes, so the per-event upgrade check would still load every symbol to read one integer. **If it lives in a `meta` row it belongs in `EXACT_FIELDS`.** ⚠⚠ **The test asserts `promoted is False`, NOT that `open_selective` was called** — the mechanism check stays green while a newly added `existing_index.symbols` hydrates the corpus behind it, which is the only regression worth catching (Practice 9's shape, caught at authoring time for once). 4 of 5 new tests fail pre-fix; the 5th guards a future regression and is honestly vacuous today. ⚠ **NOT his 10s and the thread says so** — his index is 6,352 symbols, where that load costs under a tenth of a second here. Shipped because it is wrong. ⚠⚠ **So the release's real deliverable is the INSTRUMENT: the watcher's re-index line now splits its own duration** (`[base_index= classify= read_hash= parse= git_head= save=]`, also `phase_seconds` on the result). Three rounds of guessing spent a reporter's patience; one line of one log now names the subsystem. ⚠ **A full walk emits NO breakdown rather than a zeroed one** — an empty bracket would read as "the fast path ran and cost nothing", the opposite of what happened, so absence means the fast path was not taken, which is the first thing worth knowing. ⚠ **Practice 10's first real case, and it held**: touched files 122 tests in 10s, suite once as the gate at 10:18. ⚠⚠ **A background-task banner reported "exit code 0" for a suite that NEVER RAN** (`--timeout` plugin absent, pytest exited on argparse). Only the log's own `EXIT=` line is evidence; the banner is not. [[a-trailing-command-hides-pytests-exit-code]] [[a-module-that-imports-clean-has-been-tested-for-nothing]]
+
+---
+
+**1.108.303 — "The measurement was the defect" (2026-08-27).** Rotated out of
+CLAUDE.md's Current State on 2026-08-28 under Maintenance Practice 5, verbatim.
+The standing lessons it earned are in CLAUDE.md under **Standing lessons**
+("a set cannot count", "a competitor's fix list is a free defect probe").
+
+- **Prior (1.108.303):** **The measurement was the defect.** Five instruments reported a good number about something they could not observe, and four of them were ours. ⚠⚠ **THE RUST FIDELITY HARNESS, SIX DAYS OLD, GRADED A 37.9% NAME-COLLISION RATE AS A PERFECT RUN — it keyed bare names in a SET, and a set cannot COUNT.** Proven by deleting the second symbol of every duplicated name in the fixtures: `extra` and `missing` did not move, so extracting ONE of `defs.rs`'s **108 `is_switch`** scored like extracting all 108. What it hid: `impl Foo { fn new }` and `impl Bar { fn new }` both emitted a bare `new`, kind `function`, parent None, separated only by a `~1`/`~2` id suffix — **the trait's own declaration qualified fine (`T.go`), so traits had an owner and impls did not.** `impl_item` sat in `symbol_node_types` as `"class"` for the extractor's whole life and never produced ONE symbol (no `name_fields` entry could name it), **and a container becomes a parent only if it EMITTED one** — so it is a virtual scope now, emitting nothing, which is what `syn` says an impl block is too. ripgrep @ `3fce3b5b`: 1,331/3,514 (37.9%) across 44/110 files -> **55 (1.6%)**; 2,199 symbols move `function` -> `method`. ⚠ `undercount` and `qual_mismatch` gate at 0 beside `extra`/`wrong_span`; the oracle emits `qual` and tracks its scopes. **The owner is `self_ty`, NEVER the trait** — `impl Display for Foo` puts `fmt` on `Foo`, and keying on `Display` is the same collision one level up. ⚠ Two more gaps fell out of the new buckets, invisible to everything that shipped: a `const` inside an `impl` came out bare (35 in ripgrep) because `_constant_symbol` hardcodes `qualified_name = name`, and `associated_type` (a trait's `type Carried;`) was absent from `RUST_SPEC` — `.302`'s `function_signature_item` again. ⚠⚠ **`tests/test_rust_fidelity.py` listed its three fixture names as a LITERAL in every `parametrize`** — a SECOND roster beside the frozen artifact, where only the artifact had a test keeping it honest; the new `qualification.rs` was ungated on arrival. Read off disk now. ⚠ **Practice 9 fired again**: `test_rust_fn_in_impl` asserted `kind == "function"` under the docstring *"Without the impl parent being extracted, 'new' appears as a top-level function"* — the defect written down as intended behaviour, passing only while it existed. `PARSER_GENERATION` **6 -> 7** (`qualified_name`/`kind`/`parent` on unchanged content). ⚠⚠ **#556 by @otherjoel is THIRTEEN of the eighteen entries** — twelve findings, one per commit, each measured against Racket's EXPANDER, Racket's READER, or five real package layouts on disk rather than against our own output. `#lang` is read before the grammar runs (`#lang punct` was indexing Markdown code samples; `conscript` lost 61% of definitions and FABRICATED ~100 that error recovery re-parented to module level); collection paths resolve through `info.rkt` (splitflap 0/70 -> 13 edges, congame 304 -> 624); **the `define-generics` exemption was REMOVED rather than widened, because `extra: 0` was carrying a fabrication.** ⚠ He declined the `PARSER_GENERATION` bump ON PURPOSE and substituted a per-project `racket_config_digest` stamp — **an absent key is detectable forever, a stamp equal to the constant is not**, our own `.302` lesson used against us correctly. We bumped to 7 anyway for the Rust fix, so those indexes are reached twice; **the stamp is NOT redundant** — it fires when a PROJECT edits `racket_langs`, which no global counter can see. ⚠ Also: **`.next`/`.nuxt`/`.output`/`.svelte-kit`/`.angular`/`.turbo`/`.parcel-cache`/`.dart_tool` were indexed as source** (`.next/server/**` is a TRANSPILED copy of the user's own pages — the `_build` defect a FOURTH time); **the observatory scored eleven public repos on ONE COMMIT** so `churn_surface` read churn 1 everywhere and ranked nothing but complexity (jcm 81.3 B -> 75.6 C, i.e. we were FLATTERING ourselves); **`max_nesting` counted brackets**, which in Python measures the deepest EXPRESSION (`index_folder`: 3 reported, AST truth 6); and the codex cache-hit-rate cut **cannot separate its arms BY CONSTRUCTION** — it is a ratio, so the arm with the least schema scores highest. ⚠ Three of the five were found by reading a competitor's fix titles against our tree. [[a-competitors-fix-list-is-a-free-defect-probe]] [[a-guard-covered-only-by-positive-tests-can-be-deleted]]
+
+---
+
+**2026-07: Codex tool-surface benchmark forensics.** Rotated out of CLAUDE.md
+on 2026-08-28 under Maintenance Practice 5. The STANDING warnings stay there;
+this is the full original section, verbatim.
+
+### Codex tool-surface benchmark (`benchmarks/codex_surface/`) — NEGATIVE result
+
+⚠ Shipped in 1.108.271. Kept here rather than in the rotation because it is a
+STANDING warning about a measurement, not a release note that ages out.
+
+⚠⚠ **Do not quote the arm numbers; the honesty gate fired.** Four arms x three
+repeats on FastAPI at a pinned commit, answering an
+[r/codex benchmark](https://www.reddit.com/r/codex/comments/1vjfepe/) that put
+jCodeMunch at **+28.45% on Codex** and **-3.34% on OpenCode**. Largest arm
+difference 568,617 tokens against a baseline varying against ITSELF by
+1,143,229. Directions were incoherent too (`full`, carrying 24,007 tokens of
+schema, came out CHEAPER than baseline). The hypothesis is **untested, not
+disproven** — the instrument cannot resolve an effect that size.
+
+⚠⚠ **The finding that outlived the arms, and it corrects a claim this project
+made: 86% of baseline input is CACHED.** The schema block is stable across
+requests, so it is paid at full rate roughly ONCE and at cache-read rates after.
+Any framing of "24,007 tokens in every request" is wrong, and that framing was
+used here before measuring. **The fixed-cost story is a WEAKER explanation for
+the r/codex result than the raw number suggests, not a stronger one.**
+`--surface-only` still measures the schema exactly (90 tools / 24,007 tokens at
+default `full`, 6 / 1,030 at `counter`) and needs no API credits; what it does
+not measure is what that costs in practice.
+
+⚠ **Those two numbers are a 2026-07 snapshot from THIS harness and are not the
+canonical figures.** `benchmarks/schema_baseline.json` is, written by
+`benchmarks/harness/capture_schema_baseline.py` and guarded by
+`tests/test_schema_budget.py`; it counts a different payload shape, so the two
+sets will never agree digit for digit and neither is wrong. Quote the baseline
+file. ⚠⚠ **Reconciled 2026-08-14: the Counter avoids 95.9%, not the ~98% that
+`run_route_recall.py` asserted for two months** — that literal is now computed
+from the baseline at runtime, with a test that fails if any schema-saving
+percentage returns to that file. **The gap existed because the budget guardrail
+only walked `tool_profile`, which does not apply to the front door at all**, so
+the single largest lever in the project had no test under it.
+
+⚠⚠ **The same run killed `tool_profile: "standard"` as a token lever: it drops 9
+of 91 tools and 5.7% of the payload.** Anyone selecting it as the safe middle
+setting gets nothing measurable. `core` (74.0%) and `counter` (95.9%) are the
+only two settings that move the number; there is no gradient between them, and
+the config surface currently implies there is. ⚠ Where the rest sits, from
+`--breakdown`: under `full`, tool DESCRIPTIONS are 36% of the payload and
+`compact_schemas` rewrites input schemas only, never descriptions. Schema
+compaction is near its floor; descriptions are untouched ground.
+
+⚠ Design flaw recorded so nobody repeats it: summing per-invocation input across
+a RESUMED conversation counts accumulated context on every step, so the total is
+dominated by how much the agent read early on, which compounds.
+
+---
+
+**2026-08-24: #536 closed MANUALLY against the PUBLISHED artifact, and the first
+probe was wrong.** Rotated out of CLAUDE.md's `server.py` Key Files entry on
+2026-08-28 under Maintenance Practice 5; the rule it earned stays there.
+
+A real stdio handshake to `jcodemunch-mcp==1.108.293` in a clean venv returns
+`serverInfo {"name":"jcodemunch-mcp","version":"1.108.293"}` and a non-empty
+`instructions`. This had to be done by hand because `__version__` is `"unknown"`
+under `PYTHONPATH=src` — so a green test does not prove the wire carries a real
+number, **and CI cannot close that gap either, because it runs from source too.**
+
+⚠⚠ **The first probe was WRONG and the reason generalises: `uvx jcodemunch-mcp`
+served a CACHED 1.108.275**, which predates both fixes, so the wire showed the
+SDK's own version and no instructions — i.e. **exactly the pre-fix symptoms,
+from a stale cache rather than a defect.** Pin the version and build a fresh venv
+(`uv venv` + `uv pip install "jcodemunch-mcp==X.Y.Z"`); never probe through bare
+`uvx` and never read its output as evidence about what we ship.
+
+---
+
+**2026-08-25: `refresh.py`'s coverage check asked only whether the corpus GREW,
+and for its whole life could not see the opposite failure.** Rotated out of
+CLAUDE.md's Key Files entry on 2026-08-28 under Maintenance Practice 5; the RULE
+it earned stays there, this is the incident.
+
+A source root that has moved, been unmounted, or been cleaned makes discovery
+return `[]`, so `current` and `known` are both empty, nothing drifts, nothing
+errors, and the campaign stamps the target `parser_generation` having re-parsed
+ZERO files. **UNREPAIRABLE — a stamp equal to the constant is indistinguishable
+from a genuine one, so the tool built to prevent the exempt bucket was putting
+indexes INTO it.** It now refuses on `corpus_unreadable` (discovery empty, index
+not) and `index_unreadable` (`_index_files` returned None — UNKNOWN blocks, the
+same rule as `has_any()`).
+
+⚠ EMPTY-vs-NON-EMPTY deliberately, NOT a shrink threshold: a repo may
+legitimately lose most of its files, so partial shortfall is DISCLOSED as
+`indexed_files_not_reparsed` rather than guessed at.
+
+⚠ **Found by running the documented command on the three pinned benchmark
+corpora** — bare `.git` dirs, 8,220 stale symbols, all three stamped in under a
+second. The lesson is in Standing lessons as
+"a one-directional check certifies its blind side".
+
+---
+
 **2026-08-18: #488 DECIDED BY JJG — OPTION A, "explicit config outranks the
 zero-config ONNX default", with disclosure.** NOT YET IMPLEMENTED; queued behind
 #495. `_detect_provider` will check `embed_model` / `JCODEMUNCH_EMBED_MODEL` and
@@ -1160,6 +1310,8 @@ and it is live third-party-controlled content in a README that also renders on P
 Rotated out of `CLAUDE.md` **Current State** under Maintenance Practice 5
 (3 newest releases), verbatim. Newest first.
 
+- **Prior (1.108.295):** **What the guard could not see.** Four items, three of them a check that could not observe the thing it claimed to check. **(1) `_build`.** We skipped `build` and `.build` and NOT the underscore spelling — what Elixir/Mix, Sphinx and Dune use. ⚠⚠ **`mix` copies dependency SOURCES into `_build`, so an Elixir project indexed EVERY dependency symbol twice** and the copies competed with the originals in ranking: the v1.108.234 duplicate-source-tree defect wearing a third name. ⚠ Bounded by gitignore, listed anyway — `build/` is in that same gitignore. **(2) The strict deny (#541).** `_bash_targets_outside_roots` reads path tokens out of the RAW command string, so `grep ~/x.md` was ALLOWED and `grep $HOME/x.md` was DENIED — same destination, opposite verdicts. **A deny now requires a RESOLVABLE target**, the caution already applied to `find`, pipelines and `../`; it downgrades to a nudge, never to silence. ⚠⚠ **The detector is deliberately NOT a bare `\$`** — a trailing `$` is a regex end-anchor and `grep "foo$" src/` is idiomatic, so suppressing on any `$` would silently weaken the enforcement a strict user opted into. ⚠⚠ **A SECOND blindness surfaced FROM that test**: `_BASH_PATH_TOKEN_RE` matched only POSIX roots, so `/c/Users/j/x.md` was seen and **`C:/Users/j/x.md` was not** — a strict deny on a path outside every root, **on the platform most users are on**, with the verdict depending on how the drive was spelled. Genuinely resolvable, so a real fix not a downgrade. **(3) The cache hit-rate.** `analyze_perf` published `hit_rate` bare, where a hit is KEY-PRESENCE in the session LRU. arXiv:2608.20280 measured raw 51-60% falling to **1.1-2.2%** once validity was checked. ⚠⚠ **The system already knew the difference and the metric did not** — #377 item 3 revalidates cached ABSENCES, #404 re-annotates row freshness. Raw rate KEPT with `hit_rate_basis`, three buckets beside it, `hit_rate_revalidated` **None not 0.0** when nothing was validated. ⚠ Only `search_symbols` revalidates, so `hits_unvalidated` is non-empty BY CONSTRUCTION. **(4) Docs**: the `mcp_toolset` `default_config` defer path, and the vendor's **30-50 tools** degradation threshold against our 91. [[a-ratchet-can-pass-against-the-defect-it-names]]
+
 - **Prior (1.108.288):** **The reported surface was never the only one.** Four fixes; in three of them the report named one site and the tree held several — which is .287's own finding ("we fix the reported call site and leave the mechanism") acted on BEFORE shipping rather than after. **#447** (@elfrost) — `install-pack`'s pre-scan rejected a leading separator and `..`, necessary and NOT sufficient: `C:/Windows/Temp/evil.txt` carries neither, and `base / relative` **DISCARDS `base`** when `relative` is absolute, with `mkdir(parents=True)` running BEFORE the write. Confinement is by RESOLUTION now; the pre-scan stays as an early abort. ⚠⚠ **The rule had THREE spellings already** (`security.validate_path` + a private copy on each index store) **and the new call site would have been a fourth** — one definition in `security.resolve_within()`, both stores delegating, ratchet on a stray `commonpath`. ⚠⚠ **THE FIRST REGRESSION TEST PASSED AGAINST THE UNFIXED SOURCE AND ITS NON-VACUITY PASS WROTE A REAL FILE INTO A REAL WINDOWS SYSTEM DIRECTORY**: it named the reported path verbatim, so the escape went OUTSIDE the directory the assertion searched. **A test for an ARBITRARY-WRITE defect EXECUTES that defect every time you prove it is not vacuous — the target must be somewhere the test OWNS.** ⚠ Refusal deliberately NOT platform-pinned: `C:/...` is absolute on Windows and an ordinary name on POSIX. ⚠ **Implemented BY US at timebox expiry; elfrost found it, analysed it and wrote a correct fix #443 could not merge for CLA reasons — provenance stated on both threads.** **#517** (@marcelruhf) — `license = { file = "LICENSE" }` made PyPI publish the whole licence TEXT as `info.license`, so a commercial user had no identifier to allowlist. PEP 639 expression now. ⚠⚠ **He could see ONE surface; we declared it on THREE** — plugin.json and the mcpb manifest both said `LicenseRef-Dual-Use`, so an allowlist still needed two entries. ⚠ **The version suffix is load-bearing**: LICENSE 1.2 must produce a NEW identifier or consent to 1.1's terms is inherited by terms nobody read; the ratchet pins the suffix to the file's own `Version` line. ⚠ PyPI metadata is IMMUTABLE per version, so it starts HERE and 1.108.287 keeps the full text. **#515** (@rknighton) — `CONFIGURATION.md` documented `disabled_tools` as `[]` against a shipped `["test_summarizer"]`. ⚠⚠ **FOUR surfaces describe that default and the THREE that agree are the point** — template, `config --init` comment, and a TEST PINNING THE VALUE. **A value pinned by a test can still be mis-documented; the pin guards the value, not every claim about it.** Ratchet compares EVERY `Default` cell in the document. **#504** (@lsg1103275794, his PR) — the v1.96 collision guard assigned `_merge_with_existing` on a matching `git_root` with NO `walk_prefix` test, so a full-root re-walk could never reach the incremental branch and every scheduled freshness check rebuilt the corpus. ⚠ **DISCLOSED MIGRATION**: one rebuild per index to establish `source_roots == [""]`. [[push-to-the-fork-remote-by-name]]
 
 ---
@@ -1171,3 +1323,427 @@ The standing warnings drawn from these runs stayed in `CLAUDE.md`; what is here
 is the per-release evidence behind them.
 
 ⚠ Prior (1.108.286): 7976 passed, 17 skipped, **0 failed**; ⚠ Prior (1.108.285): 7945 passed, 17 skipped, **0 failed**; ⚠ Prior (1.108.284): 7894 passed, 17 skipped, **0 failed** **+ `uv run ruff check src/` clean**. ⚠ Reconciled by same-tree collect: **7911 with `test_code_index_path_is_honoured.py`, 7902 without = exactly its 9**, and 7902 is .283's total, so nothing else moved. ⚠⚠ **This release also measured the REAL STORE, which no pass count can show**: a full run now CREATES nothing under `~/.code-index` and emits no `_watcher_*.signal`, so the process-lock scopes are isolated. `_savings.json` and `session_stats.json` still move, because `token_tracker` was deliberately left on the home default (see Current State). **Assert the side effect, not just the exit code.** ⚠ Prior (1.108.283): 7883 passed, 17 skipped, **0 failed**, and the 3.13 CI-env reproduce returned the SAME totals AND the same skip split — stronger than the usual same-total-different-split. ⚠⚠ **TWO INDEPENDENT FALSE-GREEN MECHANISMS were found across these two releases and BOTH reported `exit code 0`.** (1) `PYTHONPATH=src python -m pytest tests/ -n 4 --dist loadfile` — **pytest-xdist lives in the dev group inside `.venv` and is INVISIBLE to a bare `python -m pytest`**, so pytest rejected the flags, collected NOTHING, and exited 0 while the harness reported success. **Use `uv run pytest` whenever xdist flags are passed.** (2) **A trailing `| tail` swallows pytest's exit status** — a run with one real failure was reported as "exit code 0", because the pipeline's status is tail's. **Write to a log and echo the exit code BEFORE any pipe**; every number in this line was obtained that way. ⚠ Local suite is `uv run pytest tests/ -n 4 --dist loadfile` at ~200-300s against ~600s serial; CI pins `-n 4`, deliberately not `-n auto`. Prior (1.108.282): 7849 passed, 10 skipped, **0 failed** **+ `uv run ruff check src/` clean**. Prior (1.108.281): 7848 passed, 10 skipped, **0 failed**. ⚠⚠ **Reconciled by a SAME-TREE COLLECT against `origin/main`, and arithmetic against the previous release line would have been wrong by 16** — `main` moved twice between .280 and this bump (#474's 14 tests, #477's 2), so the usual "delta from the last release" method had two unrelated merges inside it. **Pick the method that matches how the work landed.** Measured: **7858 collected on the branch vs 7847 on `d10490e`, +11.** Decomposition: `test_v1_108_281.py` **10**, plus a net **+1** from the ratchet rearranging — four languages leave `EXEMPT` and join `test_declared_constant_pattern_extracts_a_constant` (+4) while the four `test_exemptions_are_not_stale` cases collapse into ONE empty-parametrize item (-3). ⚠ **The 10th skip is that empty parametrize** and is the ratchet AT REST, not a lost test; it re-arms the moment anyone adds an exemption (same shape as `_JS_VARIANT_EXEMPT` in .273). ⚠ The release commit adds no tests, so the post-bump run reproduces the pre-bump 7848/10 exactly. ⚠ 3.13 CI-env reproduce **7842 passed / 16 skipped, the SAME 7858 TOTAL**, different skip split, via `uv run --python 3.13 --group dev --extra watch python -m pytest tests/ -q`. ⚠ Run SEQUENTIALLY after the local suite, never alongside it — two full runs share `~/.code-index` process-lock scopes and contention is the documented cause of .261's 47m outlier (.280 records the reversal). Prior (1.108.280): 7822 passed, 9 skipped, **0 failed** **+ `uv run ruff check src/` clean**. ⚠ Delta from .279's 7828 total is EXACTLY the 3 new `test_perf_db_path_resolution.py` tests, and that release carried no other code, so nothing else could have moved. ⚠⚠ **The two suites were run in SEQUENCE, not in parallel, and that was a deliberate reversal mid-release.** Both were started together, then the 3.13 arm was killed before it produced anything: two full runs on one box contend for the same `~/.code-index` process-lock scopes, and **contention is the documented cause of .261's 47m outlier**. A false red costs a re-run and, worse, a few minutes of reading a real-looking failure. **Sequence them; the wall-clock saving was never worth the ambiguity.** ⚠ 3.13 CI-env reproduce **7816 passed / 15 skipped, the SAME 7831 TOTAL**, different skip split, via `uv run --python 3.13 --group dev --extra watch python -m pytest tests/ -q` — without `--extra watch` it collects 105 fewer and reports a clean pass (see .278 below). Prior (1.108.279): 7819 passed, 9 skipped, **0 failed** **+ `uv run ruff check src/` clean**. ⚠ Delta from .278's 7808 total is EXACTLY the 20 new `test_schtasks_locale.py` tests; the release's other half is docs-only, so nothing else could have moved. ⚠ 3.13 CI-env reproduce **7813 passed / 15 skipped, the SAME 7828 TOTAL**, different skip split. Prior (1.108.278): 7799 passed, 9 skipped, **0 failed** **+ `uv run ruff check src/` clean**. ⚠ Reconciled by DECOMPOSITION against .277's 7797 total: `test_identity_normalized_tier.py` 10 (#458) + `test_schema_baseline_transcription.py` 2 (#467) **- 1 REMOVED** (`test_the_core_compact_schema_budget_is_unchanged`) = **+11**, and 7797 + 11 = 7808 exactly. **A removal is part of the delta and the usual add-only arithmetic hides it.** ⚠⚠ **THE DOCUMENTED 3.13 REPRODUCE COMMAND UNDER-COLLECTS BY 105 TESTS, and it reports a clean pass while doing it.** `uv run --python 3.13 python -m pytest tests/ -q` collected **7703** against the local 7808. The missing 105 are ENTIRELY three watcher files (`test_watcher_serve.py` 49, `test_watcher_lock.py` 40, `test_watcher_dynamic.py` 16), each gated on `pytest.importorskip("watchfiles")` — and `watchfiles` is an OPTIONAL extra. **CI installs it** (`uv sync --locked --group dev --extra watch`, `test.yml:84`); the documented command does not. **Use `uv run --python 3.13 --group dev --extra watch python -m pytest tests/ -q`** — that run is **7793 passed / 15 skipped, the SAME 7808 TOTAL**, different skip split. ⚠ **The totals convention is what caught it**: passed counts alone read as a plausible pass either way, and a whole subsystem being absent is invisible from `N passed`. ⚠ **Do NOT read this as .277's number being wrong** — 7782 + 15 = 7797 is internally consistent, so that run DID collect the watcher tests. `uv run` reuses an already-synced environment, so the same command can collect differently depending on what last synced it. **The command is unreliable, not that record.** Prior (1.108.277): 7788 passed, 9 skipped, **0 failed** **+ `uv run ruff check src/` clean**. ⚠⚠ **This release adds NO test file of its own and a flat delta would have been the RED flag on any other release** — every prior one ships a `test_v1_108_NNN.py`, so "no new tests" normally means the bump outran the work. Here the work landed across the day in #459/#462/#463/#464 and the release commit is version metadata + changelog + rotation only. **Reconciled by DECOMPOSITION rather than a same-tree collect**, because the collect diff has nothing to subtract: `test_html_file_class.py` 4 (#459) + `test_v1_108_277.py` 6 (#462) + `test_pid_reuse_identity.py` 10 (#451 via #464) + `test_claude_md_rotation.py` 4→9 = +5 (#463) = **25**, and .276's 7763 + 25 = 7788 exactly. ⚠ **Pick the reconciliation method that matches how the work landed**; applying the usual one here yields a zero and proves nothing. ⚠ 3.13 CI-env reproduce: **7782 passed / 15 skipped**, same 7797 TOTAL, different skip split — compare totals across interpreters, never passed counts. Prior (1.108.276) **+ `uv run ruff check src/` clean**. ⚠ Reconciled by same-tree collect: 7772 total, 7753 with `test_v1_108_276.py` ignored (= its 19); the **+5 over .275's 7748 is five new `def test_` functions in `test_tools.py`** from the #438/#439 drive-root work — COUNTED in `git diff v1.108.275..HEAD`, not inferred, because "nothing else moved" was not true this release and asserting it would have been the same shape of error the count notes below are about. ⚠⚠ **The 3.13 CI-env reproduce totals the SAME 7772 but splits 7757 passed / 15 skipped** — six tests that RUN on 3.10 SKIP there. **A passed-count comparison ACROSS interpreters is meaningless; compare TOTALS.** ⚠ **The 9th skip is the POSIX-only orphaned-inode test for #442** — Windows refuses to unlink a file with an open handle, so this box CANNOT produce that case. **Do not read that skip as cross-platform coverage**; it is a real local gap covered only by the portable unit test for the predicate. Prior (1.108.275) **+ `uv run ruff check src/` clean**. ⚠ Reconciled by same-tree collect: 7748 total, 7734 with `test_v1_108_275.py` ignored (= its 14), and 7734 is exactly .274's total, so nothing else moved. Prior (1.108.274) **+ `uv run ruff check src/` clean**. ⚠ Reconciled by same-tree collect: 7734 total, 7728 with `test_security_disclosure.py` ignored (= its 6), and 7728 is exactly .273's total, so nothing else moved. ⚠⚠ **This line was briefly written with a GUESSED number before the run finished, and the guess (7734) was the TOTAL rather than the passed count — it would have read as a plausible, wrong figure.** Never pre-write a count; the run is the only source. Prior (1.108.273) **+ `uv run ruff check src/` clean**. ⚠ Reconciled by same-tree collect: 7728 total, 7717 with `test_v1_108_273.py` ignored (= its 11), and the +1 over .272's 7717 is `next` ENTERING the #435 sweep now that its exemption is gone. ⚠ **The 8th skip is EXPECTED and is not a lost test**: `_JS_VARIANT_EXEMPT` is empty, so the ratchet parametrizes over an empty set and pytest skips it ("got empty parameter set"). That is the end state of a ratchet that did its job; it re-arms the moment anyone adds an exemption. ⚠⚠ **A version bump MID-RUN voids the run** — the rotation gate compares CLAUDE.md to `pyproject.toml`, so a suite spanning the bump is not evidence. Bump and rotate FIRST, then run once. (Done wrong on .273 and the run was discarded.) Prior (1.108.272) **+ `uv run ruff check src/` clean**. ⚠ Delta is EXACTLY the 9 new `test_v1_108_272.py` tests, reconciled by COLLECTING the same tree twice (7716 with the file, 7707 with it `--ignore`d) rather than by arithmetic against this line. ⚠⚠ **That method was forced, because this line was STALE by ~239 for two releases** — it read "7470 (1.108.269)" while .270's 31 and .271's 124 were never folded in, so the documented baseline was unusable as one. **A count that is only ever appended to during a release rots the moment a release skips it**; prefer a same-tree collect diff, which cannot go stale, and treat this number as a report rather than a baseline. ⚠⚠ **The count was mis-reported once during this release and the ARITHMETIC caught it, not the reading** — an intermediate run was quoted as "7469 passed, 0 failed", a combination that never happened: it was 7469 passed WITH 1 failed, totalling 7470. **Always reconcile passed+failed against the prior release's total plus the new test count**; eyeballing `N passed` at the end of a 17-minute run is how a red run gets read as green. ⚠ The failure was the CLAUDE.md rotation gate correctly refusing a Current State naming 1.108.269 while `pyproject.toml` still read .268 — **the gate fires BEFORE the version bump lands, so a red rotation test mid-release is expected and must not be waved through as "just the gate"**; it clears only when every pin site agrees. **Prior (1.108.268):** 7436 passed, 7 skipped, **0 failed** **+ `uv run ruff check src/` clean**. ⚠ Delta from .267's 7428 is EXACTLY the 8 new `test_stdio_guard.py` tests; nothing else moved. ⚠⚠ **The CLAUDE.md rotation gate caught a real mistake this release** — a 4th entry was added without demoting .267 or moving the `Older releases` boundary, and the gate failed the build rather than letting the history drift. **Prior (1.108.267):** 7428 passed, 7 skipped, **0 failed** **+ `uv run ruff check src/` clean**. ⚠ Delta from .266's 7404 is EXACTLY the 24 new `test_constant_extraction_guard.py` tests; nothing else moved. **Prior (1.108.266):** 7404 passed, 7 skipped, **0 failed** (isolated worktree run) **+ `uv run ruff check src/` clean + CI all 9 jobs green on the pushed SHA**. ⚠ The delta from .265's 7394 is EXACTLY the 10 new `test_format.py` cases; nothing else moved. ⚠⚠ **Nothing moving is itself the finding** — not one existing test pinned a fusion or semantic confidence value, which is precisely why a ~5x mis-scaling shipped and survived. ⚠ **+17 after .264 shipped**: the file-IO scanner needed TWO MORE iterations (see below), test-only, no bump. ⚠⚠ **A green suite is NOT a green build** — lint was RED for four releases while this line said 0 failed. Quote ALL THREE (suite, ruff, CI) from now on. ⚠⚠ **A green suite is NOT a green build** — lint was RED for four releases while this line said 0 failed. Quote BOTH numbers here from now on, and read the CI run for the pushed SHA. ⚠ **.261's run took 47m45s against ~16-17m before and after it on the same tree** — same counts, same result, so it was machine contention and NOT a signal. Do not treat a wall-clock outlier as a regression. ⚠⚠ **A config change is the one edit whose blast radius is the whole suite** - 128 test files touch `_GLOBAL_CONFIG` directly, so a "small" resolver change is never a small run. ⚠ **The "KNOWN 12 local-ONNX `test_semantic_search` env failures" are GONE** — .207's autouse `no_local_onnx` fixture fixed them, so a local run is now fully green and **any** red is a real signal. Do not carry that 12-failure allowance forward; it papered over a real failure once already (.197 had one hiding inside it). ⚠ **Still do not eyeball the COUNT** — diff the FAILED names against the same tree with your changes stashed; for .199 and .205 that diff was empty, and for .209 the failure set was empty outright, which is the one case that needs no baseline. ⚠ **Stashing is the wrong tool when the change is already committed and pushed** — for .205 the comparison ran in a throwaway `git worktree add --detach <pre-release-sha>`, which also survives a concurrent writer in the main tree.
+
+## Rotated from CLAUDE.md Current State at 1.108.301 (2026-08-26)
+
+- **Prior (1.108.298):** **A campaign that saw nothing must not certify everything.** `refresh`'s pre-stamp discovery asked only whether the corpus had GROWN (`current - known`) and for its whole life could not see the opposite failure: a source root that has MOVED, been UNMOUNTED, or been CLEANED makes discovery return `[]`, so `current` and `known` are both empty, nothing drifts, nothing errors, and the campaign stamps the target generation having re-parsed **ZERO files**. ⚠⚠ **UNREPAIRABLE, which is what lifts it above a wrong number** — a stamp EQUAL to the constant is indistinguishable from a genuine one, so **the tool built to drain the exempt bucket was filling it**, and the way in was running the documented command. Found on the three pinned benchmark corpora: bare `.git` dirs, 8,220 pre-`.246` symbols, all three stamped `2` in under a second each. Now refuses on `corpus_unreadable`; ⚠ `_index_files` returning `None` refuses too (`index_unreadable`) — UNKNOWN blocks, same rule as `has_any()`. ⚠ **EMPTY-vs-NON-EMPTY deliberately, NOT a shrink threshold**: a repo may legitimately lose most of its files, so the partial case is DISCLOSED as `indexed_files_not_reparsed` rather than guessed at. Also **re-measured the benchmark reference, stale 22 days**: 27.9x -> **27.4x** vs grep-top-3, 237.3x -> **233.4x** vs read-all — our side moving AGAINST us, which is the failure Practice 4 exists for. ⚠ gin is the clean parser signal (+81 symbols from `#428`, identical corpus); express/fastapi each gained 4 files at the SAME commit, which is COVERAGE not parsing, and fastapi's symbol count did not move at all. ⚠⚠ **EIGHT artifacts mirror one run, not four** — both sync tests passed with FIVE still on August-3 figures, including README's line-3 tagline and a table whose grand total and per-repo rows were 22 days apart.  **Also ships Racket (`.rkt`/`.rktl`/`.rktd`), #548 by @otherjoel** — a custom head-symbol walker, because the tree-sitter grammar is fully HOMOICONIC (no named `define`/`struct` nodes; `(...)` and `[...]` share the `list` type), same shape as the three Lisps already here. ⚠⚠ **The PR's own point is the MEASUREMENT, not the feature**: `benchmarks/racket_fidelity/` scores the extractor against Racket's own expander over 211 files / 3,526 definitions, with `extra` and `wrong_span` **BOTH 0** and gated in CI off frozen oracle data so the check runs with no Racket installed. `syntax-original?` separates human-typed names from macro-introduced ones — without it the gap looks several times worse than it is. ⚠ `missing` (485, 86.2% coverage, **152 of 211 files completely clean**) and `callable_unknowable` (212) are REPORTED not gated, because neither is reachable by parsing more carefully. ⚠ **No `PARSER_GENERATION` bump and the reasoning is theirs, verified independently**: that counter re-parses files ALREADY in an index; `.rkt` was `wrong_extension` everywhere, so Racket arrives through DISCOVERY. Coverage, not extraction. ⚠⚠ **Known and pre-existing, disclosed by them, affects EVERY language ever added**: an explicit `languages` list — which `jcodemunch-mcp init` WRITES — never picks up a new language, and `config --upgrade` only injects missing KEYS so it cannot repair a list. ⚠ `.scrbl` deliberately unsupported ON A MEASUREMENT: it parses with `has_error: False` and yields garbage, and a green parse with an empty result is worse than no support. [[a-one-directional-check-certifies-its-blind-side]] [[a-sync-ratchet-that-checks-the-total-misses-the-rows]]
+
+## Rotated from CLAUDE.md at 1.108.302-dev (2026-08-27)
+
+Section: 'Open threads — verify, do not quote'. Rotated because it named
+two issues whose state it could not vouch for and pointed at the live
+surfaces anyway, which is the rule it was restating.
+
+### Open threads — verify, do not quote
+
+`#375` (Linux stall, needs a re-run not a patch) and `#377` (Phase 2 P3 edges)
+were the last two carried here. Both may have moved. The catalog moratorium is
+tracked in `Current State` and `ROADMAP.md`, which are the live surfaces.
+
+## Rotated from CLAUDE.md Current State at 1.108.302 (2026-08-27)
+
+- **Prior (1.108.299):** **A name the file never spells.** Racket `struct` forms now contribute the bindings the macro generates — `posn?`, `posn-x`, `posn-y`, setters under `#:mutable`, `make-posn` for the `define-struct` family — **names that occur NOWHERE in the file text**, so they exist in an index only if synthesised. They share the struct form's byte range, so `get_symbol_source("posn-x")` returns the form that generates it. **#549 by @otherjoel**, a follow-up to his own #548. 3,060 -> 3,438 symbols on the 211-file corpus; a real Racket project 1,754 -> 1,935. ⚠⚠ **The PR's own headline is the FABRICATION its harness caught, not the feature**: emitting `make-<name>` for every `define-struct` invented `make-base-object/c` for `(define-struct base-object/c (...) #:constructor-name NEVER_CALL_THIS)` — `#:constructor-name` REPLACES the default constructor where `#:extra-constructor-name` ADDS one. One fabricated name in 211 files, caught by the `extra` bucket that must stay at zero, **on the author of the harness**. ⚠ **Own fields only** — `(struct derived base (c))` binds `derived-c`, not `derived-a`; the supertype occupies the slot before the field list, so the fields are the FIRST list child after the name, never a fixed index and never the last list. That one rule is also what stops `#:guard (lambda (a b n) ...)` and `#:property prop:procedure (lambda (s) 1)` being read as fields, and what resolves `(serializable-struct/versions posn 1 (x y) ())` to `(x y)`. ⚠ `serializable-struct` and `serializable-struct/versions` were absent from the form table entirely and produced **no symbol at all, not even the struct name**. ⚠ `struct:<name>` deliberately not emitted (ranking noise); `#:name`/`#:extra-name` emitted as `type`, because a struct-type transformer is not callable. **Also `PARSER_GENERATION` 2 -> 3.** ⚠⚠ **#548 shipped Racket WITHOUT a bump and was RIGHT; this one needs one, and the pair is the clearest statement of that line we will get**: `.rkt` was `wrong_extension` everywhere, so the LANGUAGE arrived through DISCOVERY — a file nobody parsed cannot hold a stale parse. But .297 and .298 both parse Racket, so an index built by either holds `.rkt` at generation 2 with the old symbol set and will never re-read it. **Coverage does not need a bump; extraction does.** ⚠ Scope NARROW — three extensions, window opened 2026-08-24 — and bumped anyway because the decision is cheap today and IMPOSSIBLE next week. Also **the Racket coverage figure had THREE mirrors and the PR regenerated one**: `results.json` went 86.2 -> 86.5 / `missing` 485 -> 475 while `LANGUAGE_SUPPORT.md` and the harness README kept the older run, green either side. `tests/test_racket_fidelity_artifacts.py` derives six figures from the artifact and checks the ROWS, not the headline; `clean_files` and the 10-worst total are derived from `per_file` because no summary field carries them. ⚠ Five assertions fail against the stale tree, three pass, and the three that pass are the figures the change genuinely did not move. [[a-sync-ratchet-that-checks-the-total-misses-the-rows]] [[a-manual-stamp-drifts-from-what-it-names]]
+
+
+## Rotated from CLAUDE.md: issue + release policy forensics (2026-08-28)
+
+⚠⚠ **The RULES stayed in CLAUDE.md; this is the evidence behind them.** Each
+policy there carries its operative statement, its one-line reason, and any
+command a human runs. What moved here is the incident record — the measurements,
+the dates, and the reasoning that produced each rule.
+
+⚠ **Read this before proposing a change to any of those policies.** Several were
+written after we broke them ourselves, and 2e in particular is recorded in the
+first person precisely because the wrong call sounded reasonable at the time. A
+policy argued against without its forensics is a policy argued against blind.
+
+Verbatim copy of the section as it stood at 1.108.304+dev:
+
+## Issue + release policy (2026-07-28)
+
+**1. One issue, one verdict.** A multi-finding report gets SPLIT at triage into
+one issue per finding, cross-linked, credit on each. Nothing is dropped and no
+detail is discouraged. The reason is closure mechanics: a 4-finding issue closes
+only when the last one settles, so three finished fixes sit behind one
+unfinished conversation and the tracker cannot say which is which.
+
+⚠ **This is the correction to a mistake we made deliberately.** On 2026-07-27 we
+CONSOLIDATED five jdoc issues (#80/#89/#90/#93) into one gate, #95. It cut the
+open count from 5 to 1 and manufactured a single artifact with the power to
+block a release. **Tracker-tidiness and granularity pull in opposite directions;
+do not optimize the count.**
+
+**2. A release is NEVER blocked on an open issue**, including a verification we
+asked for. Done + tested + green ships on schedule, carrying a plain-language
+verification-status line (the #95 disclosure sentence is the template; it is
+deliberately weaker than a sign-off and the changelog must never blur the two).
+Late re-verification counts IN FULL and is announced retroactively. Nothing
+expires. **Every timebox names its default action** ("verification by X, or Y
+ships with disclosure Z"); a date with no stated consequence is a wish.
+
+⚠ **The point is that a reviewer's thoroughness must never become a veto.** If
+being careful can stall a release, careful review becomes expensive to accept,
+which is backwards.
+
+**2e. NEVER BATCH OUR RELEASE BEHIND SOMEONE ELSE'S CLOCK** (jjg, 2026-08-18,
+after it happened). Policy 2 says a release is never blocked on an open issue.
+**The way that rule gets broken is not by someone overruling it — it is by an
+apparently sensible batching argument that never mentions it.**
+
+⚠⚠ **The exact failure, recorded because it was MINE and it sounded reasonable.**
+On 2026-08-18, five fixes were merged and green (#488/#489/#490's siblings,
+#495). I recommended holding the release until 08-19/08-20 so it could include
+#504 and #447, on the grounds that each of our releases re-conflicts elfrost's
+CLA-blocked #443 and batching means resolving once instead of three times. jjg
+accepted it. **That recommendation coupled our shipping schedule to a
+contributor's CLA signature and a first-time reporter's availability, which is
+the precise outcome policy 2 exists to prevent.**
+
+⚠⚠ **It was also wrong ON THE MERITS, which is the part that generalises.**
+Batching reduces the NUMBER of conflict resolutions, not whether they happen —
+#443 conflicts on whatever release comes next, whenever that is. Each resolution
+is a scripted three-way merge plus one suite run, measured at minutes. **The
+trade was "finished, tested, user-facing fixes sit unreleased for two days" in
+exchange for "we do a cheap chore once instead of three times." Weigh the cost
+of the chore against the cost of the delay before proposing a batch; here it was
+not close.**
+
+⚠ **The timeboxes are NOT the problem and must not be "fixed".** Every one names
+a default that ships the work regardless (policy 3a). A posted window decides
+whose commit it is, never whether the fix ships or whether we can release. If a
+window ever appears to block a release, the batching decision is what is
+blocking it, not the window.
+
+⚠ **The test, before proposing to hold a release:** name the thing being waited
+for, and whether it is OURS. If it is anyone else's action — a signature, a PR, a
+reply, a re-run — the answer is ship now and let them ride the next one.
+Contributor work is never worse off for this: their default still fires, their
+credit is unchanged, and their PR merges into a smaller diff.
+
+⚠ **Corollary: "reduce OUR churn" is not a release criterion.** Conflict
+resolution, re-runs and re-merges are our costs to absorb. The moment avoiding
+them starts shaping WHEN users get fixes, the optimisation has inverted — we are
+spending their latency to buy our convenience. [[never-batch-a-release-behind-someone-elses-clock]]
+
+**2f. THE ONE CASE WHERE NOT CUTTING A RELEASE IS LEGAL — and it is narrow**
+(jjg, 2026-08-20). 2e forbids holding a release behind someone else's clock.
+This is not that, and the difference has to be stated precisely or 2f becomes
+the loophole that kills 2e.
+
+⚠⚠ **THE DISCRIMINATOR IS WHETHER A USER IS WAITING FOR ANYTHING IN THE BLOCK.**
+In #443 we held a SECURITY FIX behind a contributor's CLA: real users, real
+exposure, eight days. In 1.108.289 the entire `[Unreleased]` block is licence
+metadata whose ONLY beneficiary is the customer we would be waiting on.
+**Shipping it gets no user anything.** So the timing question is not "do we make
+users wait" — it is "what serves the one party this release is for", which is a
+different question with a different answer.
+
+⚠ **The asymmetry that decides it: released metadata is PERMANENT per version,
+unreleased metadata is FREE.** Cutting .289 before the customer confirms the
+identifier form risks a THIRD spelling (.288 `-1.1`, .289 `-1`, .290 whatever),
+and their allowlist fans out across all three. **This is the same immutability
+argument that justified deciding FAST, pointing the other way at the release
+step.** Deciding early is cheap; publishing early is not.
+
+⚠⚠ **THE TEST, and it must be applied every time before invoking 2f: name what
+is in the block and who is waiting for it. If ANY entry is a fix, a feature or a
+correctness change, 2f does not apply and 2e governs — cut it now.** A block that
+is entirely metadata for one named recipient is the only shape this covers.
+
+⚠ **Both triggers fire independently and neither can be deferred**: the next
+content update ships it regardless of any reply, and a reply ships it regardless
+of what else is ready. **A held release with no trigger is a forgotten release**,
+which is why the hold is recorded in Current State where it is read every
+session, not only here.
+
+⚠ **"We never wait for a reply to ship a fix; we can decline to CUT a release
+whose only content is a thing the recipient has not confirmed."** Those are
+different acts. Only the first is what 2 and 2e protect against.
+
+**3. A contributor's PR is never the only path.** Timebox it and keep our own
+path warm (#388 taught this the expensive way).
+
+**3a. NO TIMEBOX WE OFFER RUNS LONGER THAN 24 HOURS** (jjg, 2026-08-14, widened
+the same day from the CLA-only version). It covers **every** shape: signing the
+CLA, opening a PR already written, and taking an issue to implement. The CLA case
+is the easiest to justify — CLA Assistant prompts the moment a PR opens and
+signing takes about 30 seconds, so a longer window parks a finished, green,
+reviewed fix behind a form — but the rule is not limited to it.
+
+⚠⚠ **The window is only fair BECAUSE the default action preserves credit.** At
+expiry we implement the fix ourselves and credit them in the CHANGELOG, the
+release notes and the close comment. So the 24 hours decide whose COMMIT it is,
+never whether they are credited and never whether the fix ships. Quote the
+default in the same comment as the deadline — a 24-hour clock with an unstated
+consequence reads as a threat, and it is not one.
+
+⚠ **An extension the contributor ASKS FOR is not the same as a default we hand
+out**, and CONTRIBUTING.md invites the ask by name. Hold it when they ask; the
+clock exists to stop work going quiet, not to catch anyone out.
+
+⚠ **Stated consequence, not hidden**: on an IMPLEMENTATION handoff, 24 hours
+means in practice that we implement it and they are credited, because nobody
+lands an additive-schema-plus-dispatcher change around a job in a day. That is a
+change in what a handoff IS, not only in how long it lasts. It is the intended
+trade — our throughput over their commit — and it should be made in the open
+rather than discovered at expiry.
+
+**3d. `license/cla` IS A REQUIRED STATUS CHECK ON THE DEFAULT BRANCH OF ALL
+THREE REPOS** (jjg, 2026-08-17 for jcm; extended suite-wide 2026-08-21).
+Enabled because it was NOT one: until this date the repo had **no branch
+protection, no rulesets and no required checks**, so the CLA was read but never
+enforced and one distracted click could have merged unsigned code. Open PRs now
+read `MERGEABLE/BLOCKED` rather than `MERGEABLE/UNSTABLE`.
+
+⚠⚠ **For four days this was fixed in ONE repo of three, which is the recurring
+shape.** jdoc was protected but required NOTHING; jdata had **no protection at
+all**. Measured 2026-08-21 on jdata PR #5: the CLA was genuinely unsigned, the PR
+read `MERGEABLE/UNSTABLE`, and nothing would have stopped the merge. **A setting
+fixed in one repo of a suite is fixed in one repo** — the same sentence jdata's
+own brief already carried about `fork-pr-contributor-approval`, written after a
+contributor hit it first. All three now read identically: `contexts
+["license/cla"]`, `strict false`, `enforce_admins false`, force-push and deletion
+off.
+
+```bash
+# All three; the default branch is `main` for jcm and `master` for jdoc/jdata.
+for r in jcodemunch-mcp:main jdocmunch-mcp:master jdatamunch-mcp:master; do
+  GITHUB_TOKEN="" gh api "repos/jgravelle/${r%%:*}/branches/${r##*:}/protection"     --jq '{contexts:.required_status_checks.contexts, strict:.required_status_checks.strict, enforce_admins:.enforce_admins.enabled}'
+done
+```
+
+⚠ **`enforce_admins: false` and `strict: false` are both deliberate.** The admin
+override is what lets jjg land a merge pushed to a contributor's fork; `strict`
+would force every PR to be up-to-date with `main` before merging, i.e. a rebase
+after every release — the exact churn that kept #443 dark for five days.
+⚠ Enabling protection also turned OFF force-push and deletion on `main`.
+⚠⚠ **This composes with the missing-status hazard and now FAILS CLOSED.** ANY
+new head — our push to a fork, or the contributor's own merge of `main` —
+arrives with `license/cla` absent, and with the check required that reads as
+`BLOCKED` until the bot posts on that SHA. Correct, and it will look like a new
+problem the first time.
+⚠⚠ **NOTHING IS ERASED AND THE WORD MATTERS — corrected 2026-08-24 on #535.**
+This entry said a push "wipes" the status, which frames a per-SHA reporting
+model as an act of destruction and sends you chasing the bot or the
+contributor's signature. **Measured:** `license/cla` is a **legacy commit
+status**, not a check run — every other check on the PR is a `check-run` from
+the `github-actions` app, which GitHub re-runs per head automatically; a legacy
+status is a record posted to ONE SHA by an external service, and a new commit
+starts life with zero of them. On #535 the old head `0db4478` still read
+`license/cla success` while the new head `ea12029` read `count=0`. **The old
+status was untouched, and the signature — stored per ACCOUNT at
+cla-assistant.io — was never in question.**
+⚠ **The consequence is the useful part: the gate cannot tell "not signed" from
+"not reported", so it fails closed to the same `BLOCKED` for both.** Absent
+still means DO NOT MERGE. But the remedy is to get a status posted on the
+current head, never to re-verify an agreement that did not change.
+⚠ **"Usually under a minute" was optimistic.** On #535 the bot had not posted
+30+ minutes after the new head, and it has never commented on that PR at all —
+it posted the status directly, which is what it does when the author signed on
+an earlier PR.
+
+⚠⚠ **THE RE-TRIGGER, AND IT IS OURS — no contributor action, ~25 seconds**
+(established 2026-08-24, #535). `license/cla` comes from a REPO WEBHOOK to
+`https://cla-assistant.io/github/webhook/<repo>` on `pull_request`, not from
+any in-repo workflow. **The event is not lost and the bot is not down** — the
+deliveries list showed his `synchronize` arriving and answering `200 OK`, with
+no status posted. **Redelivering that same event makes it post.**
+
+```bash
+HID=$(GITHUB_TOKEN="" gh api repos/jgravelle/<repo>/hooks --jq '.[0].id')
+# ⚠ jq mangles delivery ids (past float precision) — read them with python.
+GITHUB_TOKEN="" gh api "repos/jgravelle/<repo>/hooks/$HID/deliveries?per_page=15" > dv.json
+python -c "import json;[print(x['delivered_at'][5:16],x['event']+'/'+str(x.get('action')),x['status_code'],x['id']) for x in json.load(open('dv.json'))[:8]]"
+GITHUB_TOKEN="" gh api --method POST "repos/jgravelle/<repo>/hooks/$HID/deliveries/<exact-id>/attempts"
+```
+
+⚠ **Diagnose before reaching for it.** Both #535 deliveries were `synchronize`
+on a `draft: true` PR and only the later one stayed silent, so **draft is NOT
+the discriminator** — the distinguishing feature was a MERGE COMMIT pulling in
+commits authored by us. Check the deliveries list first; a delivery that never
+arrived is a different problem from one that arrived and did nothing.
+
+⚠⚠ **NEVER POST THE STATUS OURSELVES.** We hold admin and the Status API would
+clear the gate in one call. `license/cla` is a legal assertion about an
+agreement, and a maintainer-authored `success` is a forged one — it would also
+be indistinguishable from the genuine article afterwards. **Redelivering makes
+CLA Assistant reach its OWN verdict, which is the whole difference.** If a
+redeliver does not produce a status, the answer is a `recheck` comment or a
+contributor push, never a hand-written status.
+⚠⚠ **It does NOT solve vendor time-wasting and must not be sold as if it does.**
+Signing costs a campaign nothing — #485's author has 748 merged PRs across
+GitHub, so they clear CLAs routinely. The only contributor this gate blocked in
+its first hour was **elfrost**, who found a real security defect. **Legal
+exposure and spam are different problems; this closes the first, 3c closes the
+second.**
+
+**3c. PROFILE THE AUTHOR BEFORE REVIEWING A VENDOR-SHAPED PR** (jjg,
+2026-08-17). Any PR adding a named third-party provider, gateway, SDK or
+endpoint gets three queries FIRST, before a line of the diff is read:
+
+```bash
+GITHUB_TOKEN="" gh api users/<login> --jq '"created=\(.created_at[0:10]) repos=\(.public_repos) company=\(.company) bio=\(.bio)"'
+GITHUB_TOKEN="" gh api "search/issues?q=is:pr+author:<login>&per_page=1" --jq .total_count
+GITHUB_TOKEN="" gh api "search/issues?q=is:pr+author:<login>+<vendor>+in:title&per_page=1" --jq .total_count
+```
+
+⚠⚠ **The discriminator is the RATIO, not the volume.** A prolific contributor
+is fine. #485's author had **3,089 PRs, 2,242 with "minimax" in the title
+alone (73%), ~19/day since March**, and a profile reading
+`company: Independent Developer`. #487's had 87 forks, 86 PRs, all OrcaRouter,
+on a 7-day-old account. **Both were found in under a minute; #485 was reviewed
+in depth twice before anyone looked.** That is the cost this rule removes.
+
+⚠ **Also check whether we have a DEMAND signal**, which is the actual #380 bar
+and is one query:
+`gh api "search/issues?q=repo:jgravelle/jcodemunch-mcp+<vendor>"`. MiniMax
+cleared it honestly as a summarizer (#184, a user asking); MiniMax TTS did not,
+and the only tracker mention was the PR itself.
+
+⚠⚠ **Quality is NOT the discriminator and must not be used as one.** #485's
+diff was better than most human PRs — a real `output_format`-versus-container
+finding, a three-point review addressed in hours, a self-corrected test count.
+**Good work aimed at something nobody asked for is still something nobody asked
+for.** Close on demand, credit the finding, and say plainly that quality was not
+the reason.
+
+⚠ **Do not assert employment you cannot prove.** State the numbers, ask the
+affiliation question on the thread, and let the ratio speak. #487's author
+volunteered their affiliation unprompted and it cost them nothing — that is the
+contrast worth drawing, not an accusation.
+
+⚠⚠ **A posted timebox's default can be RETRACTED IN THE OPEN when the facts
+change, but never silently.** #485's clock promised that at expiry "we implement
+the same change ourselves" and that the window "never decides whether the
+feature ships." The authorship-and-credit half was honoured; the feature half
+was withdrawn ON THE THREAD, with the reason, because it was written before the
+campaign was known. **Letting a promise lapse quietly is the failure mode;
+retracting it out loud is not.**
+
+**3b. A MERGEABLE contributor PR merges BEFORE any changelog-touching work of
+our own** (jjg, 2026-08-14). Not a courtesy and not a preference — a measured
+cost. Every entry we add lands in the same `[Unreleased]` block a contributor's
+entry occupies, so each of our merges puts their PR into conflict, and a
+CONFLICTING fork PR has **no `refs/pull/N/merge`** and therefore gets no CI at
+all. Their branch goes dark for a reason that has nothing to do with their
+change.
+
+⚠⚠ **Measured 2026-08-14: #443 conflicted FIVE TIMES IN ONE DAY** — twice from
+our own PR merges, twice from releases, once from the docs work — and every one
+was resolved by us pushing to their fork. **Five is not five incidents, it is
+one wrong merge order repeated.**
+
+⚠ **The boundary, or the rule fails on its first real case.** A BLOCKED
+contributor PR cannot go first: #443 was unsigned-CLA the whole time, so
+"contributor first" was never available. When it is blocked we ship anyway
+(policy 2 — a release is never blocked on an open issue) and **we own the
+resolution**: push the merge to their branch, resolve it ourselves, and say on
+the thread that the conflict was ours. **This rule is about ORDER when we have a
+choice, never about holding our work behind someone else's form.**
+
+⚠⚠ **RE-READ THE THREAD FOR THE OPERATIVE DATE; DO NOT QUOTE ONE FROM HERE OR
+FROM MEMORY.** Measured 2026-08-17 on #443: **2026-08-26 was posted 08-12
+18:19**, elfrost accepted it on 08-13 13:05 quoting that date, and **08-20 was
+posted 85 minutes later at 14:30** and reaffirmed thirteen times since. The
+contributor never acknowledged the change and may still be planning around the
+older date — which is the concrete harm, not the six days. **A thread can carry
+two dates; only the query settles which is in force:**
+
+```bash
+GITHUB_TOKEN="" gh api repos/jgravelle/<repo>/issues/<n>/comments \
+  --jq '.[] | select(.user.login=="jgravelle") | "\(.created_at[0:16])"' # then grep bodies for dates
+```
+
+⚠ The 08-12 wording also promised **"your authorship on the commit"** where the
+08-20 wording promises **"credit"** — a second, quieter downgrade in the same
+swap. When restating a default, restate the STRONGER posted version or say
+explicitly that it changed. jjg's call on 2026-08-17 was that **08-20 stands**;
+the lesson recorded here is the silent substitution, not the date.
+
+⚠ **Do not shorten a timebox already posted.** State the new window on new PRs.
+A public promise to a contributor outlives the policy that produced it, and
+retracting one to save six days costs more than the six days. ⚠⚠ **Reaffirmed by
+jjg when this rule widened: #447 (2026-08-20), #465 (2026-08-21) and #456
+(2026-08-27) stand AS POSTED.** The new ceiling applies to timeboxes offered
+after that date, and to nothing already promised.
+
+⚠⚠ **CLOSED OUT 2026-08-20, and 3a is now ABSOLUTE: 24 hours, no exceptions,
+never again.** jjg, on reading the 08-12 comment on #443 offering **2026-08-26**:
+"Not again. 24 hour. Tops. Ever." Every grandfathered window above has since
+expired or closed and there are no live long timeboxes; **the grandfathering
+clause is spent and must not be revived as precedent for a new one.** The next
+posted window that exceeds 24 hours is a mistake regardless of what produced it.
+
+⚠⚠ **The failure mode has a NAME now and naming it is the point: a CLA hostage
+negotiation.** #443 went eight days — a real security fix, reviewed and green,
+held behind a 30-second form, while SEVEN of our own merges conflicted its
+branch. Not one of those days bought anything. The window never decides whether
+the fix ships (the default action ships it) and never decides credit (the default
+preserves it), so **a window longer than 24 hours purchases exactly one thing:
+the chance the contributor's commit is theirs — and it pays for that chance in
+the user's exposure to an unfixed defect.** Twenty-four hours is already generous
+for that trade; eight days is not a trade at all.
+
+⚠⚠ **Do NOT answer "an issue is stuck" with aggregate stats.** Measured
+2026-07-28: jcm median 0 days to close (80 issues, 70 within a day, 2 ever past
+a week); jdoc median 1 day. **Those numbers are TRUE and they are NOT a
+response.** jjg: a fraction of an eyelash commands full attention and impairs
+binocularity; "it is a small fraction of your body" helps nobody. The cost of a
+blocked issue is CONCENTRATED, not distributed. Design the fix at the OUTLIER
+(policy 2), never at the median. See
+[[feedback_dont_answer_pain_with_aggregates]].
+
+Surfaces: `CONTRIBUTING.md` ("One issue, one verdict" + "A release is never
+blocked on an open issue") and `.github/ISSUE_TEMPLATE/` (bug_report,
+multi_finding_report, config.yml pointing parked design at ROADMAP.md).
+
+⚠ **CONTRIBUTING.md is now IDENTICAL suite-wide** (jcm/jdoc/jdata differ only by
+product name, repo slug, and jcm's extra quality-gates section). Two pre-existing
+bugs fell out of normalizing it: **the documented install command
+`pip install -e ".[test]"` was WRONG IN ALL THREE REPOS** — no repo declares a
+`test` extra; dev deps live in a PEP 735 `[dependency-groups]` block, so the
+FIRST command a new contributor ran failed. And jcm's
+`README.md#license-dual-use` anchor pointed at a heading that does not exist
+(`## License`). ⚠ **CI installs with `uv sync` and never runs the command the
+docs give a human**, which is why this survived: the thing we test is not the
+thing they do.
+
+## Rotated from CLAUDE.md Current State
+
+### 1.108.308 (rotated 2026-08-30, at the 1.108.311 bump)
+
+- **Prior (1.108.308):** **Ownership and freshness are different properties.** No user-facing fix: this release is about the fact that **we ran 1.108.293 against a 1.108.307 tree for six days and fourteen releases** while developing jcodemunch with jcodemunch. ⚠⚠ **The release checklist's eight steps are complete with respect to USERS and silent with respect to US** — none of them touch the dev box, and the package was a regular (copied) install, so nothing ever refreshed it. ⚠⚠ **`verify_package_integrity()` cannot see this and is not meant to**: it asks whether the running module belongs to the OFFICIAL distribution, a supply-chain question, and would certify a fourteen-release-old install without complaint. **Having a startup check that inspects the distribution made it feel covered.** ⚠⚠ **The version gap was not the real tell — the VERIFICATION PATH ROUTED AROUND THE PRODUCT.** Every fix that week was checked with `PYTHONPATH=src` rather than through the server; each choice was right alone and the pattern was the finding. ⚠ `install-status` reports `source_drift`, tri-state, and `drifted: None` (COULD NOT ESTABLISH) is never `False` — the .305/.306 defect shape, guarded by tests that fail 4-of-10 when UNKNOWN is collapsed. ⚠ All five suite packages are EDITABLE now, so tree-vs-install drift is impossible; only the restart remains, because a running server serves what it loaded. `scripts/repair-munch-installs.ps1` repairs an interpreter and REFUSES while any server runs — uninstalling one mid-session removes the `.pth` and dist-info, then dies on the locked `.exe`, leaving it unimportable. ⚠⚠ **My own two renderer tests reproduced #559**: a hand-written report stub that did not match the producer, dying on a key `install_status()` actually emits. They build on a real report now. [[a-mock-can-supply-a-contract-the-producer-lacks]]
+
+### 1.108.309 (rotated 2026-08-30, at the 1.108.312 bump)
+
+- **Prior (1.108.309):** **A mean hides the tail, and a default invents a comparison.** Two instruments reported a confident number about a distribution they could not see, both found by reading an external audit against our own tree (Revenium, 2026-08: **top 1% of 14,680 agent runs carried 46% of spend, top 5% carried 77%**, one unattended session at 4,819 calls). ⚠⚠ **`analyze_perf`'s `_diff_baseline` read `float(b.get("p50_ms", 0.0))`, and the ONLY baseline that ships carries `tokens_saved` and no latency keys at all** — so the zero stood in for a measurement nobody took and the subtraction was published as `p50_delta_ms`, a name asserting a comparison happened. Measured against `v1.108.163.json`: a tool at p95 900 ms reported `p95_delta_ms: 900.0`, read by any human as a 900 ms regression against a release that never timed it. ⚠⚠ **Its test could not see it because the FIXTURE WAS RICHER THAN THE ARTIFACT** — the synthetic baseline carried `calls`/`p50_ms`/`p95_ms`, keys the real file has for no tool, so the fabricated path was structurally invisible to the test written about that exact code. The guard reads every baseline OFF DISK now. ⚠ Absent → `None` + `not_comparable` naming the SIDE (`absent_in_baseline`/`absent_in_current`/`absent_in_both`); **calls and tokens keep a meaningful zero on the CURRENT side, latency has none**, and inventing one is the same defect from the other end. ⚠⚠ **Second half: `slowest_by_p95` ranks how slow ONE call is and was the ONLY ranking.** Where the time went is count x latency, and the orderings disagree whenever a fast tool is called often — 4,000 calls at p95 900 ms is 100x three calls at 12,000 ms, and the report put the second first. `heaviest_by_total_ms`/`totals` answer the other question; a share over a zero total REFUSES rather than dividing. ⚠⚠ **A ring-capped tool's share is a LOWER BOUND and the cap bites hardest on the busiest tool** — the one the ranking exists to surface — so `ring_capped_tools` names them. ⚠ The per-tool shape has ONE producer now (`token_tracker.latency_bucket`); `analyze_perf` held the second copy and the two AGREED DIGIT FOR DIGIT, which is what makes a later divergence invisible. Its local `_percentile` is deleted, not wrapped — an unused copy is what regrows. `p95_is_max` is MEASURED, not derived from n, and fires for every n <= 20: two published fields carried one sample. ⚠⚠ **Same shape one module over: `analyze_regret`'s `ratio` is a MEAN**, so one need burning 400 calls inside a corpus of 1,000 reports 1.4x and the digest one-liner quotes exactly that. `concentration` (basis `excess_calls` — every need costs one call, so a share over CALLS is diluted by the floor) reports `top_need_share` + `head_share`; the digest now distinguishes two ledgers the ratio cannot. [[a-fixture-authored-from-the-schema-tests-nothing]] [[a-module-that-imports-clean-has-been-tested-for-nothing]]
+
+## Rotated from CLAUDE.md Current State at 1.108.317 (2026-09-04)
+
+- **Prior (1.108.314):** **A rate written for a FUTURE date is wrong for every day before it.** `receipt`'s `_MODEL_PRICES_USD_PER_MTOK["sonnet"]` read `3.0` from 2026-06-24 commented "Sonnet 5 / 4.6" — **Sonnet 5 has NEVER been $3**: it launched at $2 introductory with the $3 rise SCHEDULED for 2026-09-01, **cancelled the day before it would have applied**. The entry recorded a FUTURE price as the current one and was wrong all 69 days it stood, and **nothing distinguishes that from a stale value** — both read as a plausible number beside a plausible date, and the date makes it look checked. ⚠⚠ **THE PIN AGREED WITH IT**: `_EXPECTED_RATES` restated `3.0`, and a third assertion was a DERIVED `"$0.09"` in rendered text that no search for the rate's NAME can see — so the suite was green against a rate the vendor never charged for the model named beside it. **Re-read the SOURCE when touching a pinned table, never the other copy.** ⚠ Four copies suite-wide and this fixes ONE; ours is right only in `storage/token_tracker.py`, whose key is `claude_sonnet_4_6` — **a key naming a FAMILY inherits whichever member's price someone last looked at.** jmunch/jdoc/jdata still carry it, and **jmunch also has `claude_opus` at the RETIRED $15 (3x) on the block stamped onto LIVE responses** — a self-flattering error, the one direction a savings metric must not drift; work orders written, not fixable from here. ⚠⚠ Also: the published `counter` surface is BYTE-PINNED (`tests/test_counter_surface_stability.py`; 6 tools, **4,184 B**; name+order, per-tool sha, total, whitelist membership, `tool_profile` independence; non-vacuity 5/5) — it sits in the CACHED PREFIX, so **a reworded description is a full-rate cache write for every user**, and it pins the catalog-can-GROW property arXiv:2608.22708 is built around, which the Counter had by construction and nothing asserted. ⚠ And `CLI Subcommands`+`Env Vars` (16.6% of the budget) split to `CLI-AND-ENV.md`: 69 rows moved, 27 stayed, **the ⚠ marker under-selected AGAIN** (9 of 27 keepers). [[a-ratchet-can-pass-against-the-defect-it-names]] [[a-budget-that-names-one-section-licenses-the-rest]]
+
+## Rotated from CLAUDE.md on 2026-09-04 (workflows layer, DESIGN section 7): registry-row measurements
+
+⚠⚠ **The MCP registry API nests each row as `{server: {...}, _meta: {...}}`**
+(schema `2025-12-11`). `name`, `version` and `packages[]` sit under `server`;
+`isLatest` and `publishedAt` sit under
+`_meta["io.modelcontextprotocol.registry/official"]`. **A flat `row["name"]`
+read returns ZERO rows on a publish that completely succeeded** — measured
+minutes after `mcp-publisher` confirmed 1.108.301, where the flat parse found
+0 of 45 rows and the nested parse found all 45 with `isLatest: 1.108.301`.
+
+⚠⚠ **This is a SECOND false negative on top of the known paging trap, and
+unlike that one it SURVIVES `&limit=100`** — so the documented remedy does not
+help and the symptom is indistinguishable from a failed publish. **Never
+re-publish on a zero-row read; fix the parse.** Also confirm
+`server.packages[].version` advanced, not only `server.version` — an entry can
+move one and not the other.
+
+## Rotated from CLAUDE.md Current State at 1.108.317 (2026-09-04)
+
+Verbatim; the rules each entry states live on in Key Files and Standing lessons.
+
+- **Prior (1.108.316):** **A display preference edited the data it was displaying.** The SHARED result cache stored the caller's dict and handed that same dict back (#572, @rknighton), so the dispatcher's metadata step — `meta_fields`, a per-user DISPLAY setting — reached into the session cache and changed what every later caller was served. ⚠⚠ **`meta_fields: []` is the SHIPPED DEFAULT**, so out of the box the second `find_references`/`get_blast_radius` call came back `KeyError: '_meta'` — and the crash was the LOUD case. **`suppress_meta` is a per-CALL argument**, so on an ORDINARY config one call passing it emptied the shared entry and the next caller, who had asked for metadata, was served an empty `_meta`; a partial `meta_fields` does the same by replacement. ⚠⚠ **THE WINDOW IS THE MISS PATH**: both tools rebuild `_meta` from `dict(cached)` on a hit, so a repeat call survives and it is the call that FILLS the cache that hands the dispatcher the stored object — **which is why a two-call reproduction shows the crash and NEITHER quiet case**, and why reproducing the report's own second claim needed the suppressing call moved to position one. ⚠⚠ **FIXED IN THE CACHE, NOT AT THE TWO CALL SITES, and that was the reporter's argument**: `search_symbols` keeps its own cache and had already paid for this TWICE (#377 item 3 for `_meta.verdict`, then #404, also theirs, for the rows) and neither fix reached the shared one — a third per-consumer patch clears both tools today and arms the trap for the tool written next. ⚠ `_isolate` clones CONTAINERS ONLY at unbounded depth: leaves are JSON-serialisable immutables by then, and container-only measured **4.15 ms against `copy.deepcopy`'s 16.58 ms on an 800 KB response**; a rule shaped to today's two callers would be a guard written against a spelling. ⚠ **Identity was never the contract** — seven `is` assertions in `tests/test_result_cache.py` were the defect written down and are `==` now (Practice 9). ⚠ #570's `cached.get("_meta", {})` guard is merged and KEPT; it covers one tool, sees neither quiet case, and is why one non-vacuity arm stays green. [[a-cache-that-returns-its-stored-object]] [[a-guard-written-against-a-spelling]]
+
+- **Prior (1.108.315):** **A fix for a false positive can install a false negative, and suppression has no symptom.** `find_dead_code`'s `confidence: 1.0` is documented as PROVABLY UNREACHABLE — a claim about the TREE, computed from the INDEX with nothing in between. ⚠⚠ **`encoding/schemas/` is enumerated by `pkgutil.iter_modules(__path__)` at import time**, an edge no static graph can see, so TWELVE live encoders published at 1.0 — and **which three of fifteen escaped depended only on whether a test happened to import the module directly**, i.e. test-authoring habit, published as proof. ⚠⚠ **THE FIRST WORKING DRAFT INSTALLED A FALSE NEGATIVE AND EVERY ASSERTION STAYED GREEN**: matching any `__path__` made `pkgutil.iter_modules(schemas_pkg.__path__)` in a TEST file read as the test directory self-enumerating — **502 files went live**, suppressing every real finding under `tests/`. Only a BARE `__path__`/`__file__`, or a local alias bound to one, names the loader's own package; **the alias IS the motivating case** (`from . import __path__ as pkg_path` one line above the call), so reading only the call argument resolves nothing. ⚠ `_corpus_adequacy.py` reads the disclosures the index already carries and caps at **0.6**, below the 0.8 default, so the default call REFUSES — **`search_text` handled the identical situation correctly on the identical index in the same session**. UNKNOWN caps; NOT APPLICABLE (`no_source_root`, `complete is None`) does not. ⚠⚠ **THE THIRD SURFACE IS THE DESTRUCTIVE ONE**: `check_delete_safe` reaches `safe_to_delete` from a no-refs-at-all fallback **REGARDLESS of the dead-code confidence it just consulted**, then FLOORS it at 0.85 — so capping the report left the delete certified, and the twelve encoders each graded safe. `corpus_inadequate` is classified in `_stop_rule._BOUNDED` and never terminal; only ABSENCE verdicts are replaced. ⚠ `json_passthrough.py` survives as the one likely TRUE positive of the original thirteen — reported, not deleted. [[a-fix-for-a-false-positive-can-install-a-false-negative]] [[a-guard-covered-only-by-positive-tests-can-be-deleted]]
+

@@ -88,8 +88,17 @@ async def test_search_symbols_tool_schema():
     assert "max_results" in props
 
     # kind should have enum
+    #
+    # ⚠⚠ This asserted a LITERAL seven-kind roster until #571, which is the
+    # defect stated as a requirement: it could only pass while `field` was
+    # missing from the published enum, and it is what made the wire schema a
+    # second copy of `KIND_ORDER` rather than a view of it. Practice 9 — the
+    # tell is that a test restates the implementation instead of the property.
+    # The property is that what the parser can EMIT is what the schema OFFERS.
+    from jcodemunch_mcp.parser.symbols import KIND_ORDER
+
     assert "enum" in props["kind"]
-    assert set(props["kind"]["enum"]) == {"function", "class", "method", "constant", "type", "template", "import"}
+    assert props["kind"]["enum"] == list(KIND_ORDER)
     assert "enum" in props["language"]
     assert "cpp" in props["language"]["enum"]
     assert "razor" in props["language"]["enum"]
@@ -597,6 +606,54 @@ async def test_meta_fields_empty_list_removes_meta_envelope():
             result = await call_tool("list_repos", {})
         payload = json.loads(result[0].text)
         assert "_meta" not in payload
+    finally:
+        config_module._GLOBAL_CONFIG.clear()
+        config_module._GLOBAL_CONFIG.update(orig_config)
+
+
+@pytest.mark.asyncio
+async def test_meta_fields_empty_list_preserves_blast_radius_cache(
+    tmp_path, monkeypatch,
+):
+    """Stripping response metadata must not corrupt the cached tool result."""
+    from jcodemunch_mcp import config as config_module
+    from jcodemunch_mcp.tools.index_folder import index_folder
+
+    (tmp_path / "owner.py").write_text(
+        "def target_symbol():\n    return 1\n"
+    )
+    (tmp_path / "consumer.py").write_text(
+        "from owner import target_symbol\n\n"
+        "def consume():\n    return target_symbol()\n"
+    )
+    store_path = str(tmp_path / "idx")
+    repo = index_folder(
+        path=str(tmp_path), use_ai_summaries=False,
+        storage_path=store_path, incremental=False, identity_mode="local",
+    )["repo"]
+
+    orig_config = config_module._GLOBAL_CONFIG.copy()
+    config_module._GLOBAL_CONFIG.clear()
+    monkeypatch.setenv("CODE_INDEX_PATH", store_path)
+
+    try:
+        config_module._GLOBAL_CONFIG["meta_fields"] = []
+        arguments = {
+            "repo": repo,
+            "symbol": "target_symbol",
+        }
+
+        first = await call_tool("get_blast_radius", arguments)
+        assert isinstance(first, list), first
+        first_payload = json.loads(first[0].text)
+        assert "error" not in first_payload, first_payload
+        assert "_meta" not in first_payload
+
+        second = await call_tool("get_blast_radius", arguments)
+        assert isinstance(second, list), second
+        second_payload = json.loads(second[0].text)
+        assert "error" not in second_payload, second_payload
+        assert "_meta" not in second_payload
     finally:
         config_module._GLOBAL_CONFIG.clear()
         config_module._GLOBAL_CONFIG.update(orig_config)
@@ -1309,9 +1366,14 @@ def test_model_tier_map_default_present():
     mp = DEFAULTS["model_tier_map"]
     assert isinstance(mp, dict)
     assert mp["claude-opus"] == "full"
-    assert mp["claude-sonnet"] == "standard"
     assert mp["claude-haiku"] == "core"
     assert mp["*"] == "full"
+    # ⚠ `claude-sonnet` deliberately no longer names a tier here. It routed at
+    # "standard", a MID-SESSION narrowing that costs a full cache rewrite to
+    # save 6.7% of the payload -- 174 requests to repay itself. Pinning the
+    # literal made this test the defect's witness rather than its guard, so it
+    # asserts the PROPERTY instead; `test_tier_switch_cost.py` owns the rule.
+    assert set(mp.values()) <= {"core", "standard", "full"}
 
 
 def test_adaptive_tiering_defaults_false():

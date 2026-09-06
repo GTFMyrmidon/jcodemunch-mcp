@@ -28,7 +28,7 @@ from .tools import _arg_contract
 # This defers loading heavy dependencies (tree-sitter, httpx, pathspec) until
 # the first actual call to a tool that needs them, reducing cold-start latency
 # for sessions that only use query tools and never trigger indexing.
-from .parser.symbols import VALID_KINDS
+from .parser.symbols import KIND_ORDER, VALID_KINDS
 from .summarizer import get_provider_name
 from .reindex_state import await_freshness_if_strict
 from .storage import result_cache_invalidate as _result_cache_invalidate
@@ -532,29 +532,133 @@ def _catalog_names() -> set:
     return {t.name for t in _raw_catalog_tools() if t.name not in _COUNTER_FRONT_DOOR}
 
 
+def _schema_weight(tool) -> int:
+    """Schema token weight of ONE tool, estimator bytes/4.
+
+    ⚠ The single producer of this number. It was a closure inside
+    `_tool_surface_stats` until the tier-switch pricing needed the same scale;
+    a second copy that agreed digit for digit is what makes a later divergence
+    invisible (the `analyze_perf._percentile` lesson).
+    """
+    import json as _json
+
+    payload = _json.dumps(
+        {
+            "name": tool.name,
+            "description": tool.description or "",
+            "inputSchema": tool.inputSchema or {},
+        },
+        separators=(",", ":"),
+        default=str,
+    )
+    return max(1, len(payload.encode("utf-8")) // 4)
+
+
+def _schema_tokens_for_profile(profile: str) -> int:
+    """Schema token weight a profile WOULD publish, without switching to it.
+
+    ⚠⚠ Routes through `_build_tools_list`, never a local filter. The first
+    draft filtered the raw catalog by the tier bundle and was wrong by three
+    tools in every tier: it kept the hidden front door, dropped the
+    force-included tier controls, and ignored `disabled_tools`. It priced a
+    surface no client receives. Measuring by actually switching would instead
+    mutate session state to answer a question about whether to mutate it.
+    """
+    return sum(_schema_weight(t) for t in _build_tools_list(profile_override=profile))
+
+
+_SURFACE_OFFER_STATE_FILE = "surface_offer_state.json"
+
+
+def _surface_offer_state_path() -> "Path":
+    """Where the one-time announcement latch lives.
+
+    ⚠⚠ The latch is HERE and not in `surface_offer.py`, which must never write
+    anything -- its no-write property is asserted over its AST. It also is NOT
+    the user's config: a server start must not touch `config.jsonc` (Practice 8),
+    and `surface_offer_seen` stays the user's key to set, never ours.
+    """
+    from pathlib import Path
+
+    base = os.environ.get("CODE_INDEX_PATH") or str(Path.home() / ".code-index")
+    return Path(base) / _SURFACE_OFFER_STATE_FILE
+
+
+def _announce_surface_offer(transport: str = "unknown") -> bool:
+    """Log the surface offer once per install. Returns whether it announced.
+
+    ⚠ Fail-safe in every direction: an unwritable storage dir, an unreadable
+    latch or any pricing failure SKIPS the notice. Nothing about a server start
+    may depend on an advisory line.
+
+    ⚠⚠ **Silent when there is nothing to offer**, which is the whole difference
+    between a notice and a nag: already on the target surface, delta
+    non-positive, or `surface_offer_seen` set. The latch is written only when a
+    line was actually emitted, so a run that had nothing to say does not consume
+    the one announcement.
+    """
+    import json as _json
+    from datetime import datetime, timezone
+
+    try:
+        path = _surface_offer_state_path()
+        if path.is_file():
+            return False
+        stats = _tool_surface_stats()
+        offer = stats.get("surface_offer")
+        if not offer:
+            return False
+        from .surface_offer import render_offer_log_line
+
+        logger.warning("%s", render_offer_log_line(offer))
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text(
+                _json.dumps(
+                    {
+                        "announced_at": datetime.now(timezone.utc).isoformat(),
+                        "surface": offer.get("current_surface"),
+                        "version": __version__,
+                        # ⚠ WHO said it. A once-per-install notice with no
+                        # attribution cannot answer "did a human ever see
+                        # this?" -- a background server whose stderr nobody
+                        # reads delivers it technically and not practically.
+                        "pid": os.getpid(),
+                        "transport": transport,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            tmp.replace(path)
+        except OSError:
+            # ⚠ An unwritable latch means the notice may repeat on the next
+            # start. That is the correct direction to fail: repeating an
+            # advisory line is recoverable, suppressing it forever is not.
+            logger.debug("surface offer latch not written", exc_info=True)
+        return True
+    except Exception:
+        logger.debug("surface offer announcement skipped", exc_info=True)
+        return False
+
+
 def _tool_surface_stats(top_n: int = 15) -> dict:
     """Schema token weight of the currently visible tool surface vs the raw catalog.
 
     Estimator matches the meter's scale (bytes/4) over the same serialization
     the schema-budget baseline uses ({name, description, inputSchema}, compact
     separators). Advisory receipt only — never blocks, nothing persisted.
+
+    ⚠⚠ Every token figure here carries `schema_tokens_basis`. A bare
+    "tokens avoided" count has no time basis and a reader supplies the wrong
+    one — PER REQUEST — which is the framing `benchmarks/codex_surface/`
+    forbids in our own words after measuring 86% of baseline input cached.
+    The counts are payload size; they are not per-request savings.
     """
-    import json as _json
+    from .tier_switch_cost import SCHEMA_TOKENS_BASIS, SCHEMA_TOKENS_BASIS_NOTE
 
-    def _weight(tool) -> int:
-        payload = _json.dumps(
-            {
-                "name": tool.name,
-                "description": tool.description or "",
-                "inputSchema": tool.inputSchema or {},
-            },
-            separators=(",", ":"),
-            default=str,
-        )
-        return max(1, len(payload.encode("utf-8")) // 4)
-
-    visible = {t.name: _weight(t) for t in _build_tools_list()}
-    catalog = {t.name: _weight(t) for t in _raw_catalog_tools()}
+    visible = {t.name: _schema_weight(t) for t in _build_tools_list()}
+    catalog = {t.name: _schema_weight(t) for t in _raw_catalog_tools()}
     visible_total = sum(visible.values())
     catalog_total = sum(catalog.values())
     heaviest = dict(sorted(visible.items(), key=lambda kv: -kv[1])[:top_n])
@@ -567,6 +671,8 @@ def _tool_surface_stats(top_n: int = 15) -> dict:
         "schema_tokens_visible": visible_total,
         "schema_tokens_catalog": catalog_total,
         "schema_tokens_avoided": max(0, catalog_total - visible_total),
+        "schema_tokens_basis": SCHEMA_TOKENS_BASIS,
+        "schema_tokens_basis_note": SCHEMA_TOKENS_BASIS_NOTE,
         "heaviest_tools": heaviest,
         "estimator": "bytes/4",
     }
@@ -580,7 +686,54 @@ def _tool_surface_stats(top_n: int = 15) -> dict:
             f"tool_surface {_requested!r} is not recognized and was ignored; "
             f"'full' is in force. Valid values: {', '.join(VALID_TOOL_SURFACES)}."
         )
+    offer = _surface_offer(
+        current_surface=_surface,
+        current_tools=len(visible),
+        current_schema_tokens=visible_total,
+        catalog_tools=len(catalog),
+    )
+    if offer is not None:
+        out["surface_offer"] = offer
     return out
+
+
+def _surface_offer(
+    *,
+    current_surface: str,
+    current_tools: int,
+    current_schema_tokens: int,
+    catalog_tools: int,
+) -> "dict | None":
+    """Price the move to today's default surface, or return None.
+
+    ⚠⚠ The cheap gates run FIRST and the second tool-list build runs only if
+    they pass. `_build_tools_list` constructs the whole catalog, and this is
+    reached from `get_session_stats` -- paying that to compute an offer we are
+    about to discard is a cost with no reader.
+
+    ⚠ Best-effort by construction: a status command must never fail because an
+    advisory row could not be computed.
+    """
+    from .surface_offer import CURRENT_DEFAULT_SURFACE, build_offer
+
+    try:
+        if (current_surface or "").strip().lower() == CURRENT_DEFAULT_SURFACE:
+            return None
+        if config_module.get("surface_offer_seen", False):
+            return None
+        offer_tools = _build_tools_list(surface_override=CURRENT_DEFAULT_SURFACE)
+        return build_offer(
+            current_surface=current_surface,
+            current_tools=current_tools,
+            current_schema_tokens=current_schema_tokens,
+            offer_tools=len(offer_tools),
+            offer_schema_tokens=sum(_schema_weight(t) for t in offer_tools),
+            catalog_tools=catalog_tools,
+            seen=False,
+        )
+    except Exception:
+        logger.debug("surface offer computation failed", exc_info=True)
+        return None
 
 
 # --- Runtime session tier state -------------------------------------------- #
@@ -738,6 +891,39 @@ def _resolve_tier_bundle(profile: str) -> frozenset[str] | None:
     return _PROFILE_TIERS.get(profile)
 
 
+def _price_tier_switch(src: str, dst: str) -> dict:
+    """Price a src -> dst tier switch against the cache it invalidates.
+
+    ⚠⚠ A mid-session tool-list change is not free and is not merely "fewer
+    tokens". `tools` is serialised AHEAD of system and messages, so the switch
+    invalidates the schema block AND every turn accumulated behind it, and the
+    new block must be cache-WRITTEN before it reads cheaply again. Measured on
+    this catalog: `full` -> `standard` drops 6.7% of the payload and needs 174
+    requests to repay itself, before any history is counted.
+
+    ⚠ `history_tokens` is deliberately 0 here. The server cannot see the
+    client's conversation length, and history only ever RAISES the break-even,
+    so pricing without it understates the cost -- the conservative direction.
+    Reported as `history_tokens_assumed` so the floor is never read as a total.
+    """
+    from .tier_switch_cost import classify
+
+    src_tokens = _schema_tokens_for_profile(src)
+    dst_tokens = _schema_tokens_for_profile(dst)
+    verdict, breakeven = classify(src_tokens, dst_tokens)
+    out = {
+        "from": src,
+        "to": dst,
+        "from_schema_tokens": src_tokens,
+        "to_schema_tokens": dst_tokens,
+        "verdict": verdict,
+        "history_tokens_assumed": 0,
+    }
+    if breakeven is not None:
+        out["breakeven_requests"] = round(breakeven, 1)
+    return out
+
+
 async def _emit_tools_list_changed() -> None:
     """Send notifications/tools/list_changed to the client, best-effort.
 
@@ -850,6 +1036,28 @@ async def _apply_model_announcement(model: str) -> dict:
             f"route this model explicitly."
         )
     if changed:
+        price = _price_tier_switch(prev, tier)
+        res["switch_cost"] = price
+        # ⚠⚠ A narrowing that cannot repay its own cache invalidation is
+        # refused, because it advertises a saving and delivers a loss for the
+        # whole life of the session. Widening is NEVER refused -- escalating
+        # after a capability-gated failure buys a capability, and trading a
+        # correct answer for a cheap one is the worse error.
+        if price["verdict"] == "does_not_pay":
+            res["tier"] = prev
+            res["changed"] = False
+            res["refused"] = "switch_does_not_pay"
+            # ⚠⚠ BODY, not `_meta`: `meta_fields` defaults to `[]` and the
+            # dispatcher strips `_meta` on a default install.
+            res["reason"] = (
+                f"model {model!r} maps to {tier!r}, but switching {prev!r} -> "
+                f"{tier!r} mid-session invalidates the cached tool block and "
+                f"needs {price['breakeven_requests']:,.0f} further requests to "
+                f"repay itself. Tier left at {prev!r}. Set tool_profile="
+                f"{tier!r} at startup instead, where there is no switch to pay "
+                f"for."
+            )
+            return res
         _set_session_tier(tier)
         await _emit_tools_list_changed()
     return res
@@ -1346,8 +1554,25 @@ def _apply_readonly_annotations(tools: list[Tool]) -> list[Tool]:
     return annotated
 
 
-def _build_tools_list() -> list[Tool]:
-    """Build the full tool list, applying config-driven filtering and overrides."""
+def _build_tools_list(
+    profile_override: "str | None" = None,
+    surface_override: "str | None" = None,
+) -> list[Tool]:
+    """Build the full tool list, applying config-driven filtering and overrides.
+
+    ⚠ `profile_override` asks what a DIFFERENT tier would publish without
+    switching to it, for `_schema_tokens_for_profile`. It exists so the pricing
+    path runs THIS function rather than a second, simpler copy of the visibility
+    rules -- a reimplementation would miss the force-included tier controls, the
+    `disabled_tools` filter and the counter collapse, and would price a surface
+    no client ever receives. It changes nothing when omitted.
+
+    ⚠⚠ `surface_override` is the same idea one axis over, for the surface OFFER
+    (`surface_offer.py`). Pricing `counter` by hand is the more tempting error
+    of the two, because the counter branch below deliberately BYPASSES tier
+    filtering and `disabled_tools` -- a hand-rolled count would apply them and
+    under-report what the client actually receives.
+    """
     all_tools = [
         Tool(
             name="index_repo",
@@ -1900,7 +2125,13 @@ def _build_tools_list() -> list[Tool]:
                     "kind": {
                         "type": "string",
                         "description": "Optional filter by symbol kind",
-                        "enum": ["function", "class", "method", "constant", "type", "template", "import"]
+                        # ⚠⚠ DERIVED, never a literal (@devtomnl, #571). This list
+                        # was a second copy of `KIND_ORDER` and had drifted from it:
+                        # `field` was emitted by the parser, accepted by nothing, and
+                        # the divergence was invisible because each side looked
+                        # internally consistent. `tests/test_kind_enum_is_derived.py`
+                        # fails if a literal returns here.
+                        "enum": list(KIND_ORDER)
                     },
                     "file_pattern": {
                         "type": "string",
@@ -2217,7 +2448,7 @@ def _build_tools_list() -> list[Tool]:
         ),
         Tool(
             name="analyze_perf",
-            description="Per-tool latency telemetry: p50/p95/max in ms, error rate, plus cache hit-rate by tool. Defaults to the in-memory session ring; pass window=1h|24h|7d|all to query persisted telemetry.db (requires perf_telemetry_enabled). Useful for finding slow tools, cold caches, and regressions.",
+            description="Per-tool latency telemetry: p50/p95/max in ms, error rate, plus cache hit-rate by tool. Two rankings, and they answer different questions: slowest_by_p95 is per-call latency, heaviest_by_total_ms is the wall-clock each tool actually consumed (count x latency), with shares over totals. Defaults to the in-memory session ring; pass window=1h|24h|7d|all to query persisted telemetry.db (requires perf_telemetry_enabled). Useful for finding slow tools, cold caches, and regressions.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -2238,7 +2469,7 @@ def _build_tools_list() -> list[Tool]:
                     },
                     "compare_release": {
                         "type": "string",
-                        "description": "Compare current session against a saved baseline at benchmarks/token_baselines/v{version}.json (e.g. \"1.74.0\"). Adds baseline_diff to the response with per-tool deltas in tokens_saved and latency.",
+                        "description": "Compare current session against a saved baseline at benchmarks/token_baselines/v{version}.json (e.g. \"1.74.0\"). Adds baseline_diff to the response with per-tool deltas in tokens_saved and latency. A field the baseline never recorded comes back null with a not_comparable reason, never as a delta against zero.",
                     },
                     "ledger": {
                         "type": "boolean",
@@ -3896,14 +4127,25 @@ def _build_tools_list() -> list[Tool]:
         Tool(
             name="get_ranked_context",
             description=(
-                "Assemble the best-fit context for a query within a token budget. "
-                "Ranks all symbols by relevance (BM25) and/or centrality (PageRank), "
-                "loads source for the top candidates, and packs greedily until token_budget is exhausted. "
-                "Exact symbol names in the query (qualified, CamelCase, snake_case) are pinned ahead "
-                "of the ranking; include identifiers verbatim. "
-                "Use when you want 'the best N tokens of context for this task' without specifying exact symbols."
-            
-                " Truncates at token_budget."
+                # ⚠ Trimmed 2026-09-02 to recover core_compact headroom (103
+                # tokens -> 77, ceiling 4,000 standing at 3,998).
+                # ⚠⚠ Chosen because it is NOT one of the six byte-pinned
+                # counter-surface tools. The three fattest core descriptions --
+                # jcodemunch_guide, announce_model, set_tool_tier -- are all in
+                # that set, so trimming any of them moves the counter prefix
+                # too, and that surface is the default for new installs. One
+                # prefix moving is the cost; two was avoidable.
+                # What went: "Truncates at token_budget", which restated "packs
+                # greedily until token_budget is exhausted" in the same
+                # paragraph; the algorithm names, which no caller chooses on
+                # (`sort_by`'s own description carries them); and the casing
+                # list, which the pinning rule implies.
+                "Assemble the best-fit context for a query within a token budget: ranks "
+                "symbols by relevance and/or centrality, loads source for the top "
+                "candidates, and packs greedily until the budget is exhausted. Exact "
+                "symbol names in the query are pinned ahead of the ranking, so include "
+                "identifiers verbatim. Use when you want the best N tokens of context "
+                "for a task without naming exact symbols."
             ),
             inputSchema={
                 "type": "object",
@@ -4461,8 +4703,9 @@ def _build_tools_list() -> list[Tool]:
                 "Explicit tier override for the current session. "
                 "Narrows or widens the exposed tool list to 'core' / 'standard' / 'full'. "
                 "Prefer plan_turn(model=...) for routine per-task use; use "
-                "set_tool_tier only when you need an explicit override (e.g. escalate "
-                "mid-task to 'full' after a capability-gated failure)."
+                "set_tool_tier only for an explicit override (e.g. escalate to "
+                "'full' after a capability-gated failure). A narrowing that costs "
+                "more than it saves is refused."
             ),
             inputSchema={
                 "type": "object",
@@ -4530,7 +4773,7 @@ def _build_tools_list() -> list[Tool]:
         for t in all_tools
         if isinstance((props := (t.inputSchema or {}).get("properties")), dict) and props
     }
-    surface = _effective_surface()
+    surface = surface_override or _effective_surface()
     if surface == "counter":
         # Collapse to the front door + always-present controls. Tier filtering
         # is intentionally bypassed: 'counter' is the surface choice itself.
@@ -4545,7 +4788,7 @@ def _build_tools_list() -> list[Tool]:
     # Start with a mutable copy for filtering.
     tools = list(all_tools)
     # --- Profile filtering ---------------------------------------------------
-    profile = _effective_profile()
+    profile = profile_override or _effective_profile()
     allowed = _resolve_tier_bundle(profile)
     if allowed is not None:
         tools = [t for t in tools if t.name in allowed]
@@ -5149,7 +5392,7 @@ def _delivery_entries(name: str, result):
                 yield got
 
 
-async def _handle_counter_tool(name: str, arguments: dict) -> list[TextContent]:
+async def _handle_counter_tool(name: str, arguments: dict) -> list[TextContent] | CallToolResult:
     """Dispatch the Counter front door (order / menu / route / get_tool_details)."""
     if name == "order":
         return await _handle_order(arguments)
@@ -5159,21 +5402,21 @@ async def _handle_counter_tool(name: str, arguments: dict) -> list[TextContent]:
         return await _handle_route(arguments)
     if name == "get_tool_details":
         return _handle_get_tool_details(arguments)
-    return [TextContent(type="text", text=json.dumps({"error": f"Unknown front-door tool '{name}'"}))]
+    return _error_call_result(json.dumps({"error": f"Unknown front-door tool '{name}'"}))
 
 
-def _handle_get_tool_details(arguments: dict) -> list[TextContent]:
+def _handle_get_tool_details(arguments: dict) -> list[TextContent] | CallToolResult:
     """get_tool_details(name): Fetch full parameter schema and documentation for a tool/action."""
     tool_name = arguments.get("name") or arguments.get("action")
     if not tool_name or not isinstance(tool_name, str):
-        return [TextContent(type="text", text=json.dumps({"error": "get_tool_details requires a 'name' string."}, indent=2))]
+        return _error_call_result(json.dumps({"error": "get_tool_details requires a 'name' string."}, indent=2))
 
     for t in _raw_catalog_tools():
         if t.name == tool_name:
             details = _counter.get_tool_details(t.name, t.description or "", t.inputSchema or {})
             return [TextContent(type="text", text=json.dumps(details, indent=2))]
 
-    return [TextContent(type="text", text=json.dumps({"error": f"Unknown tool or action '{tool_name}'."}, indent=2))]
+    return _error_call_result(json.dumps({"error": f"Unknown tool or action '{tool_name}'."}, indent=2))
 
 
 # Common arg-name aliases agents reach for when ordering an action without the
@@ -5281,11 +5524,11 @@ async def _handle_order(arguments: dict) -> list[TextContent] | CallToolResult:
     action = arguments.get("action")
     args = arguments.get("args") or {}
     if not isinstance(args, dict):
-        return [TextContent(type="text", text=json.dumps({"error": "order 'args' must be an object."}, indent=2))]
+        return _error_call_result(json.dumps({"error": "order 'args' must be an object."}, indent=2))
     allow = bool(arguments.get("allow_state_change", False))
     err = _counter.order_gate(action, _catalog_names(), allow)
     if err is not None:
-        return [TextContent(type="text", text=json.dumps({"error": err, "tool": "order"}, indent=2))]
+        return _error_call_result(json.dumps({"error": err, "tool": "order"}, indent=2))
     return await call_tool(action, _normalize_order_args(action, dict(args)))
 
 
@@ -5315,7 +5558,7 @@ async def _handle_route(arguments: dict) -> list[TextContent] | CallToolResult:
     optionally dispatching the top one in the same call."""
     task = arguments.get("task")
     if not task or not isinstance(task, str):
-        return [TextContent(type="text", text=json.dumps({"error": "route requires a 'task' string."}, indent=2))]
+        return _error_call_result(json.dumps({"error": "route requires a 'task' string."}, indent=2))
     repo = arguments.get("repo")
     execute = bool(arguments.get("execute", False))
     names = _catalog_names()
@@ -5472,9 +5715,47 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent] | CallToolR
     # `COUNT(DISTINCT call_uid)` counts dispatcher entries rather than client requests, and
     # the front-door row has no matching ranking event.
     call_token = begin_call_context()
+    # ⚠⚠ **The outcome is DERIVED from the result the client receives, never
+    # asserted by the frame that produced it** (#551, @rknighton). It used to be
+    # a local flag in `_call_tool_impl` initialised to True, and three of its
+    # four error exits never cleared it -- so schema-validation rejections,
+    # the `search_text` argument guard and a front-door relay of a child's
+    # refusal all returned `isError=True` to the client and wrote `ok=1` to
+    # `tool_calls`, i.e. a 0% error rate over calls the client watched fail.
+    #
+    # Every layer was truthful about ITSELF; `_call_ok` meant "did this frame
+    # hit trouble", which is a different question from "did the request
+    # succeed", and nothing in the name marked the difference. Patching the
+    # three exits would leave the mechanism: a fifth exit (project-level tool
+    # disabling) has the identical shape, and `_enforce_response_cap` refuses
+    # AFTER the frame's `finally` has already written its row, so it could not
+    # be reached from inside `_call_tool_impl` at all.
+    #
+    # `isError` on the returned value is the one fact that answers the question
+    # the column is read for. It is set in exactly one place
+    # (`_error_call_result`), it covers the cap and every future exit, and it
+    # cannot drift from what the client saw because it IS what the client saw.
+    _t0_dispatch = time.perf_counter()
+    _dispatch_ok = False
     try:
-        return _enforce_response_cap(name, await _call_tool_impl(name, arguments))
+        result = _enforce_response_cap(name, await _call_tool_impl(name, arguments))
+        _dispatch_ok = not bool(getattr(result, "isError", False))
+        return result
     finally:
+        try:
+            from .storage.token_tracker import record_tool_latency
+            _duration_ms = (time.perf_counter() - _t0_dispatch) * 1000.0
+            _repo_arg = arguments.get("repo") if isinstance(arguments, dict) else None
+            # v1.108.188: persist against the store the CALL named. analyze_perf
+            # reads tool_calls and ranking_events through one base path, so a row
+            # written to the default while the reader looks in a named store is
+            # invisible to the only thing that consumes it.
+            _store_arg = arguments.get("storage_path") if isinstance(arguments, dict) else None
+            record_tool_latency(
+                name, _duration_ms, ok=_dispatch_ok, repo=_repo_arg, base_path=_store_arg,
+            )
+        except Exception:
+            logger.debug("Latency recording failed for %s", name, exc_info=True)
         end_call_context(call_token)
 
 
@@ -5484,8 +5765,22 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent] | Cal
     storage_path = os.environ.get("CODE_INDEX_PATH")
     logger.info("tool_call: %s args=%s", name, {k: v for k, v in arguments.items() if k != "content"})
 
-    _t0_call = time.perf_counter()
-    _call_ok = True
+    _call_ok = True  # heartbeat label ONLY; the telemetry row is derived in call_tool
+
+    def _fail(text: str) -> CallToolResult:
+        """Every error exit in THIS frame, so the heartbeat cannot report
+        "ok" for a call the client was told failed (#551).
+
+        ⚠ `tests/test_call_outcome_contract.py` walks this function's AST and
+        fails on a bare `return _error_call_result(...)` left behind here. The
+        reported defect was three exits; the guard is over the PROPERTY,
+        because a fourth was added between the flag and its reader before
+        anyone noticed the first three.
+        """
+        nonlocal _call_ok
+        _call_ok = False
+        return _error_call_result(text)
+
     _reporter_ref = None  # progress reporter; drained in finally (#359)
     _deferred_watch = None  # folder to start watching AFTER dispatch (#384)
     try:   # main handler try starts here, before coerce
@@ -5515,7 +5810,7 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent] | Cal
             try:
                 jsonschema.validate(instance=arguments, schema=schema)
             except jsonschema.ValidationError as e:
-                return _error_call_result(json.dumps(
+                return _fail(json.dumps(
                     {"error": f"Input validation error: {e.message}"}, indent=2
                 ))
 
@@ -5523,7 +5818,12 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent] | Cal
         # strict-freshness/auto-watch (the front door isn't repo-scoped; order
         # re-enters call_tool for the real action, which then runs those hooks).
         if name in _COUNTER_FRONT_DOOR:
-            return await _handle_counter_tool(name, arguments)
+            _front = await _handle_counter_tool(name, arguments)
+            if getattr(_front, "isError", False):
+                # A relayed child refusal IS this call's outcome. The relay
+                # itself succeeded, which is exactly why this was missed.
+                _call_ok = False
+            return _front
 
         # Session yield tracking (v1.108.146): repeated identical calls +
         # follow-through/edit-through signals for get_session_stats' `yield`
@@ -5561,7 +5861,7 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent] | Cal
                 arguments.get("query", ""), bool(arguments.get("is_regex", False))
             )
             if _arg_err is not None:
-                return _error_call_result(json.dumps(_arg_err, indent=2))
+                return _fail(json.dumps(_arg_err, indent=2))
 
         # Strict freshness mode: wait for any in-progress reindex to complete
         # before serving query results (except for write/index tools).
@@ -5579,7 +5879,7 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent] | Cal
         allow_disable_tier = config_module.get("allow_disabling_tier_controls", False, repo=repo_arg)
         protected_at_call = frozenset() if allow_disable_tier else _UNDISABLEABLE_TOOLS
         if name not in protected_at_call and config_module.is_tool_disabled(name, repo=repo_arg):
-            return _error_call_result(json.dumps({
+            return _fail(json.dumps({
                 "error": (
                     f"Tool '{name}' is disabled in this project's configuration. "
                     f"Project-level tool disabling is set via the 'disabled_tools' key "
@@ -6716,10 +7016,37 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent] | Cal
                 result = {"error": f"invalid tier: {tier!r}"}
             else:
                 prev = _effective_profile()
-                _set_session_tier(tier)
-                if tier != prev:
-                    await _emit_tools_list_changed()
-                result = {"ok": True, "tier": tier, "changed": tier != prev}
+                if tier == prev:
+                    result = {"ok": True, "tier": tier, "changed": False}
+                else:
+                    price = _price_tier_switch(prev, tier)
+                    if price["verdict"] == "does_not_pay":
+                        # ⚠⚠ `reason` is in the BODY, never in `_meta`.
+                        # `meta_fields` defaults to `[]`, so the dispatcher
+                        # strips `_meta` on a default install -- a refusal
+                        # whose explanation lives there arrives as a bare
+                        # verdict for most users, and the display preference
+                        # that removed it is not one anybody would connect to
+                        # a missing reason.
+                        result = {
+                            "ok": True, "tier": prev, "changed": False,
+                            "refused": "switch_does_not_pay",
+                            "reason": (
+                                f"switching {prev!r} -> {tier!r} mid-session "
+                                f"invalidates the cached tool block and needs "
+                                f"{price['breakeven_requests']:,.0f} further "
+                                f"requests to repay itself, so it costs more "
+                                f"than it saves. Tier left at {prev!r}. Set "
+                                f"tool_profile={tier!r} at startup instead, "
+                                f"where there is no switch to pay for."
+                            ),
+                            "switch_cost": price,
+                        }
+                    else:
+                        _set_session_tier(tier)
+                        await _emit_tools_list_changed()
+                        result = {"ok": True, "tier": tier, "changed": True,
+                                  "switch_cost": price}
         elif name == "announce_model":
             model = arguments.get("model", "")
             if not isinstance(model, str) or not model:
@@ -7159,8 +7486,7 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent] | Cal
             # In-band tool error (e.g. ambiguous/not-found repo, Unknown tool).
             # Carry the same JSON body but flag isError for clients that branch
             # on it (F-P01); the v1.108.30 passthrough already kept errors JSON.
-            _call_ok = False
-            return _error_call_result(_text)
+            return _fail(_text)
         _record_response_tokens(_text)
         return [TextContent(type="text", text=_text)]
 
@@ -7180,13 +7506,13 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent] | Cal
                 "error": f"Internal error processing {name}",
                 "summary": f"KeyError: {e}",
             }
-            return _error_call_result(json.dumps(payload, separators=(',', ':')))
+            return _fail(json.dumps(payload, separators=(',', ':')))
         _missing_msg = f"Missing required argument: {e}. Check the tool schema for correct parameter names."
         if str(e).strip("'\"") == "repo" and _steer_state["repos"]:
             # Informed retry (v1.108.158): agents ordering without resident
             # schemas omit repo — name what this session has already resolved.
             _missing_msg += " This session has resolved: " + ", ".join(_steer_state["repos"]) + ". Pass repo=<one of these>."
-        return _error_call_result(json.dumps({"error": _missing_msg}, separators=(',', ':')))
+        return _fail(json.dumps({"error": _missing_msg}, separators=(',', ':')))
     except Exception as exc:
         _call_ok = False
         logger.error("call_tool %s failed", name, exc_info=True)
@@ -7198,7 +7524,7 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent] | Cal
             "error": f"Internal error processing {name}",
             "summary": summary,
         }
-        return _error_call_result(json.dumps(payload, separators=(',', ':')))
+        return _fail(json.dumps(payload, separators=(',', ':')))
     finally:
         # Flush in-flight progress notifications BEFORE the response is
         # written (the SDK writes only after call_tool returns, and finally
@@ -7227,20 +7553,6 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent] | Cal
                 await _auto_watch_after_tool(_deferred_watch)
             except Exception:
                 logger.debug("Deferred auto-watch failed", exc_info=True)
-        try:
-            from .storage.token_tracker import record_tool_latency
-            duration_ms = (time.perf_counter() - _t0_call) * 1000.0
-            _repo_arg = arguments.get("repo") if isinstance(arguments, dict) else None
-            # v1.108.188: persist against the store the CALL named. analyze_perf
-            # reads tool_calls and ranking_events through one base path, so a row
-            # written to the default while the reader looks in a named store is
-            # invisible to the only thing that consumes it.
-            _store_arg = arguments.get("storage_path") if isinstance(arguments, dict) else None
-            record_tool_latency(
-                name, duration_ms, ok=_call_ok, repo=_repo_arg, base_path=_store_arg,
-            )
-        except Exception:
-            logger.debug("Latency recording failed for %s", name, exc_info=True)
 
 
 async def _run_server_with_watcher(
@@ -7297,6 +7609,7 @@ async def _run_server_with_watcher(
         storage_path=watcher_kwargs.get("storage_path"),
         extra_ignore_patterns=watcher_kwargs.get("extra_ignore_patterns"),
         follow_symlinks=watcher_kwargs.get("follow_symlinks", False),
+        context_providers=watcher_kwargs.get("context_providers", True),
         quiet=True,
         log_file_handle=_log_file_handle,
     )
@@ -9014,6 +9327,11 @@ def main(argv: Optional[list[str]] = None):
         help="Disable AI-generated summaries during re-indexing",
     )
     watch_parser.add_argument(
+        "--no-context-providers",
+        action="store_true",
+        help="Skip framework context providers (Django/Express/Next.js/Rails/dbt/...). They are discovered once per watched folder and cached, so this trades route and template edges for a lower first-event cost (#558)",
+    )
+    watch_parser.add_argument(
         "--follow-symlinks",
         action="store_true",
         help="Include symlinked files in indexing",
@@ -9819,6 +10137,11 @@ def main(argv: Optional[list[str]] = None):
         help="Disable AI-generated summaries during re-indexing",
     )
     wc_parser.add_argument(
+        "--no-context-providers",
+        action="store_true",
+        help="Skip framework context providers (Django/Express/Next.js/Rails/dbt/...). They are discovered once per watched folder and cached, so this trades route and template edges for a lower first-event cost (#558)",
+    )
+    wc_parser.add_argument(
         "--follow-symlinks",
         action="store_true",
         help="Include symlinked files in indexing",
@@ -9845,6 +10168,8 @@ def main(argv: Optional[list[str]] = None):
     )
     wa_parser.add_argument("--no-ai-summaries", action="store_true",
         help="Disable AI-generated summaries during re-indexing")
+    wa_parser.add_argument("--no-context-providers", action="store_true",
+        help="Skip framework context providers (Django/Express/Next.js/Rails/dbt/...). They are discovered once per watched folder and cached, so this trades route and template edges for a lower first-event cost (#558)")
     wa_parser.add_argument("--follow-symlinks", action="store_true",
         help="Include symlinked files in indexing")
     wa_parser.add_argument("--extra-ignore", nargs="*",
@@ -10132,9 +10457,19 @@ def main(argv: Optional[list[str]] = None):
                 f"({stats['schema_tokens_visible']:,} of {stats['schema_tokens_catalog']:,} schema tokens)"
             )
             print(f"Schema tokens avoided: {stats['schema_tokens_avoided']:,} (estimator: {stats['estimator']})")
+            # ⚠ The basis travels with the number on the HUMAN surface too. A
+            # reader of a bare count supplies "per request", which is the one
+            # reading our own measurement rules out.
+            print(f"  basis: {stats['schema_tokens_basis']}")
+            print(f"  {stats['schema_tokens_basis_note']}")
             print("Heaviest tool schemas:")
             for name, weight in stats["heaviest_tools"].items():
                 print(f"  {name:<28} {weight:>5}")
+            if stats.get("surface_offer"):
+                from .surface_offer import render_offer_lines
+                print()
+                for line in render_offer_lines(stats["surface_offer"]):
+                    print(line)
         return
 
     if args.command == "delete-index":
@@ -10557,6 +10892,7 @@ def main(argv: Optional[list[str]] = None):
                     storage_path=os.environ.get("CODE_INDEX_PATH"),
                     extra_ignore_patterns=args.extra_ignore,
                     follow_symlinks=args.follow_symlinks,
+                    context_providers=not args.no_context_providers,
                     idle_timeout_minutes=args.idle_timeout,
                 )
             )
@@ -10574,6 +10910,7 @@ def main(argv: Optional[list[str]] = None):
                 storage_path=os.environ.get("CODE_INDEX_PATH"),
                 extra_ignore_patterns=args.extra_ignore,
                 follow_symlinks=args.follow_symlinks,
+                context_providers=not args.no_context_providers,
                 rediscover_interval_s=args.rediscover_interval or DEFAULT_REDISCOVER_INTERVAL_S,
             )
         )
@@ -10610,6 +10947,7 @@ def main(argv: Optional[list[str]] = None):
                 storage_path=os.environ.get("CODE_INDEX_PATH"),
                 extra_ignore_patterns=args.extra_ignore,
                 follow_symlinks=args.follow_symlinks,
+                context_providers=not args.no_context_providers,
             )
         )
     elif args.command == "index":
@@ -10848,6 +11186,11 @@ def main(argv: Optional[list[str]] = None):
             warm_up_embedding_backend()
         except Exception:
             logger.debug("embedding warm-up failed", exc_info=True)
+
+        # One-time surface offer on the LOG channel. Same placement rationale as
+        # the warm-up above: one call above both dispatch branches covers every
+        # transport exactly once.
+        _announce_surface_offer(args.transport)
 
         if watcher_enabled:
             # Watcher params: CLI flag > config > default

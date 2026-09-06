@@ -241,6 +241,7 @@ async def _initial_index(
     quiet: bool,
     log_file_handle: Optional[IO],
     build_hash_cache: Callable[[], None],
+    context_providers: bool = True,
 ) -> None:
     """Run a watch task's initial incremental index and record its outcome.
 
@@ -253,6 +254,7 @@ async def _initial_index(
             index_folder,
             path=folder_path,
             use_ai_summaries=use_ai_summaries,
+            context_providers=context_providers,
             storage_path=storage_path,
             extra_ignore_patterns=extra_ignore_patterns,
             follow_symlinks=follow_symlinks,
@@ -287,6 +289,7 @@ async def _watch_single(
     log_file_handle: Optional[IO] = None,
     skip_initial_index: bool = False,
     record_index_ready: bool = False,
+    context_providers: bool = True,
 ) -> None:
     """Watch a single folder and re-index on changes.
 
@@ -375,6 +378,7 @@ async def _watch_single(
             folder_path=folder_path,
             repo_id=repo_id,
             use_ai_summaries=use_ai_summaries,
+            context_providers=context_providers,
             storage_path=storage_path,
             extra_ignore_patterns=extra_ignore_patterns,
             follow_symlinks=follow_symlinks,
@@ -467,6 +471,7 @@ async def _watch_single(
                 index_folder,
                 path=folder_path,
                 use_ai_summaries=use_ai_summaries,
+                context_providers=context_providers,
                 storage_path=storage_path,
                 extra_ignore_patterns=extra_ignore_patterns,
                 follow_symlinks=follow_symlinks,
@@ -482,19 +487,60 @@ async def _watch_single(
                     changed = result.get("changed", 0)
                     new = result.get("new", 0)
                     deleted = result.get("deleted", 0)
+                    # ⚠ Phases ride on the line the reporter already quotes
+                    # (#557). `(Ns)` said the time was inside index_folder and
+                    # stopped there; splitting it is the difference between a
+                    # maintainer guessing and a maintainer reading. Absent when
+                    # the fast path was not taken, which is itself the answer.
+                    _phases = result.get("phase_seconds")
+                    _phase_txt = ""
+                    if isinstance(_phases, dict) and _phases:
+                        _phase_txt = " [" + " ".join(
+                            f"{k}={v}s" for k, v in _phases.items()
+                        ) + "]"
                     _watcher_output(
                         f"  Re-indexed {folder_path}: "
-                        f"changed={changed} new={new} deleted={deleted} ({duration}s)",
+                        f"changed={changed} new={new} deleted={deleted} ({duration}s)"
+                        f"{_phase_txt}",
                         quiet=quiet, log_file_handle=log_file_handle,
                     )
                     mark_reindex_done(repo_id, result)
-                    # Rebuild hash cache from the index that index_folder just wrote.
-                    # Previously this re-read each changed file to compute the new hash,
-                    # but that introduced a double-read race: if the file changed again
-                    # between index_folder's read and the watcher's re-read, the cache
-                    # would record the wrong hash and silently skip the next change (T6).
-                    # Reading from the store is the single authoritative source of truth.
-                    _build_hash_cache()
+                    # Refresh the hash cache from what index_folder actually
+                    # STORED, rather than loading every symbol in the index to
+                    # read a dict of strings.
+                    #
+                    # ⚠ NOT because the reload was slow in the steady state --
+                    # it is not, `incremental_save` keeps the LRU entry
+                    # coherent and it measures 0.001 s. This removes a CLIFF
+                    # that a shipped setting can reach: JCODEMUNCH_INDEX_CACHE_TTL
+                    # evicts an index that has sat unused, and a watcher is
+                    # idle between edits BY DEFINITION. Measured at TTL=1 with a
+                    # 1.5 s gap: 0.001 s -> 0.19 s per event on 15,075 symbols,
+                    # and #370 clocked a cold 665k-symbol hydration at 7.5-11.4
+                    # MINUTES. Anything else that moves the .db mtime between
+                    # the save and the read does the same (#557, @Ticki84).
+                    #
+                    # ⚠ Re-reading the changed files instead is what this used
+                    # to do and it is NOT the alternative: the file can change
+                    # again between index_folder's read and ours, so the cache
+                    # records a hash nobody indexed and the next edit is
+                    # skipped as unchanged (T6). The delta has no second read
+                    # to race with.
+                    #
+                    # ⚠⚠ ABSENT is not EMPTY. A run that cannot report its
+                    # delta (older code path, full walk, an exit added later)
+                    # must fall back to the full reload -- treating a missing
+                    # key as "nothing changed" would freeze the cache and
+                    # silently stop reindexing, which is the failure this cache
+                    # exists to prevent.
+                    _delta = result.get("file_hashes_delta")
+                    if isinstance(_delta, dict):
+                        _hash_cache.update(_delta)
+                        for _gone in result.get("file_hashes_removed") or []:
+                            _hash_cache.pop(_gone, None)
+                        _hash_cache_built = True
+                    else:
+                        _build_hash_cache()
                     # Report re-index activity (only if it actually did work)
                     if on_reindex is not None:
                         on_reindex()
@@ -529,6 +575,7 @@ class WatcherManager:
         self,
         debounce_ms: int = DEFAULT_DEBOUNCE_MS,
         use_ai_summaries: bool = True,
+        context_providers: bool = True,
         storage_path: Optional[str] = None,
         extra_ignore_patterns: Optional[list[str]] = None,
         follow_symlinks: bool = False,
@@ -545,6 +592,7 @@ class WatcherManager:
         self._condition = asyncio.Condition(self._pending_lock)
         self._debounce_ms = debounce_ms
         self._use_ai_summaries = use_ai_summaries
+        self._context_providers = context_providers
         self._storage_path = storage_path
         self._extra_ignore_patterns = extra_ignore_patterns
         self._follow_symlinks = follow_symlinks
@@ -648,6 +696,7 @@ class WatcherManager:
                 folder_path=folder,
                 debounce_ms=self._debounce_ms,
                 use_ai_summaries=self._use_ai_summaries,
+                context_providers=self._context_providers,
                 storage_path=self._storage_path,
                 extra_ignore_patterns=self._extra_ignore_patterns,
                 follow_symlinks=self._follow_symlinks,
@@ -844,6 +893,7 @@ class WatcherManager:
                 index_folder,
                 path=folder,
                 use_ai_summaries=kwargs.get("use_ai_summaries", self._use_ai_summaries),
+                context_providers=kwargs.get("context_providers", self._context_providers),
                 storage_path=self._storage_path,
                 extra_ignore_patterns=kwargs.get(
                     "extra_ignore_patterns", self._extra_ignore_patterns
@@ -955,6 +1005,7 @@ async def watch_folders(
     paths: list[str],
     debounce_ms: int = DEFAULT_DEBOUNCE_MS,
     use_ai_summaries: bool = True,
+    context_providers: bool = True,
     storage_path: Optional[str] = None,
     extra_ignore_patterns: Optional[list[str]] = None,
     follow_symlinks: bool = False,
@@ -1046,6 +1097,7 @@ async def watch_folders(
     manager = WatcherManager(
         debounce_ms=debounce_ms,
         use_ai_summaries=use_ai_summaries,
+        context_providers=context_providers,
         storage_path=storage_path,
         extra_ignore_patterns=extra_ignore_patterns,
         follow_symlinks=follow_symlinks,
@@ -1135,6 +1187,7 @@ async def watch_folders(
 async def sync_folders(
     paths: list[str],
     use_ai_summaries: bool = True,
+    context_providers: bool = True,
     storage_path: Optional[str] = None,
     extra_ignore_patterns: Optional[list[str]] = None,
     follow_symlinks: bool = False,
@@ -1165,6 +1218,7 @@ async def sync_folders(
                 index_folder,
                 path=folder,
                 use_ai_summaries=use_ai_summaries,
+                context_providers=context_providers,
                 storage_path=storage_path,
                 extra_ignore_patterns=extra_ignore_patterns,
                 follow_symlinks=follow_symlinks,
@@ -1261,6 +1315,7 @@ async def watch_claude_worktrees(
     poll_interval: float = 5,
     debounce_ms: int = DEFAULT_DEBOUNCE_MS,
     use_ai_summaries: bool = True,
+    context_providers: bool = True,
     storage_path: Optional[str] = None,
     extra_ignore_patterns: Optional[list[str]] = None,
     follow_symlinks: bool = False,
@@ -1309,6 +1364,7 @@ async def watch_claude_worktrees(
                 folder_path=folder,
                 debounce_ms=debounce_ms,
                 use_ai_summaries=use_ai_summaries,
+                context_providers=context_providers,
                 storage_path=storage_path,
                 extra_ignore_patterns=extra_ignore_patterns,
                 follow_symlinks=follow_symlinks,

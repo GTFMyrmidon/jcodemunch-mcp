@@ -353,6 +353,24 @@ DEFAULTS = {
     "exclude_secret_patterns": [],
     "exclude_skip_directories": [],
     "extra_extensions": {},
+    # Racket only, and deliberately NOT a generic `definition_forms` map. A
+    # Racket project routinely defines its own defining forms via
+    # `define-syntax` -- congame binds ~448 symbols through `defstep`,
+    # `defstudy` and `defvar` -- and no static parser can know what those bind.
+    # Declaring them here is the user ASSERTING it, which is the only safe
+    # source for that claim. Clojure, Elixir and Common Lisp have the same
+    # blindness, but none of them has been measured, so a shared key would be a
+    # general promise backed by one data point. If a second language earns one,
+    # `<lang>_definition_forms` appears beside this and unification becomes a
+    # decision with evidence behind it.
+    "racket_definition_forms": {},
+    # Racket only. `#lang` names a READER, and tree-sitter-racket reads
+    # S-expressions, so a `.rkt` whose reader is Markdown (`punct`) or at-exp
+    # text (`conscript`) must be told apart before the grammar runs. Built-in
+    # lists cover the distribution's langs; a project's own lang is unknown to
+    # them and is treated as a document (no symbols) until promoted here:
+    # {"conscript": "at-exp"}. Values: "sexp", "at-exp", "text".
+    "racket_langs": {},
     "context_providers": True,
     "meta_fields": [],  # [] = no _meta (token-efficient; set null in config for all fields)
     "languages": None,  # None = all languages
@@ -364,6 +382,11 @@ DEFAULTS = {
     # "counter" by _fresh_config_content — so a package update never silently
     # collapses a user's tool surface.
     "tool_surface": "full",  # "full" or "counter"
+    # ⚠ Purely a display latch for the surface OFFER (surface_offer.py). It
+    # never affects which tools are served; setting it true only stops the
+    # status commands re-asking. It exists so "no thanks" is a supported
+    # permanent answer that does not require accepting the offer to silence it.
+    "surface_offer_seen": False,
     "tool_tier_bundles": {
         "core": [
             "index_repo", "index_folder", "index_file",
@@ -407,11 +430,19 @@ DEFAULTS = {
             "find_hot_paths", "find_unused_paths", "get_redaction_log",
         ],
     },
+    # ⚠⚠ No entry here targets "standard", and that is deliberate. This map
+    # drives a MID-SESSION switch, and `full` -> `standard` drops 6.7% of the
+    # schema payload while invalidating the whole cached prefix -- 174 requests
+    # to repay itself with an empty history, 864 with 100k of it. It is a fine
+    # STARTUP `tool_profile` and a losing transition, so the two must not be
+    # confused. `tier_switch_cost.classify` refuses it at the switch regardless;
+    # routing two of the most common models at it would just mean every such
+    # session opened with a refusal. `core` is the real narrowing (4 requests).
     "model_tier_map": {
         "claude-opus": "full",
-        "claude-sonnet": "standard",
+        "claude-sonnet": "full",
         "claude-haiku": "core",
-        "gpt-4o": "standard",
+        "gpt-4o": "full",
         "gpt-5": "full",
         "o1": "full",
         "llama": "core",
@@ -512,12 +543,15 @@ CONFIG_TYPES = {
     "exclude_secret_patterns": list,
     "exclude_skip_directories": list,
     "extra_extensions": dict,
+    "racket_definition_forms": dict,
+    "racket_langs": dict,
     "context_providers": bool,
     "meta_fields": (list, type(None)),
     "languages": (list, type(None)),
     "languages_adaptive": bool,
     "tool_profile": str,
     "tool_surface": str,
+    "surface_offer_seen": bool,
     "tool_tier_bundles": dict,
     "model_tier_map": dict,
     "adaptive_tiering": bool,
@@ -986,6 +1020,33 @@ def _ensure_loaded() -> None:
         load_config(create_missing=False)
     except Exception:
         logger.debug("Lazy config load failed; answering from defaults", exc_info=True)
+
+
+def racket_config_digest(repo: str | None) -> str:
+    """Fingerprint of the config that changes what the Racket parser EMITS.
+
+    `racket_definition_forms` and `racket_langs` alter extraction for
+    unchanged file content, and the incremental indexer skips unchanged
+    content by design. So a declaration added after an index exists applied
+    to nothing until each file was edited -- measured: `check-admin ABSENT`
+    across an incremental reindex, present only after a full one -- which is
+    the "parameter present and doing nothing" defect (#508). The digest is
+    stamped on the index at save; a mismatch at the next index forces one
+    full re-parse, the way `PARSER_GENERATION` does for a code change.
+    Empty when neither key is set, so an unconfigured project never differs.
+    """
+    forms = get("racket_definition_forms", {}, repo=repo) or {}
+    langs = get("racket_langs", {}, repo=repo) or {}
+    if not isinstance(forms, dict):
+        forms = {}
+    if not isinstance(langs, dict):
+        langs = {}
+    if not forms and not langs:
+        return ""
+    import hashlib
+    import json as _json
+    payload = _json.dumps({"forms": forms, "langs": langs}, sort_keys=True, default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def get(key: str, default: Any = None, repo: str | None = None) -> Any:
@@ -2117,6 +2178,26 @@ def generate_template() -> str:
   //   Map additional file extensions to languages.
   //   Example: {{".mpl": "cpp"}} to parse .mpl files as C++.
 
+  // "racket_definition_forms": {{}},
+  //   Racket only. Declare a project's own defining macros so what they bind
+  //   becomes searchable. Each value is what the form binds: function,
+  //   constant, class or type. Where the name sits is read from the source.
+  //   Example: {{"defstep": "function", "defstudy": "constant"}}
+  //   This is an assertion jCodeMunch cannot verify; a wrong entry indexes a
+  //   name Racket does not bind. Built-in forms always win over declarations.
+
+  // "racket_langs": {{}},
+  //   Racket only. A `#lang` line names a reader, and the parser reads
+  //   S-expressions, so a `.rkt` in a project's own lang is treated as a
+  //   document (no symbols) until you say what its syntax is:
+  //   "sexp" (plain S-expressions), "at-exp" (at-exp text bodies over
+  //   Racket, e.g. conscript) or "text" (Markdown, Scribble -- never walked).
+  //   An at-exp lang with its own command character takes the object form:
+  //   Example: {{"conscript": "at-exp", "mylang": {{"tier": "at-exp", "command_char": "◊"}}}}
+  //   Example: {{"conscript": "at-exp", "punct": "text"}}
+  //   A key also matches its sub-langs (`conscript` covers
+  //   `conscript/with-require`). Distribution langs are built in.
+
   // "context_providers": true,
   //   Enable context providers for enhanced AI summarization.
   //   Set false to disable (faster indexing, less context).
@@ -2189,6 +2270,14 @@ def generate_template() -> str:
   // demand — maximum token savings, all capability preserved. New installs
   // default to "counter"; set "full" here to advertise all tool schemas.
   // "tool_surface": "full",
+
+  // === Surface Offer ===
+  // Existing installs keep the tool_surface they were created with, because
+  // upgrade_config cannot back-inject that key. The status commands
+  // (`surface`, `install-status`) therefore print a one-time priced offer to
+  // move to the current default. Set true to stop being asked; it changes
+  // nothing about which tools are served.
+  // "surface_offer_seen": false,
 
   // === Compact Schemas ===
   // When true, strips rarely-used advanced parameters (debug, fusion, semantic_*,
@@ -2290,11 +2379,16 @@ def generate_template() -> str:
   // glob, substring, "*", hardcoded "full" fallback in that order.
   // Keep keys specific where possible: very short substrings (e.g. "o1") can
   // over-match model ids that merely contain that token.
+  // No entry targets "standard", deliberately: this map drives a MID-SESSION
+  // switch, and full -> standard drops 6.7% of the schema payload while
+  // invalidating the whole cached prefix (174 requests to repay itself, 864
+  // with 100k of history). It is a fine startup tool_profile and a losing
+  // transition; the server refuses it at the switch either way.
   "model_tier_map": {{
     "claude-opus": "full",
-    "claude-sonnet": "standard",
+    "claude-sonnet": "full",
     "claude-haiku": "core",
-    "gpt-4o": "standard",
+    "gpt-4o": "full",
     "gpt-5": "full",
     "o1": "full",
     "llama": "core",

@@ -25,7 +25,9 @@ from ._utils import resolve_repo as _resolve_repo
 from ._call_graph import _word_match, build_symbols_by_file
 # One matcher, not two: entry_point_patterns must mean the same thing in
 # both dead-code tools or #436 gets replaced by a subtler version of itself.
+from ._entry_points import entry_point_spec
 from .find_dead_code import _matches_any_pattern, unmatched_patterns
+from ._runtime_discovery import discover_dynamic_packages
 from ..parser.context._route_utils import ENTRY_POINT_DECORATOR_RE
 
 
@@ -261,7 +263,8 @@ def _package_json_entries(index, store, owner, repo_name) -> set[str]:
                 entries.add(joined)
                 continue
             # Try common JS/TS extensions if missing.
-            for ext in ("", ".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx",
+            for ext in ("", ".js", ".ts", ".mjs", ".cjs", ".mts", ".cts",
+                        ".jsx", ".tsx",
                         "/index.js", "/index.ts", "/index.mjs", "/index.cjs"):
                 trial = joined + ext
                 if trial in source_files:
@@ -617,7 +620,33 @@ def get_dead_code_v2(
             if _matches_any_pattern(f, entry_point_patterns)
         }
 
-    extra_entries = pkg_entries | declared_entries
+    # (d) framework-declared roots (#562). ⚠⚠ Without these, a Next.js repo
+    # detected NO entry point, so signal 1 (`unreachable_file`) fired on every
+    # symbol, all three signals were ruled non-discriminating, and this tool
+    # returned `dead_symbols: []` -- which a downstream consumer reads as
+    # "no dead code" rather than "could not tell". The advice in the warning
+    # ("pass entry_point_patterns") asked the user to hand-type a list the
+    # index was already carrying, detected at index time and never read.
+    #
+    # ⚠ Ordered AFTER the caller's own patterns and unioned, never substituted:
+    # an explicit `entry_point_patterns` argument is a stronger statement than
+    # our detection and must not be narrowed by it.
+    fw_spec = entry_point_spec(index)
+    fw_entries = {f for f in index.source_files if fw_spec.matches(f)}
+    declared_entries |= fw_entries
+
+    # (e) runtime-discovered packages (#569). Fixed at BOTH call sites rather
+    # than only the reported one: signal 1 here is `unreachable_file`, computed
+    # from the same import graph, so a package enumerated by
+    # `pkgutil.iter_modules` votes its modules dead in this tool for the same
+    # invisible-edge reason. ⚠ It only ever ADDS roots, so its effect on a
+    # published grade is one direction: fewer false dead symbols.
+    dynamic_entries = {
+        f for f in discover_dynamic_packages(index, store, owner, name).roots
+        if f in source_files
+    }
+
+    extra_entries = pkg_entries | declared_entries | dynamic_entries
     entry_point_count = (
         sum(1 for f in index.source_files
             if _is_entry_point(f) or f in declared_entries)

@@ -1,8 +1,49 @@
 """Shared pytest fixtures for jcodemunch-mcp tests."""
 
 import os
+import sys
+from pathlib import Path
 
 import pytest
+
+# `harness/` (thresholds, tiers) is a root-level dev package, deliberately
+# outside src/ and the wheel. Tests reach it through the repo root, which
+# pytest's prepend import mode does not put on sys.path by itself.
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _no_network():
+    """No test reaches the network (STANDARD N5).
+
+    Before 2026-09-03 this was established by inspection only. Any outbound
+    `socket.connect` to a non-loopback address raises; the in-process ASGI
+    transports the HTTP tests use never touch a socket. A test that genuinely
+    needs the network opts out with `@pytest.mark.network` (zero users today)
+    and is excluded from every harness tier by that marker.
+    """
+    import socket
+
+    real_connect = socket.socket.connect
+
+    def guarded_connect(self, address, *a, **kw):
+        host = address[0] if isinstance(address, tuple) else address
+        if isinstance(host, str) and host not in ("127.0.0.1", "::1", "localhost", ""):
+            raise RuntimeError(
+                f"test attempted a network connection to {host!r}; tests are offline "
+                "(STANDARD N5). Mark it @pytest.mark.network if it must reach out. "
+                "If this is tiktoken fetching its BPE asset on a cold box, run "
+                "`uv run python -m harness warm` once before pytest (FINDINGS F-14)."
+            )
+        return real_connect(self, address, *a, **kw)
+
+    socket.socket.connect = guarded_connect
+    try:
+        yield
+    finally:
+        socket.socket.connect = real_connect
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -232,3 +273,68 @@ def hierarchy_index(tmp_path):
     r = index_folder(str(src), use_ai_summaries=False, storage_path=str(store))
     assert r["success"] is True
     return {"repo": r["repo"], "store": str(store), "src": str(src)}
+
+
+@pytest.fixture(autouse=True)
+def _isolate_claude_home(request, monkeypatch, tmp_path_factory):
+    """Redirect every home-derived path `cli.init` writes to a per-test dir,
+    and fail the test that changes the developer's real Claude Code files.
+
+    W-34 (docs/workflows/FINDINGS.md): five `run_init(yes=True, no_backup=True)`
+    tests in `tests/test_init.py` left `_settings_json_path` unredirected, so
+    the full tier ran `install_enforcement_hooks` against the REAL
+    `~/.claude/settings.json` and `_converge_rule` rewrote every jcm hook
+    command to whatever `shutil.which` found -- in a git worktree, that
+    worktree's `.venv`, deleted minutes later; the next Claude Code session
+    start failed on every product hook. Practice 8's `load_config()` guard
+    (#437) is written against that name and never saw this path.
+
+    Two halves, deliberately: the redirect fixes the helpers that exist today;
+    the tripwire catches the writer that reaches the real file some other way
+    (a new helper, a `Path.home()` inlined at a call site). A test that patches
+    one of these helpers itself still wins -- monkeypatch is last-set. The
+    per-test directory is created LAZILY, inside the redirected helpers, so
+    the ~9,300 tests that never call `run_init` pay nothing.
+    `install_agents_md` writes `Path.cwd()/AGENTS.md` and is NOT redirected:
+    the repo root's tracked AGENTS.md is watched instead.
+    """
+    from jcodemunch_mcp.cli import init as _init
+
+    base = tmp_path_factory.getbasetemp() / "claude_home" / request.node.name[:60].replace("/", "_")
+
+    def _under(*parts: str):
+        base.mkdir(parents=True, exist_ok=True)
+        return base.joinpath(*parts)
+
+    monkeypatch.setattr(_init, "_settings_json_path", lambda: _under(".claude", "settings.json"))
+    monkeypatch.setattr(_init, "_claude_md_path", lambda scope: _under(".claude", "CLAUDE.md"))
+    monkeypatch.setattr(_init, "_cursor_rules_path", lambda: _under(".cursor", "rules", "jcodemunch.mdc"))
+    monkeypatch.setattr(_init, "_windsurf_rules_path", lambda: _under(".windsurfrules"))
+
+    # Same resolution as `_settings_json_path`: USERPROFILE on Windows only.
+    if sys.platform == "win32":
+        real_home = Path(os.environ.get("USERPROFILE", str(Path.home())))
+    else:
+        real_home = Path.home()
+    watched = [
+        real_home / ".claude" / "settings.json",
+        real_home / ".claude" / "CLAUDE.md",
+        Path(__file__).resolve().parents[1] / "AGENTS.md",
+    ]
+
+    def _stamp(p: Path):
+        try:
+            st = p.stat()
+            return (st.st_mtime_ns, st.st_size)
+        except OSError:
+            return None
+
+    before = [_stamp(p) for p in watched]
+    yield
+    after = [_stamp(p) for p in watched]
+    changed = [str(p) for p, a, b in zip(watched, before, after) if a != b]
+    assert not changed, (
+        f"{request.node.nodeid} changed the developer's real Claude Code file(s) "
+        f"{changed} (W-34; Practice 8). Redirect the path helper in cli.init or "
+        f"point HOME/USERPROFILE at a directory the test owns."
+    )

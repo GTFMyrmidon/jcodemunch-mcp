@@ -1,6 +1,6 @@
 [project]
 name = "jcodemunch-mcp"
-version = "1.108.296"
+version = "1.108.317"
 description = "Token-efficient MCP server for source code exploration via tree-sitter AST parsing"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -104,10 +104,30 @@ packages = ["src/jcodemunch_mcp", "munch-bench/munch_bench"]
 # Nested .gitignore files do not reach hatchling, only the root one does.
 exclude = [
     ".claude/",
+    # Inbound-layer prompts and helper scripts, and every workflow: repository
+    # plumbing, never something an installed package needs (docs/inbound/FINDINGS.md IN-10).
+    ".github/",
+    # Per-project index config for THIS source tree: it raises `max_file_size`
+    # so `server.py` and `parser/extractor.py` enter this repo's own index
+    # (#566). A consumer who installs the package does not have this tree, so
+    # the key describes nothing on their machine. Tracked because it is a real
+    # repo setting; excluded because "tracked" and "shipped" are different.
+    ".jcodemunch.jsonc",
+    # Git-only: pins tests/fixtures/racket/*.rkt to LF for the frozen byte-position
+    # oracle. A checkout concern, not a distribution one.
+    ".gitattributes",
     "index.php",
     "vscode-extension/node_modules/",
     "vscode-extension/out/",
     "*.vsix",
+    # Dev-box maintenance for the whole jMunch suite: it hard-codes
+    # `C:\Program Files\Python310` and the `C:\MCPs\*` trees, so it is noise
+    # to a PyPI consumer and cannot work on their machine. Tracked because it
+    # encodes a real lesson (uninstalling an MCP package while its server runs
+    # half-removes it); excluded because "tracked" and "shipped" are different
+    # questions. `scripts/unstable_modules_diag.py` DOES ship -- it diagnoses a
+    # metric a user can see on their own repo.
+    "scripts/repair-munch-installs.ps1",
 ]
 
 [tool.pytest.ini_options]

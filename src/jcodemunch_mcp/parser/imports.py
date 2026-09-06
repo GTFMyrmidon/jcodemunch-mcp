@@ -1,6 +1,8 @@
 """Extract import statements from source files using language-specific regex patterns."""
 
 import json
+import logging
+import os
 import posixpath
 import re
 import threading
@@ -76,6 +78,8 @@ _JS_DYNAMIC_IMPORT = re.compile(r"""import\s*\(\s*['"]([^'"]+)['"]\s*\)""", re.M
 # Python: from .module import A, B  /  import os
 # Allow optional leading whitespace so function-local imports inside def/class
 # bodies are also captured (common pattern for breaking circular imports).
+logger = logging.getLogger(__name__)
+
 _PY_FROM = re.compile(
     r"""^[ \t]*from\s+(\.{0,4}[\w.]*)\s+import\s+(.+)$""", re.MULTILINE
 )
@@ -267,9 +271,80 @@ def _extract_python_imports(content: str) -> list[dict]:
             seen.add(specifier)
             edges.append({"specifier": specifier, "names": names})
 
+        # ⚠⚠ `from . import receipts` is a dependency on the SIBLING MODULE
+        # `receipts`, not on the package's `__init__.py` (#550, @rknighton).
+        # The specifier is a bare `.`, which names the package, so the resolver
+        # -- which only ever sees the specifier -- had no way to reach the
+        # sibling and every such edge pointed at `__init__.py`. This repo uses
+        # the form 49 times across 16 files, and it alone reported 20 live files
+        # as dead.
+        #
+        # ⚠ Emitted ALONGSIDE the bare specifier, never instead of it, and that
+        # is what makes this safe without touching the 26 `resolve_specifier`
+        # call sites. `from . import x` is `x` the submodule OR `x` an
+        # attribute of `__init__.py`, and which one cannot be known from the
+        # importing file. So both edges are offered: `.x` resolves when the
+        # submodule exists, resolves to None (harmless, skipped by every
+        # consumer) when it does not, and the `__init__.py` edge that already
+        # worked is left exactly as it was.
+        #
+        # ⚠ The per-name loop runs even when the bare specifier was already
+        # seen. `from . import a` followed by `from . import b` in one file
+        # otherwise loses `b` entirely -- the dedup keys on the specifier, and
+        # every bare-dot import in a file shares the same one.
+        #
+        # ⚠⚠ The guard was `set(specifier) == {"."}`, i.e. BARE dots only, so
+        # #550 was fixed for `from . import x` and left standing for
+        # `from ..retrieval import embed_drift` -- the same dependency on a
+        # sibling module, written with the package named. Every reason above
+        # applies to it word for word; only the spelling differs. Measured over
+        # this repo's `src/`: 21 SYNTHESISED edges that resolve, from 18
+        # importer files, reaching 12 modules -- `evidence/producers.py`,
+        # `evidence/receipts.py`, `retrieval/embed_drift.py`,
+        # `storage/embedding_matrix.py`, `storage/token_tracker.py` and seven
+        # more, every one of which `find_importers` reported as having zero
+        # importers while its importer sat at module scope in an indexed, live
+        # file (#566).
+        #
+        # ⚠⚠ The first count written here was 134, and it was wrong the way a
+        # measurement is usually wrong: it counted every edge matching the
+        # SHAPE rather than the ones this change creates. `from .tools.index_repo
+        # import index_repo` -- the convention where a module and its chief
+        # export share a name -- is hand-written, already resolved, and looks
+        # identical to a synthesised edge unless the raw source is consulted.
+        # 113 of the 134 were that. **Compare against the import statements
+        # actually written in the file, never against the specifier's spelling.**
+        #
+        # ⚠ A bare-dot specifier already ends in the separator (`.` + `x` is
+        # `.x`); a named one needs it (`..retrieval` + `embed_drift` is
+        # `..retrieval.embed_drift`). Absolute specifiers take the same path --
+        # `from pkg.storage import matrix` yields `pkg.storage.matrix`, which
+        # the module-path branch of `resolve_specifier` resolves.
+        if names:
+            _prefix = specifier if set(specifier) == {"."} else f"{specifier}."
+            for _name in names:
+                _sub = f"{_prefix}{_name}"
+                if _sub not in seen:
+                    seen.add(_sub)
+                    edges.append({"specifier": _sub, "names": [_name]})
+
     for m in _PY_IMPORT.finditer(content):
         for mod in m.group(1).split(","):
-            mod = mod.strip().split()[0]  # handle 'import os as operating_system'
+            # ⚠⚠ `[0]` on an empty split raised IndexError, and `extract_imports`
+            # swallows it and returns [], so ONE bad line cost the file EVERY
+            # import edge it had. Found 2026-08-26 on this repo's own
+            # `watcher.py`, whose docstring wraps to a line reading
+            # "import keeps the core watcher free of a hard dependency ...," --
+            # `_PY_IMPORT` matches any line starting `import `, prose included,
+            # and a trailing comma leaves an empty final part.
+            #
+            # ⚠ A bogus specifier lifted out of prose is harmless: it resolves
+            # to None and every consumer skips it. The CRASH was the defect,
+            # and it was invisible because the file simply had no edges.
+            parts = mod.strip().split()
+            if not parts:
+                continue
+            mod = parts[0]  # handle 'import os as operating_system'
             if mod and mod not in seen:
                 seen.add(mod)
                 edges.append({"specifier": mod, "names": []})
@@ -656,6 +731,277 @@ def _extract_svelte_imports(content: str) -> list[dict]:
     return deduped
 
 
+# ---------------------------------------------------------------------------
+# Racket
+# ---------------------------------------------------------------------------
+# `(require ...)` nests arbitrarily -- (only-in ...), (prefix-in ...),
+# (rename-in ...), (for-syntax ...) -- so a flat regex cannot read it. This is a
+# minimal balanced reader over the require form only; it never parses the whole
+# file, so it stays as cheap as the regex extractors around it.
+
+#: `\b` after `require` also matched `(require-syntax ...)` (`-` is a word
+#: boundary), which is a different form; the lookahead demands a delimiter.
+#: Wrappers that carry the real module path deeper inside.
+_RACKET_REQUIRE_UNWRAP = frozenset({
+    "for-syntax", "for-template", "for-label", "for-meta", "combine-in",
+})
+
+
+def _racket_atom_specifier(node: str) -> Optional[str]:
+    """A bare module path or a `"string"` path; None for anything else.
+
+    `"."` and `".."` are the submod spellings for THIS module and its
+    enclosing module, never a file.
+    """
+    if node.startswith('"'):
+        node = node[1:-1]
+    if node.startswith("#") or node in ("", ".", ".."):
+        return None
+    return node
+
+
+def _racket_edges(node) -> list[tuple[str, list[str]]]:
+    """Every (module path, imported names) pair a require sub-form carries.
+
+    ⚠ Plural on purpose. The wrappers -- `for-syntax`, `for-template`,
+    `for-label`, `for-meta`, `combine-in` -- take ANY number of module paths,
+    and a reducer that returned one string kept the first and dropped the
+    rest: `(for-syntax racket/base "private/helpers.rkt")` recorded
+    `racket/base` and lost the local file, and `(for-meta 1 "m.rkt")` recorded
+    the phase level `1` as a module path. 166 multi-path wrappers in the
+    distribution's pkgs; a phase-1 helper's only importer is usually one of
+    them, so it read as dead.
+
+    Names are reduced to their SOURCE-side spelling: `(rename-in m [f g])`
+    yields `f`, the name at the definition site, which is what makes the edge
+    point at a real symbol -- the reduction :func:`_clean_names` applies to
+    `import {a as b}` and Gleam's `X as Y` for every other language here.
+    """
+    if isinstance(node, str):
+        spec = _racket_atom_specifier(node)
+        return [(spec, [])] if spec else []
+    if not node:
+        return []
+    head = node[0] if isinstance(node[0], str) else ""
+    if head == "submod":
+        # `(submod "." test)` / `(submod ".." x)` name a submodule of THIS
+        # file; `(submod "other.rkt" sub)` names a submodule of ANOTHER file,
+        # which is a dependency on that file.
+        if len(node) >= 2 and isinstance(node[1], str):
+            spec = _racket_atom_specifier(node[1])
+            return [(spec, [])] if spec else []
+        return []
+    if head in ("file", "lib", "planet", "quote"):
+        return _racket_edges(node[1]) if len(node) >= 2 else []
+    if head in _RACKET_REQUIRE_UNWRAP:
+        # `(for-meta 1 a b)`: the first argument is a phase level, not a path.
+        rest = node[2:] if head == "for-meta" else node[1:]
+        out: list[tuple[str, list[str]]] = []
+        for sub in rest:
+            out.extend(_racket_edges(sub))
+        return out
+    if head in ("only-in", "rename-in", "prefix-in", "except-in", "relative-in"):
+        idx = 2 if head == "prefix-in" else 1
+        if len(node) <= idx:
+            return []
+        inner = _racket_edges(node[idx])
+        if not inner:
+            return []
+        spec, names = inner[0]
+        if head == "only-in":
+            names = list(names)
+            for item in node[2:]:
+                if isinstance(item, str):
+                    names.append(item)
+                elif item and isinstance(item[0], str):
+                    names.append(item[0])
+        elif head == "rename-in":
+            names = list(names) + [
+                p[0] for p in node[2:] if isinstance(p, list) and p and isinstance(p[0], str)
+            ]
+        return [(spec, names)] + inner[1:]
+    return []
+
+
+#: Node types under which a `(require ...)` is DATA, not a require of this
+#: file: quoted and syntax-quoted forms (macro templates, `eval` payloads),
+#: comments (`#;` above all), and a span the reader could not read.
+_RACKET_NOT_CODE = frozenset({
+    "quote", "quasiquote", "syntax", "quasisyntax",
+    "comment", "block_comment", "sexp_comment", "ERROR",
+})
+
+
+def _racket_datum(node):
+    """The nested-list-of-strings view `_racket_edges` consumes: atoms are
+    their source text (a string path keeps its quotes), lists are lists."""
+    if node.type == "list":
+        return [_racket_datum(c) for c in node.children
+                if c.type not in ("comment", "block_comment", "sexp_comment", "dot")]
+    return node.text.decode("utf-8", "replace")
+
+
+def _extract_racket_imports(content: str, repo: Optional[str] = None) -> list[dict]:
+    """Extract Racket `(require ...)` edges, read by ``racket_reader.py``.
+
+    Handles bare collection paths, string paths, `(submod "file" sub)`, and
+    the `only-in` / `rename-in` / `prefix-in` / `except-in` / `for-syntax` /
+    `for-meta` / `combine-in` wrappers, each of which may carry several
+    module paths. `(submod "." test)` is deliberately skipped -- it names a
+    submodule of the same file, not another file.
+
+    ⚠ One reader. This used to carry its own comment-stripper and form reader
+    and find `(require` by regex, which matched inside `#;` comments, `#'`
+    syntax templates, quasiquoted `eval` payloads and here-strings: measured
+    over 2,489 files, 131 "requires" the files do not make and none missed.
+    Now the `#lang` tier decides the reader mode (so a project's own at-exp
+    lang needs `repo`, the same way the walker does), a `require` is a list
+    whose head is that symbol at any depth of CODE, and a document-tier
+    file contributes no edges -- a reader it does not have cannot say where
+    the Racket in it is.
+    """
+    from .extractor import _racket_command_char, _racket_tier   # lazy: the cycle runs the other way
+    from .racket_reader import read_racket
+
+    source = content.encode("utf-8", "surrogatepass")
+    tier, written = _racket_tier(source, repo)
+    if tier == "text":
+        return []
+    tree = read_racket(source, at_exp=(tier == "at-exp"),
+                       command_char=_racket_command_char(written, repo))
+    edges: list[dict] = []
+    seen: set[tuple] = set()
+    stack = [tree.root_node]
+    while stack:
+        node = stack.pop()
+        if node.type in _RACKET_NOT_CODE:
+            continue
+        if node.type == "list":
+            kids = [c for c in node.children if c.type not in ("comment", "block_comment", "sexp_comment")]
+            if kids and kids[0].type == "symbol" and kids[0].text == b"require":
+                for item in kids[1:]:
+                    for spec, names in _racket_edges(_racket_datum(item)):
+                        key = (spec, tuple(names))
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        edges.append({"specifier": spec, "names": names})
+        stack.extend(reversed(node.children))
+    return edges
+
+
+# `(define collection "name")` or `(define collection 'multi)` in an info.rkt.
+_RACKET_INFO_COLLECTION_RE = re.compile(
+    r"\(define\s+collection\s+(?:\"([^\"]+)\"|'multi\b|\(quote\s+multi\))"
+)
+_racket_collection_cache: dict[tuple, dict[str, list[str]]] = {}
+
+
+def build_racket_collection_map(source_root: str, source_files) -> dict[str, list[str]]:
+    """Collection name -> root-relative directories, from every `info.rkt`.
+
+    ⚠ A Racket collection path names a DIRECTORY that `info.rkt` declares,
+    not a path in the repo. In the layout the packaging docs prescribe --
+    `foo-lib/info.rkt` holding `(define collection "foo")` -- `(require
+    foo/bar)` means `foo-lib/bar.rkt`, and there is no way to know that
+    without reading the file. Measured before this existed: **splitflap, 0 of
+    70 require edges resolved**; congame, 147 own-collection specifiers
+    unresolved. Every library file read as dead. This is the PSR-4 shape
+    (:func:`build_psr4_map`), where `composer.json` maps a namespace prefix
+    to a directory.
+
+    A `'multi` package makes every subdirectory a collection named after
+    itself. ⚠ Several directories may declare the SAME collection -- Racket
+    splices them (`congame-cli`, `congame-core` and `congame-doc` all declare
+    `"congame"`) -- so the value is a LIST, in discovery order.
+
+    Cached per (source_root, info.rkt set); the set is part of the key so an
+    added package is seen without a restart.
+    """
+    infos = tuple(sorted(
+        p for p in source_files if p == "info.rkt" or p.endswith("/info.rkt")
+    ))
+    key = (source_root, infos)
+    cached = _racket_collection_cache.get(key)
+    if cached is not None:
+        return cached
+    mapping: dict[str, list[str]] = {}
+    for info in infos:
+        try:
+            with open(os.path.join(source_root, *info.split("/")), encoding="utf-8", errors="replace") as fh:
+                text = fh.read(65536)
+        except OSError:
+            logger.debug("info.rkt unreadable: %s", info, exc_info=True)
+            continue
+        m = _RACKET_INFO_COLLECTION_RE.search(text)
+        if not m:
+            continue
+        d = posixpath.dirname(info)
+        if m.group(1):
+            dirs = mapping.setdefault(m.group(1), [])
+            if d not in dirs:
+                dirs.append(d)
+        else:
+            prefix = d + "/" if d else ""
+            for f in source_files:
+                if not (f.startswith(prefix) and f.endswith(_RACKET_EXTENSIONS)):
+                    continue
+                rest = f[len(prefix):]
+                if "/" not in rest:
+                    continue
+                sub = rest.split("/", 1)[0]
+                sub_dir = posixpath.join(d, sub) if d else sub
+                dirs = mapping.setdefault(sub, [])
+                if sub_dir not in dirs:
+                    dirs.append(sub_dir)
+    _racket_collection_cache[key] = mapping
+    return mapping
+
+
+def augment_racket_collection_edges(imports: dict, source_root: str, source_files) -> int:
+    """Add a root-relative file edge beside each collection-path require.
+
+    `(require splitflap/constructs)` from `splitflap-lib/main.rkt` keeps its
+    edge to the specifier `splitflap/constructs` -- which resolves to nothing,
+    and every consumer already skips an unresolved edge -- and gains one to
+    `splitflap-lib/constructs.rkt`, which `resolve_specifier` matches
+    directly. A bare collection name (`(require splitflap)`) names the
+    collection's `main.rkt`. Same shape as #550: the edge is ADDED at the
+    index, so the 26 `resolve_specifier` call sites keep their single-target
+    contract and nothing threads a map through them.
+
+    Idempotent: an edge already present is not added twice, so running at
+    every `CodeIndex` construction (index time AND load time) is safe.
+    Returns the number of edges added.
+    """
+    if not imports:
+        return 0
+    cmap = build_racket_collection_map(source_root, source_files)
+    if not cmap:
+        return 0
+    added = 0
+    for importer, edges in imports.items():
+        if not importer.endswith(_RACKET_EXTENSIONS) or not edges:
+            continue
+        present = {e.get("specifier") for e in edges}
+        new: list[dict] = []
+        for e in edges:
+            spec = e.get("specifier") or ""
+            if not spec or spec.startswith((".", "/")) or spec.endswith(_RACKET_EXTENSIONS):
+                continue
+            head, _, rest = spec.partition("/")
+            for d in cmap.get(head, ()):
+                leaf = rest + ".rkt" if rest else "main.rkt"
+                target = posixpath.normpath(posixpath.join(d, leaf) if d else leaf)
+                if target in source_files and target not in present:
+                    new.append({"specifier": target, "names": list(e.get("names") or [])})
+                    present.add(target)
+                    added += 1
+        if new:
+            edges.extend(new)
+    return added
+
+
 _LANGUAGE_EXTRACTORS = {
     "javascript": _extract_js_imports,
     "typescript": _extract_js_imports,
@@ -680,6 +1026,7 @@ _LANGUAGE_EXTRACTORS = {
     "scala": _extract_scala_imports,
     "haskell": _extract_haskell_imports,
     "gleam": _extract_gleam_imports,
+    "racket": _extract_racket_imports,
     "dart": _extract_dart_imports,
     "sql": _extract_sql_dbt_imports,
     "asm": _extract_asm_imports,
@@ -688,13 +1035,16 @@ _LANGUAGE_EXTRACTORS = {
 }
 
 
-def extract_imports(content: str, file_path: str, language: str) -> list[dict]:
+def extract_imports(content: str, file_path: str, language: str,
+                    repo: Optional[str] = None) -> list[dict]:
     """Extract import edges from source file content.
 
     Args:
         content: Raw source file text.
         file_path: Path of the file (used for context; not used in extraction).
         language: Language name (must match LANGUAGE_REGISTRY keys).
+        repo: Index source root, for extractors whose reading depends on
+            project config (Racket's `racket_langs`); None where unknown.
 
     Returns:
         List of dicts: [{"specifier": str, "names": list[str]}, ...]
@@ -720,15 +1070,37 @@ def extract_imports(content: str, file_path: str, language: str) -> list[dict]:
     if extractor is None:
         return []
     try:
+        if language == "racket":
+            return _extract_racket_imports(content, repo=repo)
         return extractor(content)
     except Exception:
+        # Practice 2: an extractor that raises loses EVERY edge for this file,
+        # and the caller cannot tell that from a file with no imports. Say so.
+        logger.warning(
+            "import extraction failed for %s (%s); the file will have no import edges",
+            file_path, language, exc_info=True,
+        )
         return []
 
 
-_JS_EXTENSIONS = (".js", ".ts", ".jsx", ".tsx", ".vue", ".astro", ".mjs", ".cjs", ".svelte")
+_JS_EXTENSIONS = (
+    ".js", ".ts", ".jsx", ".tsx", ".vue", ".astro",
+    ".mjs", ".cjs", ".mts", ".cts", ".svelte",
+)
 _PY_EXTENSIONS = (".py",)
 _RUBY_EXTENSIONS = (".rb",)
 _ALL_EXTENSIONS = _JS_EXTENSIONS + _PY_EXTENSIONS + _RUBY_EXTENSIONS + (".go",)
+_RACKET_EXTENSIONS = (".rkt", ".rktl", ".rktd")
+
+# TypeScript's ESM rules require the specifier to name the EMITTED file, so a
+# `.mts` source is imported as `./foo.mjs` and a `.cts` source as `./foo.cjs`.
+# The specifier therefore names an extension that is never on disk; without the
+# rewrite the edge resolves to nothing and the target reports as never imported.
+_JS_SPECIFIER_REWRITES = {
+    ".js": (".ts", ".tsx"),
+    ".mjs": (".mts",),
+    ".cjs": (".cts",),
+}
 
 # ---------------------------------------------------------------------------
 # PSR-4 namespace resolution (PHP / Composer)
@@ -837,7 +1209,8 @@ def _candidates(base: str) -> list[str]:
     Cases:
     - No extension (`./foo`): try every known source extension and the
       barrel-index forms.
-    - JS extension (`./foo.js`): plus TS/TSX equivalents (TS-ESM convention).
+    - JS extension (`./foo.js`, `./foo.mjs`, `./foo.cjs`): plus the TS
+      equivalents the specifier stands in for (TS-ESM convention).
     - Recognized file extension other than .js: keep as-is.
     - Unrecognized "extension" (`./injectable.decorator`, `./foo.service`,
       `./order.spec` if treated as code): the dotted suffix is part of
@@ -853,10 +1226,10 @@ def _candidates(base: str) -> list[str]:
         for e in _JS_EXTENSIONS:
             cands.append(posixpath.join(base, "index" + e))
         cands.append(posixpath.join(base, "__init__.py"))
-    elif ext == ".js":
-        stem = base[:-3]
-        cands.append(stem + ".ts")
-        cands.append(stem + ".tsx")
+    elif ext in _JS_SPECIFIER_REWRITES:
+        stem = base[: -len(ext)]
+        for e in _JS_SPECIFIER_REWRITES[ext]:
+            cands.append(stem + e)
     elif ext not in _ALL_EXTENSIONS:
         # Dotted basename: TS/JS convention (`*.service`, `*.decorator`,
         # `*.module`, `*.spec`, etc.). Treat the whole `base` as a stem.
@@ -1012,10 +1385,40 @@ _alias_map_cache: dict[str, dict[str, list[str]]] = {}
 _ALIAS_MAP_LOCK = threading.Lock()
 
 # Directories to skip when walking for tsconfig files.
-_TSCONFIG_SKIP_DIRS = frozenset({
-    "node_modules", ".git", "dist", "build", "out", ".cache",
-    ".next", ".nuxt", ".svelte-kit", ".turbo", ".vercel",
+# ⚠⚠ **The FOURTH copy of a skip list in this tree, and the only one that
+# derived from nothing** (#557, @Ticki84). `security._SKIP_DIRECTORY_NAMES` is
+# the authority -- CLAUDE.md says so, and `SKIP_DIRECTORIES` and `SKIP_PATTERNS`
+# already derive from it -- but this set was hand-maintained beside it and had
+# never heard of Rust's `target`. So `_walk_tsconfigs` descended into a Tauri
+# project's build directory on EVERY watcher event: **13.58s of a 13.75s
+# reindex, measured by the reporter in his own `watch-all` process, against
+# 0.27s once `target` was excluded.**
+#
+# ⚠⚠ Adding `"target"` here was the reported fix and would have been the wrong
+# one -- that is "fix the call site, leave the mechanism", our own standing
+# lesson. Ask the authority instead: every build-tree spelling it already knows
+# (`target`, `_build`, `.gradle`, `DerivedData`, the eight dotted framework
+# trees) arrives at once, and the next one arrives without touching this file.
+#
+# ⚠ **UNION, never replacement.** The extras below are tsconfig-specific and
+# some are deliberately absent from the authority: `out` names a real source
+# directory for the INDEXING walk (CLAUDE.md: "DOTTED ONLY"), but it has been
+# skipped for tsconfig discovery for this function's whole life and removing a
+# skip is the one direction this change must not take. Union can only make the
+# walk cheaper.
+_TSCONFIG_EXTRA_SKIP_DIRS = frozenset({
+    "out", ".cache", ".next", ".nuxt", ".svelte-kit", ".turbo", ".vercel",
 })
+
+
+def _tsconfig_skip_dirs() -> frozenset[str]:
+    """Directory names `_walk_tsconfigs` must not descend into.
+
+    Imported lazily: `security` imports `config`, and resolving it at module
+    scope here would put a parser module in that chain for no benefit.
+    """
+    from ..security import _SKIP_DIRECTORY_NAMES  # noqa: PLC0415
+    return frozenset(_SKIP_DIRECTORY_NAMES) | _TSCONFIG_EXTRA_SKIP_DIRS
 
 
 def _norm_alias_replacement(rep: str, tsconfig_dir_rel: str = "") -> str:
@@ -1140,6 +1543,8 @@ def _load_tsconfig_aliases(source_root: str) -> dict[str, list[str]]:
                 continue  # skip package references like "@tsconfig/recommended"
             _ingest_tsconfig_file(extended)
 
+    skip_dirs = _tsconfig_skip_dirs()
+
     def _walk_tsconfigs(directory: Path, depth: int) -> None:
         # Depth 5 covers layouts up to apps/x/frontend/packages/bar/tsconfig.json.
         if depth > 5:
@@ -1147,7 +1552,7 @@ def _load_tsconfig_aliases(source_root: str) -> dict[str, list[str]]:
         try:
             for entry in sorted(directory.iterdir()):
                 if entry.is_dir():
-                    if entry.name not in _TSCONFIG_SKIP_DIRS and not entry.name.startswith("."):
+                    if entry.name not in skip_dirs and not entry.name.startswith("."):
                         _walk_tsconfigs(entry, depth + 1)
                 elif (
                     entry.is_file()
@@ -1408,6 +1813,38 @@ def resolve_specifier(
         resolved = resolve_php_namespace(specifier, psr4_map, source_files)
         if resolved:
             return resolved
+
+    # Racket: neither real `require` shape reaches a file through the generic
+    # candidates, so both are resolved here.
+    #
+    # ⚠ A STRING require is relative to the IMPORTING FILE and carries no `./`
+    # convention -- `(require "helper.rkt")` from `app/main.rkt` means
+    # `app/helper.rkt`. The generic relative branch only fires on a leading
+    # dot, so this, the commonest intra-project form in Racket, resolved to
+    # nothing. A COLLECTION path (`racket/list`) names `<path>.rkt`, and `.rkt`
+    # is not in `_ALL_EXTENSIONS`, so that resolved to nothing either.
+    #
+    # ⚠⚠ Measured before this existed: 2 of the 4 real require shapes resolved,
+    # so almost every Racket file showed zero importers and `find_dead_code`
+    # reported 78% of the Racket collects tree as dead (against 13% for a Python
+    # stdlib corpus indexed the same isolated way). Extracting an import edge
+    # that nothing downstream can resolve is indistinguishable from not
+    # extracting it.
+    #
+    # The two shapes are told apart by the extension: a Racket string require
+    # must name a file, a collection path never carries one.
+    if importer_path.endswith(_RACKET_EXTENSIONS):
+        importer_dir = posixpath.dirname(importer_path)
+        if specifier.endswith(_RACKET_EXTENSIONS):
+            joined = posixpath.normpath(posixpath.join(importer_dir, specifier))
+            if joined in source_files:
+                return joined
+        else:
+            for e in _RACKET_EXTENSIONS:
+                for cand in (specifier + e,
+                             posixpath.normpath(posixpath.join(importer_dir, specifier + e))):
+                    if cand in source_files:
+                        return cand
 
     # Absolute: try direct match first (e.g., for Go or absolute paths)
     for c in _candidates(specifier):
