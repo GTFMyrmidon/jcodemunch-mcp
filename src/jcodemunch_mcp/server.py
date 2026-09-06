@@ -341,6 +341,7 @@ _INSTRUCTION_TOOLS_COUNTER: tuple = (
     ("route", "start here: the task in plain words, back an action to run."),
     ("menu", "search the catalog when you know roughly what you want."),
     ("order", "dispatch any action by name: order(action, args). Read-only by default."),
+    ("get_tool_details", "inspect parameter schema and documentation for an action."),
 )
 
 
@@ -363,7 +364,7 @@ def _mcp_instructions(surface: "Optional[str]" = None, prefix: str = _MCP_TOOL_P
     if surface == "counter":
         opening = (
             "This repo can be indexed by jcodemunch. Its whole tool catalog sits "
-            "behind a 3-verb front door. Prefer it over Read/Grep/Glob/Bash for "
+            "behind a 4-verb front door. Prefer it over Read/Grep/Glob/Bash for "
             "code navigation."
         )
     else:

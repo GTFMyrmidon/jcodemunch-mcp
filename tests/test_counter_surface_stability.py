@@ -45,6 +45,7 @@ PUBLISHED_NAMES = [
     "order",
     "menu",
     "route",
+    "get_tool_details",
 ]
 
 # sha256[:16] of each tool's canonical {name, description, inputSchema}.
@@ -59,10 +60,11 @@ PUBLISHED_SURFACE_SHA = {
     "order":            "57db4c14991628bf",
     "menu":             "4f6b4506943de929",
     "route":            "8662d993995c63b3",
+    "get_tool_details": "af9825799bd0cf4a",
 }
 
 # Measured 2026-09-01. Reported on failure so the diff is legible as a cost.
-PUBLISHED_TOTAL_BYTES = 4184
+PUBLISHED_TOTAL_BYTES = 4511
 
 
 def _canonical(tool) -> bytes:
@@ -197,7 +199,7 @@ def test_whitelist_membership_is_pinned():
     ⚠ Deliberate widening is legitimate -- this makes it VISIBLE, because the
     cost lands on every cached session and is invisible at the call site.
     """
-    assert set(server._COUNTER_FRONT_DOOR) == {"order", "menu", "route"}
+    assert set(server._COUNTER_FRONT_DOOR) == {"order", "menu", "route", "get_tool_details"}
     assert set(server._ALWAYS_PRESENT_TOOLS) == {
         "set_tool_tier",
         "announce_model",
