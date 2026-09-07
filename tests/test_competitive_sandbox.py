@@ -356,9 +356,11 @@ def test_no_competitor_lockfile_is_named_like_one_of_our_manifests():
     manifests and filed every advisory in that tool's dependency tree as a Dependabot alert
     against this repository (every open alert on 2026-09-06 was in one such file). The lockfiles
     are `<tool>.pins` and their sources `<tool>.pins.src`: after the lockfile rename merged, the
-    two alerts left were on `aider.requirements.in`, so the graph reads `*.in` too (CF-64's
-    post-merge check, 2026-09-07). Nothing in the sandbox may carry a name the graph reads as a
-    pip manifest: `requirements*.txt`, `*.requirements.txt`, `*.in`, `requirements.txt`."""
+    two alerts left were on `aider.requirements.in`, so the graph reads `*.requirements.in` too
+    (CF-64's post-merge check, 2026-09-07); this refuses `*.in` as a whole, wider than the one
+    observed file, on purpose. The npm pair beside them (`graft.package.json`,
+    `graft.package-lock.json`) is NOT read as ours: the package is absent from the default-branch
+    SBOM (checked 2026-09-07), so pip name shapes are the only ones refused here."""
     names = [p.name for p in (COMPETE / "sandbox").iterdir()]
     offenders = [n for n in names if n.endswith("requirements.txt") or n.endswith(".in") or n == "requirements.txt"]
     assert offenders == [], offenders
