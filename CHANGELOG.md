@@ -6,10 +6,14 @@
 
 `watch` now registers the real, non-skipped directory tree non-recursively
 instead of asking `watchfiles` to traverse directory symlinks before filters
-run. Directory topology changes re-arm the bounded watch set and request a
-full incremental reconciliation; ordinary file edits retain the changed-path
-fast path. `watch_follow_symlinks` still applies to symlinked files -- directory
-symlinks are not traversed.
+run. Directory topology changes re-arm the bounded watch set. A child deleted
+or renamed during registration triggers a retry only if the root remains and
+a fresh directory census differs from the failed watch set; missing roots,
+unchanged watch sets, and other errors still propagate. Failed streams close
+before replacements open. Initial registration and each successful re-arm
+request a full incremental reconciliation to cover edits during registration;
+ordinary file edits retain the changed-path fast path. `watch_follow_symlinks`
+still applies to symlinked files -- directory symlinks are not traversed.
 
 ### Added - `/competitive-compare [tool] [ref]`, the competitive tier's interactive form
 
