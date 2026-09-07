@@ -10,7 +10,9 @@ carry whitespace before its bracket, which is valid HTML and which some
 formatters emit, and a block closed that way did not end there: the match
 ran on to the NEXT close tag, so the elements between two script blocks
 were parsed as JavaScript and their ids went unreported. The end tag now
-admits the whitespace. Found by CodeQL (`py/bad-tag-filter`) in the
+admits whatever a browser admits between `</script` and `>`: whitespace,
+or the junk attributes CodeQL named on the PR after a first fix that
+admitted whitespace only. Found by CodeQL (`py/bad-tag-filter`) in the
 code-scanning triage recorded as `docs/cicd/FINDINGS.md` C-16, with the
 process-lock file now created readable by its owner only (it was
 world-readable; its metadata is a pid, a client id and a start time, and

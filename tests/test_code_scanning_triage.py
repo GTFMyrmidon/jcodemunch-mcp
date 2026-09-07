@@ -3,8 +3,9 @@ security severity was either fixed here or dismissed with its reason in the aler
 fixes' guards, one per alert group, each written to fail on the tree before the fix.
 
 - py/bad-tag-filter (alerts 13, 14): the Razor and Astro `<script>`/`<style>` block regexes ended at
-  a bare `</script>`, so a block closed `</script >` (valid HTML) ran on to the NEXT close tag and
-  swallowed the markup between, ids included.
+  a bare `</script>`, so a block closed `</script >` (valid HTML) or `</script\t\n bar>` (what a
+  browser also accepts, and what CodeQL named on the PR after the whitespace-only fix) ran on to the
+  NEXT close tag and swallowed the markup between, ids included.
 - py/overly-permissive-file (alert 15): the process-lock file was created 0o644; its metadata is
   read only by the same user's processes.
 - py/jinja2/autoescape-false (alert 18): the munch-bench leaderboard rendered model and provider
@@ -36,18 +37,29 @@ _RAZOR = (
 
 
 @pytest.mark.parametrize("pattern", [extractor._RAZOR_SCRIPT_RE, extractor._ASTRO_SCRIPT_RE])
-def test_a_script_block_closed_with_whitespace_before_the_bracket_ends_there(pattern):
-    """Two blocks, the first closed `</script >`: two matches, and the div is in neither.
-    Before the fix the first match ran to the second block's close tag."""
-    matches = list(pattern.finditer(_RAZOR))
+@pytest.mark.parametrize("close", ["</script >", "</script\t\n bar>", "</SCRIPT\n>"])
+def test_a_script_block_closed_with_whitespace_or_junk_before_the_bracket_ends_there(pattern, close):
+    """Two blocks, the first closed with whitespace or junk before `>`: two matches, and the div is
+    in neither. Before the fix the first match ran to the second block's close tag; the first fix
+    admitted whitespace only."""
+    src = _RAZOR.replace("</script >", close, 1)
+    matches = list(pattern.finditer(src))
     assert len(matches) == 2, [m.group(0)[:40] for m in matches]
     assert 'id="hero"' not in matches[0].group(2)
     assert "alpha" in matches[0].group(2) and "beta" in matches[1].group(2)
 
 
+@pytest.mark.parametrize("pattern", [extractor._RAZOR_SCRIPT_RE, extractor._ASTRO_SCRIPT_RE])
+def test_a_longer_tag_name_does_not_close_a_script_block(pattern):
+    """`</scripts>` is a different element; the block must run past it to the real close tag."""
+    src = "<script>\nvar a = '</scripts>';\n</script>\n"
+    matches = list(pattern.finditer(src))
+    assert len(matches) == 1 and "</scripts>" in matches[0].group(2)
+
+
 @pytest.mark.parametrize("pattern", [extractor._RAZOR_STYLE_RE, extractor._ASTRO_STYLE_RE])
 def test_a_style_block_closed_with_whitespace_ends_there(pattern):
-    src = "<style >\n.a{}\n</style >\n<p>x</p>\n<style>\n.b{}\n</style>\n"
+    src = "<style >\n.a{}\n</style\t\n bar>\n<p>x</p>\n<style>\n.b{}\n</style>\n"
     matches = list(pattern.finditer(src))
     assert len(matches) == 2
     assert "<p>" not in matches[0].group(2)
