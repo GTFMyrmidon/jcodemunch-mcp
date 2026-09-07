@@ -254,7 +254,10 @@ the App `jcodemunch-inbound` (repository permissions: Contents, Issues,
 Pull requests read and write; Variables read; Metadata read; no webhook;
 installed on this repository only), store `INBOUND_APP_ID`,
 `INBOUND_APP_PRIVATE_KEY` and `ANTHROPIC_API_KEY` as repository secrets,
-add the App to the CLA allowlist, enable private vulnerability reporting,
+add the App AND `github-actions[bot]` to the CLA allowlist at
+cla-assistant.io (the Actions bot authors `main.yml`'s weekly results PR
+and `release.yml`'s tag; without the entry that PR reads `not signed`,
+C-17 and section 7), enable private vulnerability reporting,
 and add the ruleset that confines the App to `inbound/**` and
 `inbound-ledger` (target `branch`, include `~ALL`, exclude
 `refs/heads/inbound/**`, `refs/heads/inbound-ledger`, `refs/heads/main`
