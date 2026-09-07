@@ -167,7 +167,11 @@ users need (policy 2), and the gate cannot be repaired in the same PR:
   C-17, 2026-09-07): the inbound ruleset must exclude `refs/heads/harness-bot/**`
   (section 9), and Actions must be allowed to create pull requests
   (`actions/permissions/workflow` with `can_approve_pull_request_reviews: true`;
-  `default_workflow_permissions` stays `read`). If the job fails after the
+  `default_workflow_permissions` stays `read`). And one setting outside the
+  repository: `github-actions[bot]` must be on the CLA allowlist at
+  cla-assistant.io (section 9's setup step names both the App and the bot;
+  until 2026-09-07 it named the App alone), or the bot's own PR carries
+  `license/cla: not signed` and cannot merge (#635, #636). If the job fails after the
   push, open the PR by hand from the branch it pushed with the job's title and
   body; a second dispatch the same day is rejected as a non-fast-forward.
   ⚠ A workflow that commits or tags with `GITHUB_TOKEN` does so as
@@ -250,7 +254,10 @@ the App `jcodemunch-inbound` (repository permissions: Contents, Issues,
 Pull requests read and write; Variables read; Metadata read; no webhook;
 installed on this repository only), store `INBOUND_APP_ID`,
 `INBOUND_APP_PRIVATE_KEY` and `ANTHROPIC_API_KEY` as repository secrets,
-add the App to the CLA allowlist, enable private vulnerability reporting,
+add the App AND `github-actions[bot]` to the CLA allowlist at
+cla-assistant.io (the Actions bot authors `main.yml`'s weekly results PR
+and `release.yml`'s tag; without the entry that PR reads `not signed`,
+C-17 and section 7), enable private vulnerability reporting,
 and add the ruleset that confines the App to `inbound/**` and
 `inbound-ledger` (target `branch`, include `~ALL`, exclude
 `refs/heads/inbound/**`, `refs/heads/inbound-ledger`, `refs/heads/main`
