@@ -313,7 +313,7 @@ and `code.claude.com/docs/en/headless`:**
 |---|---|---|
 | `actions/permissions` | enabled, `allowed_actions: all`, `sha_pinning_required: false` | SHA pinning is enforced by our test, not by GitHub; Phase 4 may turn the GitHub setting on as well |
 | default `GITHUB_TOKEN` permissions | **read** | every write is opted into per job, which is already the repo's practice |
-| `can_approve_pull_request_reviews` | false | a workflow token cannot approve a PR; required reviews (none configured today) could not be satisfied by an agent |
+| `can_approve_pull_request_reviews` | **true since 2026-09-07** (was false at audit time) | a workflow token CAN open and approve a PR now; turned on so `main.yml`'s weekly results job can open its PR (cicd FINDINGS C-17). Required reviews (none configured today) could therefore be satisfied by an agent-held `GITHUB_TOKEN`, so a review requirement, if ever added, must exclude Actions or this row flips back |
 | fork PR approval | `first_time_contributors_new_to_github` | first-time-to-GitHub fork authors need a maintainer click before any workflow runs on their PR |
 | secrets | none | the API key this layer needs does not exist yet; it is the first thing Phase 4 item 1 adds, and it is the only secret |
 | environments | `pypi` (2 reviewers), `testpypi` (1), `github-pages` (1), `copilot` (0) | the release path is behind human approval; the agent must never be granted an environment with publish scope |

@@ -8,7 +8,10 @@ matters and are written for cmd.exe otherwise. Companion: `DESIGN.md` (why),
 
 ## 1. Cut a release
 
-The only human acts are the release PR's merge and one dispatch.
+The only human acts are the release PR's merge and one dispatch. The tag
+`release.yml` pushes is authored by `github-actions[bot]` (section 7's
+identity rule, C-17); a tagger named after a made-up noreply login belongs
+to whoever owns that login.
 
 0. In a Claude Code session: `/release`. It confirms `main` is green,
    derives the version and shows the derivation, reconciles `[Unreleased]`
@@ -159,7 +162,22 @@ users need (policy 2), and the gate cannot be repaired in the same PR:
 ## 7. Weekly results PR and regression issues
 
 - Mondays, `main.yml` opens `harness: weekly bench result (<date>)`. Merge
-  it when green; it is labeled `no-changelog` on purpose.
+  it when green; it is labeled `no-changelog` on purpose. ⚠ It needs two
+  repository settings that were both missing on its first firing (FINDINGS
+  C-17, 2026-09-07): the inbound ruleset must exclude `refs/heads/harness-bot/**`
+  (section 9), and Actions must be allowed to create pull requests
+  (`actions/permissions/workflow` with `can_approve_pull_request_reviews: true`;
+  `default_workflow_permissions` stays `read`). If the job fails after the
+  push, open the PR by hand from the branch it pushed with the job's title and
+  body; a second dispatch the same day is rejected as a non-fast-forward.
+  ⚠ A workflow that commits or tags with `GITHUB_TOKEN` does so as
+  `github-actions[bot]` (`41898282+github-actions[bot]@users.noreply.github.com`);
+  one that pushes with the App token uses the App's own numeric address
+  (inbound FINDINGS IN-20, open). Never a made-up `<name>@users.noreply.github.com`:
+  that address resolves to whichever account owns the login, `harness-bot`,
+  `release-bot` and `inbound` were all real strangers, and CLA Assistant posts
+  `not signed` for such an author (C-17). `tests/test_workflow_commit_identity.py`
+  enforces the numeric form.
 - A `regression` issue names one threshold on `main`. Fix or, with a
   measured reason, loosen with a `loosened` block; close with the PR link.
 - A `drift` issue is the nightly's: a dependency, runner image or grammar
@@ -235,8 +253,10 @@ installed on this repository only), store `INBOUND_APP_ID`,
 add the App to the CLA allowlist, enable private vulnerability reporting,
 and add the ruleset that confines the App to `inbound/**` and
 `inbound-ledger` (target `branch`, include `~ALL`, exclude
-`refs/heads/inbound/**`, `refs/heads/inbound-ledger` AND
-`refs/heads/main`; rules creation, update, deletion; bypass actors the
+`refs/heads/inbound/**`, `refs/heads/inbound-ledger`, `refs/heads/main`
+AND `refs/heads/harness-bot/**` (C-17: `main.yml`'s Monday results branch
+is pushed as `github-actions`, which no bypass role covers, and the first
+firing was rejected with GH013); rules creation, update, deletion; bypass actors the
 Write, Maintain and Admin repository roles, mode `always`). ⚠ Leaving
 `main` inside it makes every human merge need `--admin` and stops
 auto-merge (FINDINGS IN-19); `main` is protected by branch protection

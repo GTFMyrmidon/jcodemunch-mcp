@@ -173,8 +173,11 @@ jobs:
         run: |
           set -euo pipefail
           D=$(date -u +%Y-%m-%d)
-          git config user.name "harness-bot"
-          git config user.email "harness-bot@users.noreply.github.com"
+          # C-17: a made-up noreply address resolves to whichever GitHub account owns
+          # that login (`harness-bot` is a stranger's, created 2026-05-18), so the
+          # commit was attributed to them and CLA Assistant saw an unsigned author.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "harness-bot/results-$D"
           git add harness/results/latest.json harness/results/self_latency.json
           if git diff --cached --quiet; then echo "results unchanged; no PR"; exit 0; fi
