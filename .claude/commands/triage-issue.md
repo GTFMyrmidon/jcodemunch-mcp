@@ -52,6 +52,8 @@ Issue: #$ARGUMENTS
    add and remove (from step 1's list), split proposal, draft response, and
    the exact `gh` lines the human would run to apply them in cmd.exe form,
    referencing the body files written in steps 3 and 5. ⚠ Write these
-   files with the Write tool, never a Bash heredoc: the deny guard blocks
-   any Bash line whose TEXT carries a posting verb (FINDINGS W-8). Print
+   files with the Write tool, never a Bash heredoc: the deny guard scans
+   the whole Bash line, so a draft whose TEXT carries an irreversible verb
+   (a merge line quoted in a triage note) is refused (FINDINGS W-8; the
+   posting verbs left the list in W-40), and a heredoc eats escapes. Print
    TRIAGE.md. Post nothing.
