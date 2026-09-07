@@ -318,8 +318,45 @@ def test_sandbox_names_the_container_and_kills_it_on_timeout(monkeypatch, tmp_pa
         if cmd[:2] == ["docker", "kill"]:
             seen["killed"] = cmd[2]
             return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[:2] == ["docker", "wait"]:
+            seen["waited"] = cmd[2]
+            return subprocess.CompletedProcess(cmd, 0, "137\n", "")
         raise AssertionError(cmd)
 
     monkeypatch.setattr(sandbox.subprocess, "run", fake_run)
     res = sandbox.run("img", ["x"], tmp_path, tmp_path / "out", timeout=1)
     assert res.timed_out and seen["killed"] == seen["name"] and seen["name"].startswith("jcm-compete-")
+    assert seen["waited"] == seen["name"]  # CF-65: the kill waits for the exit, so run() returns to a gone container
+
+
+def test_kill_container_waits_for_the_exit_only_after_a_delivered_kill(monkeypatch):
+    """CF-65, both halves: after a successful `docker kill` the sandbox runs `docker wait` on the
+    same name (the gap `docker ps` fell into); after a failed kill (no such container) it does not
+    wait, and a wait that itself times out is swallowed, since the kill was delivered."""
+    import subprocess
+
+    import sandbox
+
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd[:2])
+        if cmd[:2] == ["docker", "kill"]:
+            return subprocess.CompletedProcess(cmd, 0 if cmd[2] == "alive" else 1, "", "")
+        if cmd[:2] == ["docker", "wait"]:
+            if cmd[2] == "alive-wedged":
+                raise subprocess.TimeoutExpired(cmd, kw.get("timeout"))
+            return subprocess.CompletedProcess(cmd, 0, "137\n", "")
+        raise AssertionError(cmd)
+
+    monkeypatch.setattr(sandbox.subprocess, "run", fake_run)
+    assert sandbox.kill_container("alive") is True
+    assert calls == [["docker", "kill"], ["docker", "wait"]]
+    calls.clear()
+    assert sandbox.kill_container("gone") is False
+    assert calls == [["docker", "kill"]]
+    calls.clear()
+    monkeypatch.setattr(sandbox.subprocess, "run", lambda cmd, **kw: (
+        subprocess.CompletedProcess(cmd, 0, "", "") if cmd[:2] == ["docker", "kill"]
+        else (_ for _ in ()).throw(subprocess.TimeoutExpired(cmd, kw.get("timeout")))))
+    assert sandbox.kill_container("alive-wedged") is True
