@@ -107,7 +107,7 @@ def kill_container(name: str) -> bool:
     is gone after run() returns. `docker wait` blocks until exit; a bounded
     timeout keeps a wedged daemon from turning a kill into a hang."""
     proc = subprocess.run(["docker", "kill", name], capture_output=True, text=True, encoding="utf-8", errors="replace",
-                          timeout=30)
+                          timeout=60)  # unchanged from CF-49; the wait below is bounded on its own
     killed = proc.returncode == 0
     if killed:
         try:
