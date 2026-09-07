@@ -159,7 +159,14 @@ users need (policy 2), and the gate cannot be repaired in the same PR:
 ## 7. Weekly results PR and regression issues
 
 - Mondays, `main.yml` opens `harness: weekly bench result (<date>)`. Merge
-  it when green; it is labeled `no-changelog` on purpose.
+  it when green; it is labeled `no-changelog` on purpose. ⚠ It needs two
+  repository settings that were both missing on its first firing (FINDINGS
+  C-17, 2026-09-07): the inbound ruleset must exclude `refs/heads/harness-bot/**`
+  (section 9), and Actions must be allowed to create pull requests
+  (`actions/permissions/workflow` with `can_approve_pull_request_reviews: true`;
+  `default_workflow_permissions` stays `read`). If the job fails after the
+  push, open the PR by hand from the branch it pushed with the job's title and
+  body; a second dispatch the same day is rejected as a non-fast-forward.
 - A `regression` issue names one threshold on `main`. Fix or, with a
   measured reason, loosen with a `loosened` block; close with the PR link.
 - A `drift` issue is the nightly's: a dependency, runner image or grammar
