@@ -1,3 +1,0 @@
-# docs/competitive/fairness/cocoindex.md; regenerate the lockfile with
-#   uv pip compile cocoindex.requirements.in --generate-hashes --python-platform linux --python-version 3.12 --no-annotate --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match -o cocoindex.pins
-cocoindex-code[full]==0.2.41
