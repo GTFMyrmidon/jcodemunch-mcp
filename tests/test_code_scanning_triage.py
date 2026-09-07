@@ -86,8 +86,19 @@ def test_the_lock_file_is_opened_0o600_on_every_platform():
         assert "0o644" not in call, call
 
 
+def test_the_leaderboard_template_declares_autoescape_at_its_source():
+    """Runs on every gate leg. The behavioural arm below needs jinja2, which is in the `bench`
+    extra the PR gate does not install (C-16), so the flag is asserted where it is set as well."""
+    src = (REPO / "munch-bench" / "munch_bench" / "leaderboard.py").read_text(encoding="utf-8")
+    calls = re.findall(r"Template\((.*?)\"\"\"", src, flags=re.S)
+    assert calls, "the Template() construction moved; update this scan"
+    for args in calls:
+        assert "autoescape=True" in args, args
+
+
 def test_the_leaderboard_escapes_a_model_name_carrying_markup(tmp_path):
-    pytest.importorskip("jinja2", reason="munch-bench's own dependency; not in the dev group")
+    pytest.importorskip("munch_bench", reason="munch-bench is importable only when the package is installed")
+    pytest.importorskip("jinja2", reason="munch-bench's own dependency; the `bench` extra, not the dev group")
     from munch_bench.evaluate import BenchmarkRun, QuestionResult
     from munch_bench.leaderboard import generate_leaderboard
 
@@ -116,9 +127,11 @@ def test_the_speedreview_action_interpolates_no_input_into_shell_text():
     text = (REPO / "speedreview" / "action.yml").read_text(encoding="utf-8")
     runs = re.findall(r"^\s*run:\s*(.+?)(?=^\s*- name:|^\s*\w+:\s*$|\Z)", text, flags=re.M | re.S)
     assert runs, "no run: steps found; the scan's shape is stale"
+    # any expression context a caller can influence, in any spacing: `${{inputs.x}}` is valid
+    # Actions syntax too, and `github.event.*` is as caller-controlled as an input
+    injectable = re.compile(r"\$\{\{\s*(inputs\.|github\.action_path|github\.event\.)")
     for body in runs:
-        assert "${{ inputs." not in body, body
-        assert "${{ github.action_path }}" not in body, body
+        assert not injectable.search(body), body
     # non-vacuity: the inputs are still reaching the steps, through env
     assert "JCODEMUNCH_VERSION: ${{ inputs.jcodemunch_version }}" in text
     assert "$GITHUB_ACTION_PATH" in text
