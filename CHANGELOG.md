@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed - watch mode bounds native registration on symlink-heavy workspaces
+
+`watch` now registers the real, non-skipped directory tree non-recursively
+instead of asking `watchfiles` to traverse directory symlinks before filters
+run. Directory topology changes re-arm the bounded watch set and request a
+full incremental reconciliation; ordinary file edits retain the changed-path
+fast path. `watch_follow_symlinks` still applies to symlinked files -- directory
+symlinks are not traversed.
+
 ### Added - `/competitive-compare [tool] [ref]`, the competitive tier's interactive form
 
 A session that changed retrieval can ask how the change moved every
