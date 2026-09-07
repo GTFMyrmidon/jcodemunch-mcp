@@ -167,7 +167,11 @@ users need (policy 2), and the gate cannot be repaired in the same PR:
   C-17, 2026-09-07): the inbound ruleset must exclude `refs/heads/harness-bot/**`
   (section 9), and Actions must be allowed to create pull requests
   (`actions/permissions/workflow` with `can_approve_pull_request_reviews: true`;
-  `default_workflow_permissions` stays `read`). If the job fails after the
+  `default_workflow_permissions` stays `read`). And one setting outside the
+  repository: `github-actions[bot]` must be on the CLA allowlist at
+  cla-assistant.io (section 9 lists only the inbound App's login), or the
+  bot's own PR carries `license/cla: not signed` and cannot merge (#635,
+  #636). If the job fails after the
   push, open the PR by hand from the branch it pushed with the job's title and
   body; a second dispatch the same day is rejected as a non-fast-forward.
   ⚠ A workflow that commits or tags with `GITHUB_TOKEN` does so as
