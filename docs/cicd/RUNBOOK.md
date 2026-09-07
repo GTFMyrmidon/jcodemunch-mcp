@@ -167,6 +167,11 @@ users need (policy 2), and the gate cannot be repaired in the same PR:
   `default_workflow_permissions` stays `read`). If the job fails after the
   push, open the PR by hand from the branch it pushed with the job's title and
   body; a second dispatch the same day is rejected as a non-fast-forward.
+  ⚠ Every workflow that commits or tags does so as `github-actions[bot]`
+  (`41898282+github-actions[bot]@users.noreply.github.com`), never a made-up
+  `<name>@users.noreply.github.com`: that address resolves to whichever
+  account owns the login, `harness-bot` and `release-bot` were both real
+  strangers, and CLA Assistant posts no status for an unsigned author (C-17).
 - A `regression` issue names one threshold on `main`. Fix or, with a
   measured reason, loosen with a `loosened` block; close with the PR link.
 - A `drift` issue is the nightly's: a dependency, runner image or grammar
