@@ -117,32 +117,41 @@ async def _safe_awatch(folder_path: str, debounce_ms: int):
             rust_timeout=1000,
             yield_on_timeout=True,
         )
-        async with aclosing(stream):
-            async for changes in stream:
-                # The first yield (including a timeout) proves the native
-                # watcher has been installed before we reconcile the index.
-                if rescan:
-                    rescan = False
-                    yield {(Change.modified, folder_path)}
-                topology_changed = any(
-                    path in directories or os.path.isdir(path) for _, path in changes
-                )
-                # Directory events reconcile promptly. The slower fallback
-                # catches lost events without walking large repos every second.
-                if topology_changed or time.monotonic() - checked_at >= 60.0:
-                    current = await asyncio.to_thread(_watch_directories, folder_path)
-                    checked_at = time.monotonic()
-                    if current != directories:
-                        directories = current
-                        rescan = True
-                        # The full scan after re-arming covers this entire
-                        # batch, including edits in unchanged directories.
-                        break
-                    del current  # do not retain a duplicate census while idle
-                if changes:
-                    yield changes
-            else:
-                return
+        try:
+            async with aclosing(stream):
+                async for changes in stream:
+                    # The first yield (including a timeout) proves the native
+                    # watcher has been installed before we reconcile the index.
+                    if rescan:
+                        rescan = False
+                        yield {(Change.modified, folder_path)}
+                    topology_changed = any(
+                        path in directories or os.path.isdir(path) for _, path in changes
+                    )
+                    # Directory events reconcile promptly. The slower fallback
+                    # catches lost events without walking large repos every second.
+                    if topology_changed or time.monotonic() - checked_at >= 60.0:
+                        current = await asyncio.to_thread(_watch_directories, folder_path)
+                        checked_at = time.monotonic()
+                        if current != directories:
+                            directories = current
+                            rescan = True
+                            # The full scan after re-arming covers this entire
+                            # batch, including edits in unchanged directories.
+                            break
+                        del current  # do not retain a duplicate census while idle
+                    if changes:
+                        yield changes
+                else:
+                    return
+        except FileNotFoundError:
+            # A child can vanish after enumeration but before native registration.
+            # Retry only when a fresh census can repair the watch set.
+            current = await asyncio.to_thread(_watch_directories, folder_path)
+            if folder_path not in current or current == directories:
+                raise
+            directories = current
+            rescan = True
     raise FileNotFoundError(f"Watched directory disappeared: {folder_path}")
 
 

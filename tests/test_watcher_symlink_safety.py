@@ -132,6 +132,64 @@ async def test_topology_refresh_closes_old_watch_and_requests_rescan(tmp_path, o
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["delete", "rename"])
+async def test_registration_retries_when_child_disappears(tmp_path, operation):
+    watchfiles = pytest.importorskip("watchfiles")
+    root = str(tmp_path)
+    child = tmp_path / "child"
+    child.mkdir()
+    native_awatch = watchfiles.awatch
+    attempts = []
+
+    def race(*paths, **kwargs):
+        attempts.append(set(paths))
+        if len(attempts) == 1:
+            if operation == "delete":
+                child.rmdir()
+            else:
+                child.rename(tmp_path / "renamed")
+        return native_awatch(*paths, **kwargs)
+
+    with patch.object(watchfiles, "awatch", race):
+        async with aclosing(watcher._safe_awatch(root, 200)) as stream:
+            assert await asyncio.wait_for(anext(stream), 5) == {(watchfiles.Change.modified, root)}
+            assert len(attempts) == 2
+            assert str(child) in attempts[0] and str(child) not in attempts[1]
+            assert attempts[1] == set(watcher._watch_directories(root))
+            target = tmp_path / "after.py"
+            target.write_text("def after_retry(): pass\n")
+            async def observe_edit():
+                async for changes in stream:
+                    if any(path == str(target) for _, path in changes):
+                        return True
+            assert await asyncio.wait_for(observe_edit(), 5)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("remove_root,error_type", [
+    (True, FileNotFoundError), (False, FileNotFoundError), (False, PermissionError),
+])
+async def test_registration_does_not_retry_unrecoverable_errors(tmp_path, remove_root, error_type):
+    watchfiles = pytest.importorskip("watchfiles")
+    failure = error_type("registration failed")
+    attempts = []
+
+    async def fail(*paths, **kwargs):
+        attempts.append(paths)
+        if remove_root:
+            tmp_path.rmdir()
+        raise failure
+        yield set()
+
+    with patch.object(watchfiles, "awatch", fail):
+        async with aclosing(watcher._safe_awatch(str(tmp_path), 200)) as stream:
+            with pytest.raises(error_type) as caught:
+                await asyncio.wait_for(anext(stream), 5)
+    assert caught.value is failure
+    assert len(attempts) == 1
+
+
+@pytest.mark.asyncio
 async def test_regular_edits_do_not_rescan_directory_tree(tmp_path):
     watchfiles = pytest.importorskip("watchfiles")
     target = tmp_path / "code.py"
