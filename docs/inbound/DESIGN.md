@@ -33,7 +33,7 @@ input. A repository ruleset restricts the App to pushing branches matching
 (FINDINGS IN-19: a ruleset on `main` blocks every human merge too), and so
 is `harness-bot/**` since 2026-09-07 (cicd FINDINGS C-17: the ruleset's
 `~ALL` include also caught `main.yml`'s weekly results branch, pushed as
-`github-actions`, which holds no bypass role), and `main`
+`github-actions`, which holds no bypass role). `main`
 stays under branch protection, which stops any push there; the App never
 merging a PR is by construction, not by a rule. The App's login is added to CLA Assistant's allowlist
 so `license/cla` posts on its PRs (AUDIT IN-3; verified in Phase 4 item 1
