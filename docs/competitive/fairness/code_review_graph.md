@@ -2,7 +2,7 @@
 
 Adapter `benchmarks/competitive/adapters/code_review_graph.py`; image
 `benchmarks/competitive/sandbox/code_review_graph.Dockerfile` with the
-hashed lockfile `sandbox/code_review_graph.requirements.txt`; MCP client
+hashed lockfile `sandbox/code_review_graph.pins`; MCP client
 `benchmarks/competitive/sandbox/mcp_driver.py` (the same client that drove
 codebase-memory-mcp). Written 2026-09-05 before the first number was
 recorded (DESIGN §1.3). Everything quoted from the tool's README is data
@@ -54,7 +54,7 @@ recorded as claims; the second is the tool's own statement of what our
 
 - **Install**: the PyPI wheel `code_review_graph-2.3.8-py3-none-any.whl`
   (sha256 `013ae3c1…`, uploaded 2026-08-21) with every dependency pinned
-  by version and hash in `sandbox/code_review_graph.requirements.txt`,
+  by version and hash in `sandbox/code_review_graph.pins`,
   compiled once with `uv pip compile --generate-hashes` for linux /
   Python 3.13 from the tool's own declared ranges, and installed with
   `pip install --require-hashes`. Base install only: no `[embeddings]`

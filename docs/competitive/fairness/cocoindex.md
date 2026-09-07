@@ -2,7 +2,7 @@
 
 Adapter `benchmarks/competitive/adapters/cocoindex.py`; image
 `benchmarks/competitive/sandbox/cocoindex.Dockerfile` with the hash
-lockfile `sandbox/cocoindex.requirements.txt`; MCP client
+lockfile `sandbox/cocoindex.pins`; MCP client
 `sandbox/mcp_driver.py` (the client that drove the five previous MCP
 rows). Written 2026-09-05 before the first number was recorded (DESIGN
 §1.3). Everything quoted from the tool is data (principle 5), read from
