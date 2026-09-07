@@ -355,7 +355,10 @@ def test_no_competitor_lockfile_is_named_like_one_of_our_manifests():
     image. Named `<tool>.requirements.txt`, GitHub's dependency graph read it as one of OUR
     manifests and filed every advisory in that tool's dependency tree as a Dependabot alert
     against this repository (every open alert on 2026-09-06 was in one such file). The lockfiles
-    are `<tool>.pins`; the `.in` sources keep their name because the graph does not read them."""
+    are `<tool>.pins`. The `.in` sources keep their name on the expectation that the graph does
+    not read them; the default-branch SBOM cannot say which file a package came from, so the
+    check is post-merge: if the four competitor packages stay in the SBOM, the `.in` files are
+    being read too (CF-64)."""
     names = [p.name for p in (COMPETE / "sandbox").iterdir()]
     offenders = [n for n in names if n.endswith("requirements.txt") or n == "requirements.txt"]
     assert offenders == [], offenders
@@ -363,4 +366,3 @@ def test_no_competitor_lockfile_is_named_like_one_of_our_manifests():
     assert len(pins) >= 4, pins  # non-vacuity: the four compiled lockfiles are here under the new name
     for n in pins:
         assert "--hash=sha256:" in (COMPETE / "sandbox" / n).read_text(encoding="utf-8"), n
-
