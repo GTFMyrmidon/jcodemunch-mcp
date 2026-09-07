@@ -66,7 +66,13 @@ runs:
 
     - name: Install dependencies
       shell: bash
-      run: pip install --quiet "jcodemunch-mcp${{ inputs.jcodemunch_version }}" "openai${{ inputs.openai_version }}"
+      # Inputs reach the shell as environment variables, never interpolated into
+      # the script text: a caller-controlled `${{ inputs.x }}` inside `run:` is
+      # shell injection (CodeQL actions/code-injection, alerts 5 to 7).
+      env:
+        JCODEMUNCH_VERSION: ${{ inputs.jcodemunch_version }}
+        OPENAI_VERSION: ${{ inputs.openai_version }}
+      run: pip install --quiet "jcodemunch-mcp${JCODEMUNCH_VERSION}" "openai${OPENAI_VERSION}"
 
     - name: Run speedreview
       shell: bash
@@ -79,4 +85,4 @@ runs:
         SPEEDREVIEW_BASE_REF: ${{ inputs.base_ref }}
         GITHUB_TOKEN: ${{ github.token }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
-      run: python ${{ github.action_path }}/review.py
+      run: python "$GITHUB_ACTION_PATH/review.py"

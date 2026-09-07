@@ -399,7 +399,10 @@ def acquire(scope: str, target: str, storage_path: Optional[str] = None) -> bool
 
     def _try_create() -> bool:
         try:
-            fd = os.open(str(lock_fp), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+            # 0o600: the metadata names a pid, a client id and a start time, and every
+            # reader is a process of the same user under the same storage root; the
+            # 0o644 it had made it world-readable for nothing (code-scanning alert 15).
+            fd = os.open(str(lock_fp), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
             try:
                 os.write(fd, payload)
             finally:
