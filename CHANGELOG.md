@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Fixed - a `<script >` closed with a space before the bracket swallowed the markup after it (Razor and Astro)
+
+The Razor and Astro extractors cut `<script>` and `<style>` blocks out of
+the template with a regex that ended at a bare `</script>`. An end tag may
+carry whitespace before its bracket, which is valid HTML and which some
+formatters emit, and a block closed that way did not end there: the match
+ran on to the NEXT close tag, so the elements between two script blocks
+were parsed as JavaScript and their ids went unreported. The end tag now
+admits whatever a browser admits between `</script` and `>`: whitespace,
+or the junk attributes CodeQL named on the PR after a first fix that
+admitted whitespace only. Found by CodeQL (`py/bad-tag-filter`) in the
+code-scanning triage recorded as `docs/cicd/FINDINGS.md` C-16, with the
+process-lock file now created readable by its owner only (it was
+world-readable; its metadata is a pid, a client id and a start time, and
+every reader is the same user's process), the munch-bench leaderboard
+escaping model and provider names it renders into HTML, and the
+speedreview action passing its inputs to the shell as environment
+variables instead of interpolating them into the script text.
+
 ### Added - `/competitive-compare [tool] [ref]`, the competitive tier's interactive form
 
 A session that changed retrieval can ask how the change moved every

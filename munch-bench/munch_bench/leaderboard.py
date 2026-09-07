@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import os
-from typing import Optional
 
 from jinja2 import Template
 
 from .evaluate import BenchmarkRun
 
 
-LEADERBOARD_TEMPLATE = Template("""\
+# autoescape: a model or provider name is rendered into HTML, and one carrying markup
+# would otherwise run in the viewer (CodeQL py/jinja2/autoescape-false, alert 18); the
+# three chart arrays are JSON built here and stay `| safe`.
+LEADERBOARD_TEMPLATE = Template(autoescape=True, source="""\
 <!DOCTYPE html>
 <html lang="en">
 <head>
