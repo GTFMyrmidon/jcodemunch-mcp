@@ -1,7 +1,10 @@
 """H5: belt to the settings deny list (DESIGN section 4, D8).
 
-purpose:  nothing in a session publishes, tags, merges, force-pushes or posts;
-          the refusal names the RUNBOOK section the human runs instead
+purpose:  nothing in a session does the IRREVERSIBLE: publish, tag, dispatch a
+          release, merge, force-push; the refusal names the RUNBOOK section
+          the human runs instead. Posting (a PR, a comment, a review, an
+          edit, an alert dismissal) is the session's: every one of those can
+          be undone from the page (W-40, jjg 2026-09-07)
 invokes:  nothing
 produces: nothing
 refuses:  the verbs below, on Bash and PowerShell
@@ -40,16 +43,16 @@ DENIED = [
         "a merge; the human merges when the gate is green (RUNBOOK section 1, step 2)",
     ),
     (
-        r"\bgh\s+pr\s+(?:comment|review|close|edit|ready)\b",
-        "posting to a PR; drafts only in this layer",
+        r"\bgh\s+issue\s+delete\b",
+        "deleting an issue, which no page undoes; the human does it",
     ),
     (
-        r"\bgh\s+issue\s+(?:comment|close|edit|reopen|transfer|delete)\b",
-        "posting to an issue; drafts only in this layer",
-    ),
-    (
-        r"\bgh\s+api\b.*(?:--method\s+(?:POST|PATCH|PUT|DELETE)|\s-X\s*(?:POST|PATCH|PUT|DELETE))",
-        "a write through the API; the human runs it",
+        # An API write is the session's (W-40) unless its path is one of the
+        # irreversible acts the verbs above already refuse: a merge, a release,
+        # a workflow dispatch, a tag ref, a deletion.
+        r"\bgh\s+api\b(?=.*(?:--method\s+(?:POST|PATCH|PUT|DELETE)|\s-X\s*(?:POST|PATCH|PUT|DELETE)))"
+        r".*(?:/pulls/\d+/merge\b|/releases\b|/dispatches\b|/git/tags\b|refs/tags/|--method\s+DELETE|\s-X\s*DELETE)",
+        "an irreversible write through the API (merge, release, dispatch, tag or delete); the human runs it",
     ),
     (r"\btwine\b", "a PyPI upload; RUNBOOK section 1a is the human's hand-finish"),
     (r"mcp-publisher", "a registry publish; release.yml publishes"),
