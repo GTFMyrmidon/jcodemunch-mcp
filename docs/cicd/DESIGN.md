@@ -123,7 +123,8 @@ the runbook has the order.
 ## 5. Security — `security.yml`
 
 - CodeQL (SHA-pinned `github/codeql-action`) for `python` and `actions` on
-  PRs, on push to main, and weekly. Category `security-and-quality`.
+  PRs, on push to main, and weekly. Query set `security-extended` (the
+  quality queries are lint, which is ruff's gate; C-11).
   INFORMS on PRs for the first two weeks (baseline), then BLOCKS on `error`
   severity; the switch is a one-line change recorded in FINDINGS.
 - Dependency vulnerabilities: stage 1's `fast: dependency audit` job is the
