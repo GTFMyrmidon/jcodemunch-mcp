@@ -99,7 +99,7 @@ def _take_while_indented(lines):
 
 
 def test_the_pinned_wheel_digest_is_the_one_the_lockfile_installs():
-    lock = (COMPETE / "sandbox" / "serena.requirements.txt").read_text(encoding="utf-8")
+    lock = (COMPETE / "sandbox" / "serena.pins").read_text(encoding="utf-8")
     i = lock.index("serena-agent==1.7.0")
     lines = lock[i:].splitlines()
     block = [lines[0]] + list(_take_while_indented(lines[1:]))

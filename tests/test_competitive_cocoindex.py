@@ -132,9 +132,9 @@ def test_the_captured_tools_list_is_the_one_documented_tool_and_the_pin_is_the_l
     assert FIX["server_info"] == {"name": "cocoindex-code", "version": "0.2.41"}
     with pytest.raises(RuntimeError):
         cc.make("none")
-    req = (COMPETE / "sandbox" / "cocoindex.requirements.txt").read_text(encoding="utf-8")
+    req = (COMPETE / "sandbox" / "cocoindex.pins").read_text(encoding="utf-8")
     own = "\n".join(ln for ln in req.split("cocoindex-code==0.2.41", 1)[1].split("\n")[1:4] if ln.strip().startswith("--hash="))
     assert f"--hash=sha256:{cc.CocoIndex.pin.digest}" in own and len(cc.CocoIndex.pin.digest) == 64
     df = (COMPETE / "sandbox" / "cocoindex.Dockerfile").read_text(encoding="utf-8")
-    assert "python:3.12-slim-bookworm@sha256:" in df and "--require-hashes" in df and "cocoindex.requirements.txt" in df
+    assert "python:3.12-slim-bookworm@sha256:" in df and "--require-hashes" in df and "cocoindex.pins" in df
     assert "HF_HUB_OFFLINE=1" in df and "TRANSFORMERS_OFFLINE=1" in df and "COCOINDEX_DISABLE_USAGE_TRACKING=1" in df and cc.MODEL in df

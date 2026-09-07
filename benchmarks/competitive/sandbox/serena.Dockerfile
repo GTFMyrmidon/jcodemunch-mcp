@@ -1,5 +1,5 @@
 # Serena v1.7.0 (docs/competitive/fairness/serena.md), installed from PyPI
-# with every dependency pinned by version AND hash in serena.requirements.txt
+# with every dependency pinned by version AND hash in serena.pins
 # (compiled once with `uv pip compile --generate-hashes`), together with
 # pyright==1.1.403, the language-server version the tool itself pins. The
 # pyright PyPI package fetches Node and the pyright npm package on first use:
@@ -8,7 +8,7 @@
 FROM python:3.13-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b603332063cb5c6e32bd220c3e6e
 RUN apt-get update && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
-COPY serena.requirements.txt /opt/requirements.txt
+COPY serena.pins /opt/requirements.txt
 RUN pip install --no-cache-dir --require-hashes --no-deps -r /opt/requirements.txt \
     && serena --help > /dev/null
 # pyright's Node and npm package, pinned, fetched once at build (fairness note,

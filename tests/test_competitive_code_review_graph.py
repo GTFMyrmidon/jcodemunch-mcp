@@ -103,7 +103,7 @@ def _take_while_indented(lines):
 
 
 def test_the_pinned_wheel_digest_is_the_one_the_lockfile_installs():
-    lock = (COMPETE / "sandbox" / "code_review_graph.requirements.txt").read_text(encoding="utf-8")
+    lock = (COMPETE / "sandbox" / "code_review_graph.pins").read_text(encoding="utf-8")
     i = lock.index("code-review-graph==2.3.8")
     lines = lock[i:].splitlines()
     block = [lines[0]] + [ln for ln in _take_while_indented(lines[1:])]

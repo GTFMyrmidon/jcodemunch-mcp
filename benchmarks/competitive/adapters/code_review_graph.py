@@ -7,7 +7,7 @@ purpose:  the loudest token claim in the lane (FIELD.md: "~65x median token
           way its `mcpServers` entry drives it
 invokes:  the image built from sandbox/code_review_graph.Dockerfile (the
           PyPI wheel and every dependency pinned by hash in
-          sandbox/code_review_graph.requirements.txt), one container per
+          sandbox/code_review_graph.pins), one container per
           (corpus, run) in which sandbox/mcp_driver.py speaks MCP to
           `code-review-graph serve`: initialize, tools/list (the schema
           weight), build_or_update_graph_tool, get_minimal_context_tool

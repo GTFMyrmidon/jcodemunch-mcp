@@ -110,12 +110,12 @@ def test_prepare_reads_the_container_files_into_index_and_answers(tmp_path, monk
 def test_the_pin_is_the_wheel_hash_pip_requires_and_the_image_is_offline_at_run():
     with pytest.raises(RuntimeError):
         aider.make("none")
-    req = (COMPETE / "sandbox" / "aider.requirements.txt").read_text(encoding="utf-8")
+    req = (COMPETE / "sandbox" / "aider.pins").read_text(encoding="utf-8")
     # the hash lines that belong to aider-chat itself: from its requirement line to the next package's
     own = req.split("aider-chat==0.86.2", 1)[1].split("\n", 1)[1]
     own = "\n".join(ln for ln in own.split("\n")[:8] if ln.startswith("    --hash="))
     assert f"--hash=sha256:{aider.Aider.pin.digest}" in own, "the pin's digest must be a hash pip requires for aider-chat itself"
     assert len(aider.Aider.pin.digest) == 64
     df = (COMPETE / "sandbox" / "aider.Dockerfile").read_text(encoding="utf-8")
-    assert "python:3.12-slim-bookworm@sha256:" in df and "--require-hashes" in df and "aider.requirements.txt" in df
+    assert "python:3.12-slim-bookworm@sha256:" in df and "--require-hashes" in df and "aider.pins" in df
     assert "TIKTOKEN_CACHE_DIR" in df and "tiktoken.get_encoding" in df and "AIDER_ANALYTICS=false" in df
