@@ -9,12 +9,13 @@ import subprocess
 import sys
 import tempfile
 import time
+from contextlib import aclosing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, IO, Optional
 
 from .hook_event import default_manifest_path, read_manifest
-from .tools.index_folder import index_folder
+from .tools.index_folder import _build_skip_dirs_regex, index_folder
 from .tools.invalidate_cache import invalidate_cache
 from .reindex_state import (
     WatcherChange,
@@ -57,6 +58,106 @@ def _watch_poll_delay_ms() -> int:
         if val > 0:
             return val
     return DEFAULT_WATCH_POLL_DELAY_MS
+
+
+def _watch_directories(folder_path: str) -> dict[str, tuple[int, int]]:
+    """Enumerate real directories, never the symlink dependency graph.
+
+    Like discovery, directory symlinks are NEVER followed (even when
+    follow_symlinks enables symlinked *files*). Inode identity detects a
+    directory replaced at the same path, which needs a new native watch.
+
+    The set of directories pruned here is discovery's skip list and NOTHING
+    stricter: a directory discovery indexes must be watched, or an edit there
+    is never seen. A blanket "skip every dot-directory" rule was the first
+    draft (#629) and it would have blinded the watcher to `.github/`,
+    `.claude/` and `.claude-plugin/` on this repository, 51 indexed files.
+    """
+    skip_dirs = _build_skip_dirs_regex(repo=folder_path)
+    directories = {}
+    for current, dirs, _ in os.walk(folder_path, followlinks=False):
+        if os.path.islink(current):
+            dirs[:] = []
+            continue
+        try:
+            stat = os.stat(current, follow_symlinks=False)
+        except OSError:
+            dirs[:] = []
+            continue
+        directories[current] = (stat.st_dev, stat.st_ino)
+        dirs[:] = [
+            name for name in dirs
+            if not skip_dirs.match(name)
+            and not os.path.islink(os.path.join(current, name))
+        ]
+    return directories
+
+
+async def _safe_awatch(folder_path: str, debounce_ms: int):
+    """Watch explicit directories non-recursively; refresh changed topology.
+
+    watchfiles 1.2.0 does not expose notify's follow_symlinks option. Its
+    recursive registration follows directory links BEFORE watch_filter runs.
+    In workspace dependency graphs notify retains a PathBuf per alias, even
+    when inotify returns the same watch descriptor: potentially GB of native
+    heap without ever delivering an event. Filtering events cannot fix this.
+
+    Periodic reconciliation also catches new/moved-in trees, missed directory
+    events and same-path replacements. After re-arming, a root event requests
+    a full incremental scan to cover files created before registration and
+    edits during the close/reopen gap. Ordinary edits keep the fast path.
+    """
+    from watchfiles import awatch, Change
+
+    directories = await asyncio.to_thread(_watch_directories, folder_path)
+    rescan = True
+    while directories:
+        checked_at = time.monotonic()
+        stream = awatch(
+            *directories,
+            debounce=debounce_ms,
+            recursive=False,
+            step=200,
+            poll_delay_ms=_watch_poll_delay_ms(),
+            rust_timeout=1000,
+            yield_on_timeout=True,
+        )
+        try:
+            async with aclosing(stream):
+                async for changes in stream:
+                    # The first yield (including a timeout) proves the native
+                    # watcher has been installed before we reconcile the index.
+                    if rescan:
+                        rescan = False
+                        yield {(Change.modified, folder_path)}
+                    topology_changed = any(
+                        path in directories or os.path.isdir(path) for _, path in changes
+                    )
+                    # Directory events reconcile promptly. The slower fallback
+                    # catches lost events without walking large repos every second.
+                    if topology_changed or time.monotonic() - checked_at >= 60.0:
+                        current = await asyncio.to_thread(_watch_directories, folder_path)
+                        checked_at = time.monotonic()
+                        if current != directories:
+                            directories = current
+                            rescan = True
+                            # The full scan after re-arming covers this entire
+                            # batch, including edits in unchanged directories.
+                            break
+                        del current  # do not retain a duplicate census while idle
+                    if changes:
+                        yield changes
+                else:
+                    return
+        except FileNotFoundError:
+            # A child can vanish after enumeration but before native registration.
+            # Retry only when a fresh census can repair the watch set.
+            current = await asyncio.to_thread(_watch_directories, folder_path)
+            if folder_path not in current or current == directories:
+                raise
+            directories = current
+            rescan = True
+    raise FileNotFoundError(f"Watched directory disappeared: {folder_path}")
 
 
 def _is_wsl() -> bool:
@@ -389,7 +490,7 @@ async def _watch_single(
         )
 
     try:
-        from watchfiles import awatch, Change
+        from watchfiles import Change
     except ImportError as exc:
         raise ImportError(_watchfiles_missing_msg()) from exc
 
@@ -400,15 +501,7 @@ async def _watch_single(
         quiet=quiet, log_file_handle=log_file_handle,
     )
 
-    async for changes in awatch(
-        folder_path,
-        debounce=debounce_ms,
-        recursive=True,
-        step=200,
-        # Only consulted when watchfiles polls (e.g. under WSL); a higher delay
-        # there is the difference between idle and pegged CPU (#356).
-        poll_delay_ms=_watch_poll_delay_ms(),
-    ):
+    async for changes in _safe_awatch(folder_path, debounce_ms):
         relevant = [
             (change_type, path)
             for change_type, path in changes
@@ -476,7 +569,12 @@ async def _watch_single(
                 extra_ignore_patterns=extra_ignore_patterns,
                 follow_symlinks=follow_symlinks,
                 incremental=True,
-                changed_paths=watcher_changes,
+                # Directory/root events require discovery: a moved-in tree
+                # may contain files for which no individual event was emitted.
+                changed_paths=(
+                    None if any(p == folder_path or os.path.isdir(p) for _, p in relevant)
+                    else watcher_changes
+                ),
             )
             if result.get("success"):
                 duration = result.get("duration_seconds", "?")
