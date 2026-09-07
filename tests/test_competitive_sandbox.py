@@ -355,14 +355,15 @@ def test_no_competitor_lockfile_is_named_like_one_of_our_manifests():
     image. Named `<tool>.requirements.txt`, GitHub's dependency graph read it as one of OUR
     manifests and filed every advisory in that tool's dependency tree as a Dependabot alert
     against this repository (every open alert on 2026-09-06 was in one such file). The lockfiles
-    are `<tool>.pins`. The `.in` sources keep their name on the expectation that the graph does
-    not read them; the default-branch SBOM cannot say which file a package came from, so the
-    check is post-merge: if the four competitor packages stay in the SBOM, the `.in` files are
-    being read too (CF-64)."""
+    are `<tool>.pins` and their sources `<tool>.pins.src`: after the lockfile rename merged, the
+    two alerts left were on `aider.requirements.in`, so the graph reads `*.in` too (CF-64's
+    post-merge check, 2026-09-07). Nothing in the sandbox may carry a name the graph reads as a
+    pip manifest: `requirements*.txt`, `*.requirements.txt`, `*.in`, `requirements.txt`."""
     names = [p.name for p in (COMPETE / "sandbox").iterdir()]
-    offenders = [n for n in names if n.endswith("requirements.txt") or n == "requirements.txt"]
+    offenders = [n for n in names if n.endswith("requirements.txt") or n.endswith(".in") or n == "requirements.txt"]
     assert offenders == [], offenders
     pins = [n for n in names if n.endswith(".pins")]
     assert len(pins) >= 4, pins  # non-vacuity: the four compiled lockfiles are here under the new name
     for n in pins:
         assert "--hash=sha256:" in (COMPETE / "sandbox" / n).read_text(encoding="utf-8"), n
+        assert (COMPETE / "sandbox" / (n + ".src")).exists(), n + ".src"  # and each has its source beside it
