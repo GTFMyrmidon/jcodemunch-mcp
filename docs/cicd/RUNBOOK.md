@@ -8,7 +8,10 @@ matters and are written for cmd.exe otherwise. Companion: `DESIGN.md` (why),
 
 ## 1. Cut a release
 
-The only human acts are the release PR's merge and one dispatch.
+The only human acts are the release PR's merge and one dispatch. The tag
+`release.yml` pushes is authored by `github-actions[bot]` (section 7's
+identity rule, C-17); a tagger named after a made-up noreply login belongs
+to whoever owns that login.
 
 0. In a Claude Code session: `/release`. It confirms `main` is green,
    derives the version and shows the derivation, reconciles `[Unreleased]`
@@ -167,11 +170,14 @@ users need (policy 2), and the gate cannot be repaired in the same PR:
   `default_workflow_permissions` stays `read`). If the job fails after the
   push, open the PR by hand from the branch it pushed with the job's title and
   body; a second dispatch the same day is rejected as a non-fast-forward.
-  ⚠ Every workflow that commits or tags does so as `github-actions[bot]`
-  (`41898282+github-actions[bot]@users.noreply.github.com`), never a made-up
-  `<name>@users.noreply.github.com`: that address resolves to whichever
-  account owns the login, `harness-bot` and `release-bot` were both real
-  strangers, and CLA Assistant posts no status for an unsigned author (C-17).
+  ⚠ A workflow that commits or tags with `GITHUB_TOKEN` does so as
+  `github-actions[bot]` (`41898282+github-actions[bot]@users.noreply.github.com`);
+  one that pushes with the App token uses the App's own numeric address
+  (inbound FINDINGS IN-20, open). Never a made-up `<name>@users.noreply.github.com`:
+  that address resolves to whichever account owns the login, `harness-bot`,
+  `release-bot` and `inbound` were all real strangers, and CLA Assistant posts
+  `not signed` for such an author (C-17). `tests/test_workflow_commit_identity.py`
+  enforces the numeric form.
 - A `regression` issue names one threshold on `main`. Fix or, with a
   measured reason, loosen with a `loosened` block; close with the PR link.
 - A `drift` issue is the nightly's: a dependency, runner image or grammar
