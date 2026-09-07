@@ -8,7 +8,9 @@
 # Trigger:  pull_request, push to main, Mondays 05:00Z, dispatch.
 # Blocks:   INFORMS for the first two weeks (baseline), then the `codeql`
 #           check is added to branch protection -- a one-line change in
-#           docs/cicd/RUNBOOK.md. The `queries` set is security-and-quality.
+#           docs/cicd/RUNBOOK.md. The `queries` set is security-extended:
+#           the quality queries (unused import, empty except, ...) are ruff's
+#           job and filled the security page with lint notes (C-11).
 # Rules:    actions SHA-pinned; minimal permissions; no continue-on-error.
 name: Security
 
@@ -45,7 +47,7 @@ jobs:
       - uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938  # v4.37.9
         with:
           languages: ${{ matrix.language }}
-          queries: security-and-quality
+          queries: security-extended
       - uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938  # v4.37.9
         with:
           category: "/language:${{ matrix.language }}"
