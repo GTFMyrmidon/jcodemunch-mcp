@@ -2,7 +2,7 @@
 
 Adapter `benchmarks/competitive/adapters/aider.py`; image
 `benchmarks/competitive/sandbox/aider.Dockerfile` with the hash lockfile
-`sandbox/aider.requirements.txt`. Written 2026-09-05 before the first
+`sandbox/aider.pins` (renamed from `aider.requirements.txt` 2026-09-06: under that name GitHub read a competitor's lockfile as one of our manifests). Written 2026-09-05 before the first
 number was recorded (DESIGN §1.3). Everything quoted from the tool is data
 (principle 5), read from PyPI `aider-chat` 0.86.2 (wheel sha256
 `64f6a0c6…`, uploaded 2026-02-12, `Requires-Python <3.13,>=3.10`, the

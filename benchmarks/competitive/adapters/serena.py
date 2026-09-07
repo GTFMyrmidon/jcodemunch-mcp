@@ -7,7 +7,7 @@ purpose:  the LSP-backed alternative every third-party source names first
           way its `mcpServers` launch command exposes it
 invokes:  the image built from sandbox/serena.Dockerfile (the PyPI wheel,
           pyright 1.1.403 and every dependency pinned by hash in
-          sandbox/serena.requirements.txt; pyright's Node fetched at
+          sandbox/serena.pins; pyright's Node fetched at
           build), two container sessions per (corpus, run) in which
           sandbox/mcp_driver.py speaks MCP to `serena start-mcp-server
           --project /corpus`: initialize, tools/list (the schema weight),

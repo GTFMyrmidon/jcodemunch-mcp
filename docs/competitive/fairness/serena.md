@@ -2,7 +2,7 @@
 
 Adapter `benchmarks/competitive/adapters/serena.py`; image
 `benchmarks/competitive/sandbox/serena.Dockerfile` with the hashed lockfile
-`sandbox/serena.requirements.txt` and the pinned global configuration
+`sandbox/serena.pins` and the pinned global configuration
 `sandbox/serena_config.yml`; MCP client `sandbox/mcp_driver.py` (the same
 client that drove the two previous MCP rows). Written 2026-09-05 before
 the first number was recorded (DESIGN §1.3). Everything quoted from the
@@ -60,7 +60,7 @@ latency figure; its evaluation pages compare agent runs, not tool costs.
 - **Install**: the PyPI wheel `serena_agent-1.7.0-py3-none-any.whl`
   (sha256 `6dbf1459…`, uploaded 2026-08-09) and `pyright==1.1.403` (the
   version the tool pins) with every dependency pinned by version and hash
-  in `sandbox/serena.requirements.txt`, compiled once with `uv pip compile
+  in `sandbox/serena.pins`, compiled once with `uv pip compile
   --generate-hashes` for linux / Python 3.13 and installed with `pip
   install --require-hashes`. The README's `uv tool install` builds the
   same environment without a hash lock; the wheel and the pin are the
