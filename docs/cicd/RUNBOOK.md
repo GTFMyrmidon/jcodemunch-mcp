@@ -235,8 +235,10 @@ installed on this repository only), store `INBOUND_APP_ID`,
 add the App to the CLA allowlist, enable private vulnerability reporting,
 and add the ruleset that confines the App to `inbound/**` and
 `inbound-ledger` (target `branch`, include `~ALL`, exclude
-`refs/heads/inbound/**`, `refs/heads/inbound-ledger` AND
-`refs/heads/main`; rules creation, update, deletion; bypass actors the
+`refs/heads/inbound/**`, `refs/heads/inbound-ledger`, `refs/heads/main`
+AND `refs/heads/harness-bot/**` (C-17: `main.yml`'s Monday results branch
+is pushed as `github-actions`, which no bypass role covers, and the first
+firing was rejected with GH013); rules creation, update, deletion; bypass actors the
 Write, Maintain and Admin repository roles, mode `always`). ⚠ Leaving
 `main` inside it makes every human merge need `--admin` and stops
 auto-merge (FINDINGS IN-19); `main` is protected by branch protection
