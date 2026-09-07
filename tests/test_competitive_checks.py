@@ -293,7 +293,7 @@ def test_sandbox_timeout_kills_the_container(tmp_path):
     import sandbox
 
     if not _docker_available():
-        pytest.skip("docker is not available here (the CI matrix has no daemon)")
+        pytest.skip("docker is not available here (the gate's ubuntu legs have a daemon and run this; windows legs and a box with Docker Desktop stopped skip it)")
     (tmp_path / "c").mkdir()
     before = set(subprocess.run(["docker", "ps", "-q"], capture_output=True, text=True, encoding="utf-8").stdout.split())
     res = sandbox.run("alpine:3.20", ["sleep", "60"], tmp_path / "c", tmp_path / "out", timeout=3)
@@ -318,8 +318,43 @@ def test_sandbox_names_the_container_and_kills_it_on_timeout(monkeypatch, tmp_pa
         if cmd[:2] == ["docker", "kill"]:
             seen["killed"] = cmd[2]
             return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[:2] == ["docker", "wait"]:
+            seen["waited"] = cmd[2]
+            return subprocess.CompletedProcess(cmd, 0, "137\n", "")
         raise AssertionError(cmd)
 
     monkeypatch.setattr(sandbox.subprocess, "run", fake_run)
     res = sandbox.run("img", ["x"], tmp_path, tmp_path / "out", timeout=1)
     assert res.timed_out and seen["killed"] == seen["name"] and seen["name"].startswith("jcm-compete-")
+    assert seen["waited"] == seen["name"]  # CF-65: the kill waits for the exit, so run() returns to a gone container
+
+
+def test_kill_container_waits_for_the_exit_only_after_a_delivered_kill(monkeypatch):
+    """CF-65, both halves: after a successful `docker kill` the sandbox runs `docker wait` on the
+    same name (the gap `docker ps` fell into); after a failed kill (no such container) it does not
+    wait, and a wait that itself times out is swallowed, since the kill was delivered."""
+    import subprocess
+
+    import sandbox
+
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd[:2])
+        if cmd[:2] == ["docker", "kill"]:
+            return subprocess.CompletedProcess(cmd, 0 if cmd[2].startswith("alive") else 1, "", "")
+        if cmd[:2] == ["docker", "wait"]:
+            if cmd[2] == "alive-wedged":
+                raise subprocess.TimeoutExpired(cmd, kw.get("timeout"))
+            return subprocess.CompletedProcess(cmd, 0, "137\n", "")
+        raise AssertionError(cmd)
+
+    monkeypatch.setattr(sandbox.subprocess, "run", fake_run)
+    assert sandbox.kill_container("alive") is True
+    assert calls == [["docker", "kill"], ["docker", "wait"]]
+    calls.clear()
+    assert sandbox.kill_container("gone") is False
+    assert calls == [["docker", "kill"]]
+    calls.clear()
+    assert sandbox.kill_container("alive-wedged") is True
+    assert calls == [["docker", "kill"], ["docker", "wait"]]  # the wait was attempted and its timeout swallowed
