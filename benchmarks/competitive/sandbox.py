@@ -96,10 +96,26 @@ fine: a run is one container. HOME moves there when it is requested."""
 
 
 def kill_container(name: str) -> bool:
-    """`docker kill` by name; True when a container by that name was killed.
-    Called on every timeout, and safe when the container already exited."""
-    proc = subprocess.run(["docker", "kill", name], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
-    return proc.returncode == 0
+    """`docker kill` by name, then wait for the container to EXIT; True when a
+    container by that name was killed. Called on every timeout, and safe when
+    the container already exited.
+
+    The wait is the point (CF-65): `docker kill` returns when the signal is
+    delivered, not when the container is gone, so a `docker ps` issued the
+    instant after could still list it. The 2026-09-07 PR gate saw exactly
+    that once in eight runs, in the test that proves a timed-out container
+    is gone after run() returns. `docker wait` blocks until exit; a bounded
+    timeout keeps a wedged daemon from turning a kill into a hang."""
+    proc = subprocess.run(["docker", "kill", name], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          timeout=60)  # unchanged from CF-49; the wait below is bounded on its own
+    killed = proc.returncode == 0
+    if killed:
+        try:
+            subprocess.run(["docker", "wait", name], capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=30)
+        except subprocess.TimeoutExpired:
+            pass  # the kill was delivered; the caller reports the timeout either way
+    return killed
 
 
 def run(tag: str, args: list[str], corpus: Path, out: Path, timeout: int, workdir: str = "/corpus",
