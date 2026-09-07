@@ -79,7 +79,9 @@ async def test_native_registration_is_always_nonrecursive(workspace):
 
     with patch.object(watchfiles, "awatch", fake_awatch):
         async with aclosing(watcher._safe_awatch(str(workspace), 200)) as stream:
-            assert await anext(stream)
+            assert await anext(stream) == {
+                (watchfiles.Change.modified, str(workspace))
+            }
     assert len(calls) == 1
     assert set(calls[0][0]) == set(watcher._watch_directories(str(workspace)))
     assert calls[0][1]["recursive"] is False
@@ -123,6 +125,7 @@ async def test_topology_refresh_closes_old_watch_and_requests_rescan(tmp_path, o
     ):
         async with aclosing(watcher._safe_awatch(root, 200)) as stream:
             assert await anext(stream) == {(watchfiles.Change.modified, root)}
+            assert await anext(stream) == {(watchfiles.Change.modified, root)}
     assert len(calls) == 2
     assert set(calls[1]) == set(watcher._watch_directories(root))
     assert closed == [1, 2]
@@ -141,8 +144,53 @@ async def test_regular_edits_do_not_rescan_directory_tree(tmp_path):
     with patch.object(watchfiles, "awatch", fake_awatch), patch.object(
         watcher, "_watch_directories", wraps=watcher._watch_directories
     ) as discover, patch.object(watcher, "time", SimpleNamespace(monotonic=lambda: 0)):
-        assert len([batch async for batch in watcher._safe_awatch(str(tmp_path), 200)]) == 3
+        batches = [batch async for batch in watcher._safe_awatch(str(tmp_path), 200)]
+    assert batches[0] == {(watchfiles.Change.modified, str(tmp_path))}
+    assert batches[1:] == [
+        {(watchfiles.Change.modified, str(target))},
+    ] * 3
     assert discover.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_single_edit_during_initial_registration_is_reconciled(tmp_path):
+    watchfiles = pytest.importorskip("watchfiles")
+    root = str(tmp_path)
+    target = tmp_path / "code.py"
+    target.write_text("before\n")
+    armed = False
+    edits = 0
+    reconciled = []
+
+    async def fake_awatch(*paths, **kwargs):
+        nonlocal armed, edits
+        target.write_text("after\n")
+        edits += 1
+        armed = True
+        yield set()
+
+    def fake_index_folder(**kwargs):
+        assert armed
+        assert kwargs["changed_paths"] is None
+        reconciled.append(target.read_text())
+        return {"success": True, "message": "No changes detected"}
+
+    store = MagicMock()
+    store.load_index.return_value = None
+    with patch.object(watchfiles, "awatch", fake_awatch), patch.object(
+        watcher, "index_folder", side_effect=fake_index_folder
+    ), patch.object(watcher, "IndexStore", return_value=store), patch.object(
+        watcher, "_local_repo_id", return_value="local/test"
+    ), patch.object(watcher, "mark_reindex_start"), patch.object(
+        watcher, "mark_reindex_done"
+    ), patch.object(watcher, "mark_reindex_failed"):
+        await watcher._watch_single(
+            root, 200, False, None, None, False,
+            skip_initial_index=True, quiet=True,
+        )
+
+    assert edits == 1
+    assert reconciled == ["after\n"]
 
 
 @pytest.mark.asyncio

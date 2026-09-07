@@ -105,7 +105,7 @@ async def _safe_awatch(folder_path: str, debounce_ms: int):
     from watchfiles import awatch, Change
 
     directories = await asyncio.to_thread(_watch_directories, folder_path)
-    rescan = False
+    rescan = True
     while directories:
         checked_at = time.monotonic()
         stream = awatch(
