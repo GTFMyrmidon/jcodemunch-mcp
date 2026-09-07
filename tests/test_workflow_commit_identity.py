@@ -5,9 +5,11 @@ whichever account owns `<name>`. `main.yml` committed the weekly results as
 `harness-bot@users.noreply.github.com` and the commit was attributed to a real
 account created 2026-05-18 that is not ours, so CLA Assistant saw an unsigned
 stranger and the results PR (#633) sat BLOCKED with every check green;
-`release.yml` tagged as `release-bot`, an account since 2014. The only form
-that cannot land on a stranger is the numeric one, `<id>+<login>@users.noreply.github.com`,
-which GitHub issues per account.
+`release.yml` tagged as `release-bot`, an account since 2014. The numeric form,
+`<id>+<login>@users.noreply.github.com`, is the one GitHub issues per account, so a
+login alone can no longer claim it. This test proves the FORM: a wrong numeric id
+still resolves to whoever holds that id, and only a live `users/<login>` read
+proves ownership (C-17 review round 4).
 
 The five inbound/competitive workflows push with the App token under
 `inbound@users.noreply.github.com`, a real account since 2012 (inbound FINDINGS
