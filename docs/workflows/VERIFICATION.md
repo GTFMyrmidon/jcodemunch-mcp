@@ -14,7 +14,7 @@ first recorded firing of the layer.
 
 | Hook | Input | Result | Evidence |
 |---|---|---|---|
-| H5 `deny_guard` | `gh release create`, `gh api --method POST`, `uvx --from twine …`, `git tag v9`, `gh workflow run`, `gh pr merge`, `gh issue comment`, `mcp-publisher publish`, `git push --force` | exit 2, reason names the RUNBOOK section or "drafts only" and the cmd.exe hand-over | `tests/test_workflow_hooks.py::test_deny_guard_refuses_exactly_the_forbidden_verbs` (14 cases, 5 negative) |
+| H5 `deny_guard` | `gh release create`, `gh api` writes to a merge, release, dispatch or tag path or with DELETE, `uvx --from twine …`, `git tag v9`, `gh workflow run`, `gh pr merge`, `gh issue delete`, `mcp-publisher publish`, `git push --force`; and NOT `gh pr comment/edit/close`, `gh issue comment/close`, an alert dismissal or a webhook redelivery (W-40) | exit 2 on the irreversible, reason names the RUNBOOK section and the cmd.exe hand-over; exit 0 on posting | `tests/test_workflow_hooks.py::test_deny_guard_refuses_exactly_the_forbidden_verbs` (24 cases, 11 negative; `pytest --collect-only` on the W-40 tree) |
 | H5 | `git tag --list`, `git push origin feat/x`, `gh pr view`, `gh api repos/...` (GET) | exit 0 | same |
 | H4 `pre_pr` | `gh pr create` with no stamp / a stamp for another tree / a failed stamp / no checklist / an `unmet` row / on `main` | exit 2 each, distinct reason; exit 0 with a matching stamp and a clean checklist | `::test_pre_pr_refuses_without_a_stamp_and_passes_unrelated_commands` |
 | H4 | same command in the building session, live | blocked the Bash call carrying the payload (W-8) | session log 2026-09-04 |
