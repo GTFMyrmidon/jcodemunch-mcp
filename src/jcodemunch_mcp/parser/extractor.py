@@ -4787,8 +4787,13 @@ def _parse_ejs_symbols(source_bytes: bytes, filename: str) -> list[Symbol]:
 # Razor (.cshtml / .razor) custom symbol extractor
 # ---------------------------------------------------------------------------
 
-_RAZOR_SCRIPT_RE = re.compile(r"<script\b([^>]*)>(.*?)</script>", re.IGNORECASE | re.DOTALL)
-_RAZOR_STYLE_RE = re.compile(r"<style\b([^>]*)>(.*?)</style>", re.IGNORECASE | re.DOTALL)
+# `</script\b[^>]*>`: browsers end the block at any `</script` followed by whitespace, junk
+# attributes or `>` (`</script >`, `</script\t\n bar>`), and a regex ending at a bare `</script>`
+# would run on to the NEXT close tag and swallow the markup between (CodeQL py/bad-tag-filter,
+# code-scanning alerts 13 and 14; the first fix admitted whitespace only and CodeQL named the
+# attribute form on the PR).
+_RAZOR_SCRIPT_RE = re.compile(r"<script\b([^>]*)>(.*?)</script\b[^>]*>", re.IGNORECASE | re.DOTALL)
+_RAZOR_STYLE_RE = re.compile(r"<style\b([^>]*)>(.*?)</style\b[^>]*>", re.IGNORECASE | re.DOTALL)
 _RAZOR_ID_RE = re.compile(r"""\bid\s*=\s*["']([^"'<>]+)["']""", re.IGNORECASE)
 _RAZOR_SCRIPT_SRC_RE = re.compile(r"""\bsrc\s*=\s*["']([^"'<>]+)["']""", re.IGNORECASE)
 _RAZOR_CODE_BLOCK_RE = re.compile(r"@(?:functions|code)\s*\{", re.IGNORECASE)
@@ -4799,8 +4804,8 @@ _RAZOR_INJECT_RE = re.compile(r'^@inject\s+(\S+)\s+(\w+)', re.MULTILINE)
 # Astro (.astro) — mixed-language components: TypeScript frontmatter + HTML template
 # + optional <script> (client JS) and <style> blocks.
 # Grammar reference: https://github.com/virchau13/tree-sitter-astro
-_ASTRO_SCRIPT_RE = re.compile(r"<script\b([^>]*)>(.*?)</script>", re.IGNORECASE | re.DOTALL)
-_ASTRO_STYLE_RE = re.compile(r"<style\b([^>]*)>(.*?)</style>", re.IGNORECASE | re.DOTALL)
+_ASTRO_SCRIPT_RE = re.compile(r"<script\b([^>]*)>(.*?)</script\b[^>]*>", re.IGNORECASE | re.DOTALL)  # see the Razor twin
+_ASTRO_STYLE_RE = re.compile(r"<style\b([^>]*)>(.*?)</style\b[^>]*>", re.IGNORECASE | re.DOTALL)
 _ASTRO_SCRIPT_SRC_RE = re.compile(r"""\bsrc\s*=\s*["']([^"'<>]+)["']""", re.IGNORECASE)
 _ASTRO_SCRIPT_LANG_RE = re.compile(r"""\blang\s*=\s*["']([^"'<>]+)["']""", re.IGNORECASE)
 _ASTRO_SCRIPT_TYPE_RE = re.compile(r"""\btype\s*=\s*["']([^"'<>]+)["']""", re.IGNORECASE)
