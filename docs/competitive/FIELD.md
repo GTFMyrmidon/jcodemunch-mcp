@@ -182,6 +182,7 @@ the set.
 | **Claude Context** (zilliztech) | BM25 + dense vectors over Milvus | npm, MIT; 12.5k stars | — | pushed 2026-07-14 | broad languages | NO: external Milvus service |
 | **mcp-server-qdrant** | generic vector store MCP | PyPI, Apache; 1.5k | — | pushed 2026-09-04 | not code-specific | NO: needs a Qdrant instance; not a code tool |
 | **Greptile / GrepAI**, **Sourcegraph SCIP** (named by S8) | hosted semantic search; compiler-grade indexing | closed/hosted; SCIP is a format not a retrieval tool | — | — | — | NO |
+| **zvec-grep** (zvec-ai/zvec-grep; Alibaba's zvec org) | ripgrep + BM25 + local vector search over a workspace, structure-aware chunking for seven languages ("symbols, signatures, breadcrumbs, and surrounding source"), CLI (`zg`) and MCP server, one-command installs into Claude Code, Codex, OpenCode, Qwen Code, Qoder; added 2026-09-07 on jjg's report, facts from `gh api` and `npm view` that day | npm `@zvec/zvec-grep` 0.2.2 (2026-09-07), Apache-2.0, Node >=22; 3,121 stars, 168 forks, created 2026-07-10 | v0.2.0 2026-08-27, v0.1.5 2026-07-16; 0.2.2 on npm without a GitHub release | pushed 2026-09-07; 42 open issues | claims: a 20-task, 11-repo SWE-QA run with Claude Code 2.1.212 + Opus 5, baseline "Claude Code uses its standard tools" (our Baseline B, measured by them on a modern agent); the README publishes NO number in prose and names no other tool; default MCP surface is ONE tool (`zvec_grep_search`), six in full; "Indexed source previews are omitted unless requested"; freshness `fresh` / `possibly_stale` | YES: `--mode direct` runs in-process with no daemon; the local model (`local/potion-code-16m-v2`, the smallest code model) downloads on first use into `ZVEC_GREP_MODEL_CACHE`, so it is pre-warmed into the D2 image the way the tiktoken asset is (harness F-14) and the run stays offline |
 
 #### E. Repository-map generators
 
@@ -287,7 +288,7 @@ compare us against or what users asked us to compare against (#290). Ties are
 broken toward the tool whose configuration is documented well enough to write
 the fairness note (principle 2).
 
-### 5.2 The set (8 tools + 2 nulls)
+### 5.2 The set (9 tools + 2 nulls; 8 + 2 until 2026-09-07)
 
 | # | Tool | Category | Why it is in |
 |---|---|---|---|
@@ -301,6 +302,7 @@ the fairness note (principle 2).
 | 6 | Aider RepoMap (aider-chat 0.86.2) | E | the approach a third party says beats us on cross-file awareness; the whitepaper's own "complementary" claim has never been tested; token axis only |
 | 7 | cymbal 0.14.0 | C | the CLI shape (a subprocess, not a server) and the only marketed latency figure; single binary with checksums, the cleanest sandbox case |
 | 8 | CocoIndex Code 0.2.41 | C/D | replaces the home-made LangChain RAG with a shipped embedding-based product; Apache; local model |
+| 9 | zvec-grep 0.2.2 (`--mode direct`, `local/potion-code-16m-v2`) | C/D | admitted 2026-09-07 on the §5.4 trigger (3,121 stars, ten times the floor, two months old); the only member whose published claim has OUR shape (agent tool calls and input tokens against the agent's own tools, i.e. Baseline B, run by them on Claude Code + Opus 5); a one-tool default MCP surface, the extreme point of the Counter's axis; source of two fix-title probes (FINDINGS CF-66). Adapter: cymbal's subprocess shape with CocoIndex's model warm step |
 
 Budget: the offline bench tier runs in 31 s today (harness VERIFICATION);
 each adapter adds a cold index of the three pinned corpora (186 / 1,186 / 98
