@@ -221,21 +221,93 @@ def run_budgeted(
     left = budget.left()
     if left <= 1:
         return None, ""
+    # W-42: `subprocess.run(timeout=)` kills the CHILD and then waits on the
+    # pipes, which a grandchild (`uv run` -> `python -m harness`) still holds;
+    # on Windows that wait lasted as long as the harness did, the hook overran
+    # the runner's backstop, the runner killed it, and the commit proceeded
+    # with no verdict. The deadline has to take the whole tree down.
+    popen_kw: dict = {}
+    if os.name != "nt":
+        popen_kw["start_new_session"] = True
+    p = subprocess.Popen(
+        cmd,
+        cwd=REPO,
+        shell=shell,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env or {**os.environ, "PYTHONIOENCODING": "utf-8"},
+        **popen_kw,
+    )
     try:
-        r = subprocess.run(
-            cmd,
-            cwd=REPO,
-            shell=shell,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=left,
-            env=env or {**os.environ, "PYTHONIOENCODING": "utf-8"},
-        )
+        out, err = p.communicate(timeout=left)
     except subprocess.TimeoutExpired:
+        _kill_tree(p)
+        try:
+            p.communicate(timeout=DRAIN_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            # Practice 2: a tree that outlives the kill must be visible.
+            sys.stderr.write(
+                f"run_budgeted: pid {p.pid} still holds its pipes {DRAIN_TIMEOUT} s after the tree kill\n"
+            )
         return None, ""
-    return r.returncode, (r.stdout or "") + (r.stderr or "")
+    return p.returncode, (out or "") + (err or "")
+
+
+def _kill_tree(p: subprocess.Popen) -> None:
+    """Kill a process and everything it started, on both platforms."""
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(p.pid)],
+            capture_output=True, timeout=KILL_TIMEOUT,
+        )
+    else:
+        import signal
+
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            p.kill()
+
+
+# The kill path's ceiling, past the budget: the tree kill's own timeout plus
+# the post-kill drain. The runner's backstop in settings.json must cover
+# budget + KILL_CEILING + 10 (DESIGN section 4; W-42).
+KILL_TIMEOUT = 5
+DRAIN_TIMEOUT = 3
+KILL_CEILING = KILL_TIMEOUT + DRAIN_TIMEOUT
+
+PENDING_MARK = "NOT RUN"
+
+
+def write_pending_summary(path: Path, hook: str) -> None:
+    """Write a summary that reads as FAIL until a run replaces it (W-42).
+
+    A hook killed from outside is neither `ok()` nor `block()`, and the runner
+    reads its silence as consent; the one thing that survives the kill is a
+    file written first. `harness --summary` APPENDS (W-20), so `settle_summary`
+    drops this block once a verdict exists beneath it.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"## harness fast: {PENDING_MARK}\n\n"
+        f"{hook} started {time.strftime('%Y-%m-%dT%H:%M:%S')} and has not written a "
+        "verdict. If this block is still here, the hook was killed before the run "
+        "finished (docs/workflows/FINDINGS.md W-42).\n\nHARNESS FAIL\n",
+        encoding="utf-8",
+    )
+
+
+def settle_summary(path: Path) -> None:
+    """Remove the pending block once the run appended its own."""
+    if not path.exists():
+        return
+    text = path.read_text(encoding="utf-8")
+    head, sep, rest = text.partition("\n## harness ")
+    if PENDING_MARK in head and sep:
+        path.write_text("## harness " + rest, encoding="utf-8")
 
 
 def block(reason: str) -> None:
