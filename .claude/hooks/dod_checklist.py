@@ -22,7 +22,7 @@ import re
 import subprocess
 import sys
 
-from _common import EVIDENCE, REPO, git
+from _common import EVIDENCE, REPO, git, paths_for
 
 RATE_KEY_RE = re.compile(
     r'^\+.*["\'](\w+_(?:pct|rate|share)|confidence)["\']\s*:', re.M
@@ -65,7 +65,7 @@ def evidence(name: str) -> str | None:
 # exists whatever the path; the roots decide only whether an absent pair is
 # unmet or n.a. Three reviewers in one day graded the row by hand because
 # `.claude/hooks/`, `benchmarks/` and `tests/` were not on the old list.
-CODE_ROOTS = ("src/", "harness/", "scripts/", "benchmarks/", "tests/", ".claude/hooks/")
+CODE_ROOTS = paths_for("redgreen")  # W-43: projected from _common.PATH_TABLE
 
 
 def row1_verdict(changed: list[str], red: str | None, green: str | None) -> tuple[str, str]:
@@ -299,7 +299,7 @@ def main() -> int:
         )
 
     # 10 fast; bench when benchmarks/, harness/ or server.py changed
-    needs_bench = touched("benchmarks/", "harness/", "src/jcodemunch_mcp/server.py")
+    needs_bench = touched(*paths_for("bench"))  # W-43: the table's bench column
     bench = evidence("bench.md")
     bp = harness_pass(bench)
     if fp is None:
