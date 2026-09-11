@@ -230,7 +230,10 @@ class TestSymlinkedRootsStillOverlap:
         real = tmp_path / "repo"
         real.mkdir()
         alias = tmp_path / "alias"
-        os.symlink(real, alias)
+        try:
+            os.symlink(real, alias)
+        except OSError:
+            pytest.skip("symlinks not supported on this platform/user")
         monkeypatch.setattr(
             "jcodemunch_mcp.cli.hooks.steering._indexed_source_roots",
             lambda: [_norm(real)],  # stored resolved, as index_folder does
@@ -557,7 +560,10 @@ class TestStoreBackedGates:
         root, the gate reads it via list_source_roots, and a Grep addressed
         through a symlink alias of the repo still gets the nudge."""
         alias = tmp_path / "alias"
-        os.symlink(tmp_path / "proj", alias)
+        try:
+            os.symlink(tmp_path / "proj", alias)
+        except OSError:
+            pytest.skip("symlinks not supported on this platform/user")
         rc, out, _ = _run(run_pretooluse, _pretool(
             "Grep", {"pattern": "alpha"}, cwd=str(alias)))
         assert rc == 0
