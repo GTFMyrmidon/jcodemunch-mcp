@@ -203,7 +203,8 @@ jobs:
           if [ "${{ needs.preflight.outputs.dry_run }}" = "true" ]; then
             echo "DRY RUN: would tag v$V at $SHA with: $TITLE" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0
           fi
-          git config user.name "release-bot"; git config user.email "release-bot@users.noreply.github.com"
+          # C-17: `release-bot@users.noreply.github.com` is a real stranger's account (login since 2014); the tagger must be ours
+          git config user.name "github-actions[bot]"; git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "v$V" -m "v$V $TITLE" "$SHA"
           git push origin "v$V"
           echo "tagged v$V at $SHA" >> "$GITHUB_STEP_SUMMARY"

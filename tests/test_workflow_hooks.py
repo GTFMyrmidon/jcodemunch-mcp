@@ -64,12 +64,39 @@ def edit(path: Path) -> dict:
         ("gh " + "workflow run release.yml -f version=1", True),
         ("gh pr " + "merge 1", True),
         ("gh pr view 1", False),
-        ("gh issue " + "comment 1 --body x", True),
-        ("gh issue view 1", False),
-        ("gh api --method POST repos/x/y", True),
+        # W-40: posting is the session's; only the irreversible acts are refused
+        ("gh pr comment 1 --body x", False),
+        ("gh pr edit 1 --body-file x.md", False),
+        ("gh pr close 1", False),
+        ("gh issue comment 1 --body x", False),
+        ("gh issue close 1", False),
+        ("gh issue " + "delete 1", True),
         ("gh api repos/x/y", False),
+        ("gh api -X PATCH repos/x/y/code-scanning/alerts/5 -f state=dismissed", False),
+        ("gh api --method POST repos/x/y/hooks/1/deliveries/2/attempts", False),
+        ("gh api --method PUT repos/x/y/pulls/7/" + "merge", True),
+        ("gh api -X POST repos/x/y/" + "releases -f tag_name=v1", True),
+        ("gh api --method POST repos/x/y/actions/workflows/release.yml/" + "dispatches", True),
+        ("gh api -X POST repos/x/y/git/refs -f ref=refs/" + "tags/v1", True),
+        ("gh api --method DELETE repos/x/y/issues/comments/1", True),
         ("uvx --from " + "twine twine upload dist/*", True),
         ('"C:\\Users\\j\\mcp-' + 'publisher.exe" publish', True),
+        # W-41: a GraphQL mutation reaches the same irreversible acts with no
+        # --method on the line, and `gh repo delete` was in neither list.
+        ("gh api graphql -f query='mutation { " + "mergePullRequest(input: {pullRequestId: \"x\"}) { clientMutationId } }'", True),
+        ("gh api graphql -f query='mutation { " + "deleteIssue(input: {issueId: \"x\"}) { clientMutationId } }'", True),
+        ("gh api graphql -f query='mutation { " + "deleteRef(input: {refId: \"x\"}) { clientMutationId } }'", True),
+        ("gh api graphql -f query='mutation { createRef(input: {name: \"refs/" + "tags/v1\", oid: \"x\"}) { clientMutationId } }'", True),
+        ("gh api graphql -f query='mutation { createRef(input: {name: \"refs/heads/feat\", oid: \"x\"}) { clientMutationId } }'", False),
+        ("gh api graphql -f query='query { repository(owner: \"x\", name: \"y\") { id } }'", False),
+        ("gh api graphql -f query='mutation { addComment(input: {subjectId: \"x\", body: \"hi\"}) { clientMutationId } }'", False),
+        ("gh api graphql -f query='mutation { " + "enablePullRequestAutoMerge(input: {pullRequestId: \"x\"}) { clientMutationId } }'", True),
+        ("gh api graphql -f query='mutation { " + "deleteDiscussion(input: {id: \"x\"}) { clientMutationId } }'", True),
+        ("gh api graphql -f query='mutation { " + "deleteProjectV2(input: {projectId: \"x\"}) { clientMutationId } }'", True),
+        # flags between `api` and `graphql` (review round 1: adjacency was a spelling)
+        ("gh api -H 'Accept: application/vnd.github+json' graphql -f query='mutation { " + "mergePullRequest(input: {pullRequestId: \"x\"}) { clientMutationId } }'", True),
+        ("gh repo " + "delete x/y --yes", True),
+        ("gh repo view x/y", False),
     ],
 )
 def test_deny_guard_refuses_exactly_the_forbidden_verbs(command, expect_block):
@@ -134,6 +161,19 @@ def test_pre_pr_refuses_without_a_stamp_and_passes_unrelated_commands(
     (state / "full-tier.json").write_text(
         json.dumps({"tree": tree, "ok": True, "date": "x"}), encoding="utf-8"
     )
+    # W-42 remedy (3): the fast summary is read directly, ahead of the checklist,
+    # because a checklist generated before a killed pre_commit can still read 12/12.
+    rc, err = run()
+    assert rc == 2 and "no fast-tier verdict" in err and "killed" not in err
+    (evidence / "fast.md").write_text(
+        "## harness fast: NOT RUN\n\npre_commit started x.\n\nHARNESS FAIL\n", encoding="utf-8"
+    )
+    rc, err = run()
+    assert rc == 2 and "killed before it wrote one" in err
+    (evidence / "fast.md").write_text("## harness fast: FAIL\n\nHARNESS FAIL\n", encoding="utf-8")
+    rc, err = run()
+    assert rc == 2 and "fast tier on this box FAILED" in err
+    (evidence / "fast.md").write_text("## harness fast: PASS\n\nHARNESS PASS\n", encoding="utf-8")
     rc, err = run()
     assert rc == 2 and "checklist" in err
     (evidence / "checklist.md").write_text("| 1 | x | unmet | y |\n", encoding="utf-8")
@@ -239,6 +279,10 @@ def test_hooks_follow_the_session_cwd_into_a_worktree(tmp_path):
     (state / "evidence" / "checklist.md").write_text(
         "| 1 | x | met | y |\n", encoding="utf-8"
     )
+    # W-42: pre_pr reads the fast summary too, in the same rebound state dir.
+    (state / "evidence" / "fast.md").write_text(
+        "## harness fast: PASS\n\nHARNESS PASS\n", encoding="utf-8"
+    )
     r = subprocess.run(
         [sys.executable, str(HOOKS / "pre_pr.py")],
         input=json.dumps(payload),
@@ -248,3 +292,50 @@ def test_hooks_follow_the_session_cwd_into_a_worktree(tmp_path):
         cwd=clone,
     )
     assert r.returncode == 0, r.stderr
+
+
+def test_h1_runs_the_tier_when_claude_md_is_staged_and_stays_free_for_other_docs():
+    """W-39: CLAUDE.md's size is a Floor (`claude_md.max_chars`), so a commit staging it is not a
+    free docs commit; every other docs-only commit still is. The predicate is tested directly
+    because driving the hook would run the whole fast tier."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("pre_commit_under_test", HOOKS / "pre_commit.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(HOOKS))
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        sys.path.remove(str(HOOKS))
+    assert mod.tier_needed(["CLAUDE.md"]) is True
+    assert mod.tier_needed(["docs/competitive/VERIFICATION.md", "CLAUDE.md"]) is True
+    assert mod.tier_needed(["src/jcodemunch_mcp/server.py"]) is True
+    assert mod.tier_needed(["docs/cicd/RUNBOOK.md", "README.md", "CHANGELOG.md"]) is False
+    assert mod.tier_needed([]) is False
+    # the trigger is the file the Floor reads, not every root-level markdown file
+    assert "CLAUDE.md" in mod.TIER_TRIGGERS and "README.md" not in mod.TIER_TRIGGERS
+
+
+def test_h1_triggers_on_every_file_the_harness_reads_for_a_floor():
+    """W-39, the property rather than the spelling: every path literal harness/__main__.py reads
+    from the tree for a Floor (`REPO / "a" / "b"`) is covered by the hook's trigger list, so a
+    commit that regenerates a frozen artifact alone cannot be a free commit with a moved Floor."""
+    import importlib.util
+    import re
+
+    spec = importlib.util.spec_from_file_location("pre_commit_under_test2", HOOKS / "pre_commit.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(HOOKS))
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        sys.path.remove(str(HOOKS))
+    src = (ROOT / "harness" / "__main__.py").read_text(encoding="utf-8")
+    chains = re.findall(r'REPO((?:\s*/\s*"[^"]+")+)', src)
+    paths = sorted({"/".join(re.findall(r'"([^"]+)"', c)) for c in chains})
+    read_from_tree = [p for p in paths if p not in ("src",)]
+    assert read_from_tree, "the harness reads nothing from the tree? the regex no longer matches"
+    assert any(p == "CLAUDE.md" for p in read_from_tree)
+    # a literal may name a directory (`benchmarks/route_recall`); a file under it must trigger
+    uncovered = [p for p in read_from_tree if not (mod.tier_needed([p]) or mod.tier_needed([p + "/x"]))]
+    assert not uncovered, f"a Floor input the hook does not trigger on: {uncovered}"

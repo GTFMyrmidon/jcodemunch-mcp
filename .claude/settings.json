@@ -20,19 +20,8 @@
       "Bash(gh release*)",
       "Bash(gh workflow run*)",
       "Bash(gh pr merge*)",
-      "Bash(gh pr comment*)",
-      "Bash(gh pr review*)",
-      "Bash(gh pr close*)",
-      "Bash(gh pr edit*)",
-      "Bash(gh issue comment*)",
-      "Bash(gh issue close*)",
-      "Bash(gh issue edit*)",
-      "Bash(gh issue reopen*)",
-      "Bash(gh api --method POST*)",
-      "Bash(gh api --method PATCH*)",
-      "Bash(gh api --method PUT*)",
-      "Bash(gh api --method DELETE*)",
-      "Bash(gh api -X *)",
+      "Bash(gh issue delete*)",
+      "Bash(gh repo delete*)",
       "Bash(twine*)",
       "Bash(uvx --from twine*)",
       "Bash(*mcp-publisher*)",
@@ -45,10 +34,8 @@
       "PowerShell(gh release*)",
       "PowerShell(gh workflow run*)",
       "PowerShell(gh pr merge*)",
-      "PowerShell(gh pr comment*)",
-      "PowerShell(gh pr review*)",
-      "PowerShell(gh issue comment*)",
-      "PowerShell(gh issue close*)",
+      "PowerShell(gh issue delete*)",
+      "PowerShell(gh repo delete*)",
       "PowerShell(*twine*)",
       "PowerShell(*mcp-publisher*)"
     ],
@@ -82,7 +69,7 @@
         "matcher": "Bash|PowerShell",
         "hooks": [
           { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/deny_guard.py\"", "timeout": 10 },
-          { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre_commit.py\"", "timeout": 160 },
+          { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre_commit.py\"", "timeout": 170 },
           { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre_pr.py\"", "timeout": 15 }
         ]
       }

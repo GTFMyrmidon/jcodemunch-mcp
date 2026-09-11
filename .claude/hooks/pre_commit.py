@@ -7,7 +7,10 @@ invokes:  `uv run python -m harness fast --summary`, the format check with
           when pyright is importable
 produces: .claude/state/evidence/fast.md
 refuses:  a `git commit` when any of the three FAILS (exit 2 with the
-          verdict lines); docs-only commits are not checked at all
+          verdict lines); docs-only commits are not checked at all, except
+          one that stages a file a Floor's Method READS (CLAUDE.md, whose
+          size is `claude_md.max_chars`; the frozen benchmark artifacts the
+          fidelity, schema and goldset Floors read; FINDINGS W-39)
 budget:   150 s; past it, WARNING naming what was skipped, commit allowed
 """
 
@@ -23,24 +26,42 @@ from _common import (
     budget_warning,
     git,
     ok,
+    paths_for,
     read_hook_input,
     run_budgeted,
+    settle_summary,
     split_segments,
     strip_heredocs,
     tool_command,
     warn,
+    write_pending_summary,
 )
 
 BUDGET_SECONDS = 150
-CODE_ROOTS = (
-    "src/",
-    "tests/",
-    "harness/",
-    "scripts/",
-    "benchmarks/harness/",
-    ".github/",
+# W-43: projected from _common.PATH_TABLE; the table is where a path is admitted.
+CODE_ROOTS = paths_for("fast")
+# Files a Floor's Method READS, outside the code roots: a commit that stages
+# one is not a free docs commit, because the fast tier's verdict moves with
+# it (W-39: a docs-only PR reached pre_pr with a stamp two commits stale
+# while the one Floor it moved, CLAUDE.md's size, went unmeasured). The
+# benchmark entries are the frozen artifacts harness/__main__.py reads for
+# the fidelity, schema and goldset Floors; tests/test_workflow_hooks.py
+# reads that module's path literals and fails when one is not covered here.
+FLOOR_INPUTS = (
+    "CLAUDE.md",
+    "benchmarks/schema_baseline.json",
+    "benchmarks/rust_fidelity/",
+    "benchmarks/racket_fidelity/",
+    "benchmarks/provenance/",
+    "benchmarks/route_recall/",
 )
+TIER_TRIGGERS = CODE_ROOTS + FLOOR_INPUTS
 COMMIT_RE = re.compile(r"\bgit\s+(?:-\S+\s+)*commit\b")
+
+
+def tier_needed(staged: list[str]) -> bool:
+    """Does this commit's content reach anything the fast tier judges?"""
+    return any(p.startswith(TIER_TRIGGERS) for p in staged)
 
 
 def _format_command() -> str | None:
@@ -85,13 +106,16 @@ def main() -> None:
             ln[3:].strip().strip('"')
             for ln in git("status", "--porcelain", "--untracked-files=all").splitlines()
         ]
-    if not any(p.startswith(CODE_ROOTS) for p in staged):
+    if not tier_needed(staged):
         ok()
 
     budget = Budget(BUDGET_SECONDS)
     EVIDENCE.mkdir(parents=True, exist_ok=True)
     summary = EVIDENCE / "fast.md"
-    summary.unlink(missing_ok=True)  # `--summary` appends (W-20)
+    # W-42: written BEFORE the run, so a hook the runner kills leaves a summary
+    # that reads as FAIL. `--summary` appends (W-20); the settle below drops the
+    # pending block once a verdict sits beneath it.
+    write_pending_summary(summary, "pre_commit")
     skipped: list[str] = []
     failures: list[str] = []
 
@@ -100,8 +124,11 @@ def main() -> None:
         budget,
     )
     if rc is None:
+        # The pending summary stays: the checklist reads it unmet, not silent.
         skipped.append("the fast tier")
-    elif rc != 0:
+    else:
+        settle_summary(summary)
+    if rc is not None and rc != 0:
         tail = [
             ln for ln in out.splitlines() if " FAIL" in ln or "failed" in ln.lower()
         ][-12:]

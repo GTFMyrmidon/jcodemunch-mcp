@@ -14,6 +14,7 @@ from .. import config as _config
 from ..storage import IndexStore
 from ..embeddings.advice import NO_PROVIDER_MESSAGE
 from ._utils import index_status_to_tool_error, resolve_repo
+from ..embeddings.failures import FailureLedger
 
 logger = logging.getLogger(__name__)
 
@@ -465,6 +466,11 @@ def embed_repo(
 
     embedded_count = 0
     error_count = 0
+    # CF-66 (zvec-grep #81's applicable half): the CAUSE of a failed batch used
+    # to reach the caller as a count and the log only, so a bad key, an outage
+    # and an unserved model all read as `symbols_skipped_error: N`. The ledger
+    # is shared with search_symbols' lazy top-up, the same loop one tool over.
+    failures = FailureLedger()
     dim: Optional[int] = stored_dim
     batch_size = max(1, min(batch_size, 200))
 
@@ -477,6 +483,7 @@ def embed_repo(
         except Exception as exc:
             logger.warning("embed_repo: batch %d failed: %s", i // batch_size, exc)
             error_count += len(batch)
+            failures.record(exc, items=len(batch))
             if progress_cb:
                 progress_cb(min(i + len(batch), _embed_total), _embed_total, "")
             continue
@@ -504,6 +511,9 @@ def embed_repo(
     }
     if doc_task_type:
         result["task_type"] = doc_task_type
+    if failures:
+        failures.disclose(result)
+        result["all_batches_failed"] = embedded_count == 0
     # #488: name WHY this provider was chosen, so an index is reproducible from
     # the record rather than by re-deriving the resolver's precedence.
     result["provider_reason"] = _provider_reason

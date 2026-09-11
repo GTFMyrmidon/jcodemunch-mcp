@@ -100,7 +100,11 @@ def test_settings_hooks_point_at_files_that_exist():
 
 
 def test_settings_deny_covers_every_verb_the_brief_forbids():
-    """Publish, tag, force-push, merge, post: each must be denied on Bash. Losing one reopens a path the layer promises is closed."""
+    """Publish, tag, force-push, release, dispatch, merge, issue deletion: each must be denied on Bash. Losing one reopens a path the layer promises is closed.
+
+    W-40 (2026-09-07): posting is the session's. The second loop is the other direction: a posting verb
+    returning to the deny list is the paste-per-action regression, and it would pass a one-sided check.
+    """
     deny = json.loads(_read(CLAUDE_DIR / "settings.json"))["permissions"]["deny"]
     joined = "\n".join(deny)
     for verb in (
@@ -109,12 +113,14 @@ def test_settings_deny_covers_every_verb_the_brief_forbids():
         "gh release",
         "gh workflow run",
         "gh pr merge",
-        "gh pr comment",
-        "gh issue comment",
+        "gh issue delete",
+        "gh repo delete",  # W-41
         "twine",
         "mcp-publisher",
     ):
         assert verb in joined, f"deny list lost `{verb}`"
+    for verb in ("gh pr comment", "gh pr edit", "gh pr close", "gh issue comment", "gh issue close", "gh api"):
+        assert verb not in joined, f"deny list refuses `{verb}` again; posting is the session's (W-40)"
 
 
 def test_h1_format_check_is_read_from_the_workflow_not_copied():

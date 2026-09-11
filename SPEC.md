@@ -1086,13 +1086,35 @@ Representative shape:
 | GitHub rate limited         | returns an error with reset guidance and recommends `GITHUB_TOKEN` |
 | Individual file fetch fails | file is skipped; indexing continues                                |
 | Individual file parse fails | file is skipped; indexing continues                                |
-| No source files found       | returns an error                                                   |
+| No source files found       | returns an error except for deletion-only incremental refreshes described below |
 | Symbol ID not found         | returns an error or per-item error entry                           |
 | Repository not indexed      | returns an error suggesting indexing first                         |
 | AI summarization fails      | falls back to docstring or signature                               |
 | Index version mismatch      | old index is ignored; reindex required                             |
 
 The error model is designed so that partial failures during indexing do not necessarily abort the entire operation.
+
+For `index_folder`, a full incremental scan of an existing index that finds no
+eligible source files reconciles deletions, including removal of every indexed
+file; when it removed every indexed file the response carries
+`full_deletion: true` and a `full_deletion:` warning, because the same empty
+root is also a bare mount point, a checkout mid-switch or a restore in
+progress, and the next scan over the repopulated root rebuilds the index in
+full. Initial indexing and non-incremental indexing of an empty folder still
+return an error. A directory that cannot be traversed is counted as
+`unreadable`, named in `warnings`, and the rest of the tree is still indexed;
+an empty full scan with unreadable files or directories (`unreadable`),
+file-count truncation (`file_limit`), or size-limit exclusions (`too_large`)
+fails without clearing the persisted index. Legitimate binary exclusions
+still allow deletion reconciliation. Explicit-path incremental refreshes also
+reconcile deleted requested files.
+
+On a successful save after full discovery, any `unreadable` count marks coverage
+`complete: false`, so absence claims are refused. Failed empty scans preserve
+the previous index and its coverage. After restoring access, adjusting limits,
+or excluding the affected paths, call `index_folder` with `incremental: false`
+and omit `paths` to rebuild a nonempty folder and refresh stored coverage;
+a no-change incremental refresh does not rewrite it.
 
 ---
 

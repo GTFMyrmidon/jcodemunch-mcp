@@ -35,17 +35,44 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 STATE = REPO / ".claude" / "state"
 EVIDENCE = STATE / "evidence"
+# W-43: ONE table of paths, with the questions each answers, from which the
+# three hook lists are projected. The lists grew apart with three memberships
+# (a hooks-only commit skipped the fast tier while the checklist called the
+# same edit a code change, and a hook edit left the D5 stamp valid).
+#   stamp    - the full tier's verdict depends on it (D5 tree identity)
+#   fast     - a commit touching it runs the fast tier first (H1)
+#   redgreen - a change under it needs a red/green pair (checklist row 1)
+#   bench    - a change under it needs the bench tier (checklist row 10)
+# `.claude/hooks/` moves the stamp and needs a pair, and does NOT trigger the
+# fast tier: harness/tiers.json's fast list carries no hook test, so that run
+# would judge nothing about the change; the full tier runs them.
+QUESTIONS = frozenset({"stamp", "fast", "redgreen", "bench"})
+PATH_TABLE: dict[str, frozenset[str]] = {
+    "src/": frozenset({"stamp", "fast", "redgreen"}),
+    "tests/": frozenset({"stamp", "fast", "redgreen"}),
+    "harness/": frozenset({"stamp", "fast", "redgreen", "bench"}),
+    "scripts/": frozenset({"stamp", "fast", "redgreen"}),
+    "benchmarks/": frozenset({"stamp", "redgreen", "bench"}),
+    "benchmarks/harness/": frozenset({"fast"}),
+    ".github/": frozenset({"stamp", "fast"}),
+    "pyproject.toml": frozenset({"stamp"}),
+    "uv.lock": frozenset({"stamp"}),
+    ".claude/hooks/": frozenset({"stamp", "redgreen"}),
+    # The dispatcher's latency Floors read it; under src/, so stamp/fast/redgreen
+    # already hold through the "src/" row, and this row adds the bench question.
+    "src/jcodemunch_mcp/server.py": frozenset({"bench"}),
+}
+
+
+def paths_for(question: str) -> tuple[str, ...]:
+    """The paths that answer one question, in table order."""
+    if question not in QUESTIONS:
+        raise ValueError(f"unknown question {question!r}; one of {sorted(QUESTIONS)}")
+    return tuple(p for p, qs in PATH_TABLE.items() if question in qs)
+
+
 # What the full tier's verdict depends on (tree identity for the D5 stamp).
-TIER_PATHS = (
-    "src",
-    "tests",
-    "harness",
-    "scripts",
-    "benchmarks",
-    "pyproject.toml",
-    "uv.lock",
-    ".github",
-)
+TIER_PATHS = paths_for("stamp")
 
 
 def _rebind_repo(cwd: str | None) -> None:
@@ -221,21 +248,93 @@ def run_budgeted(
     left = budget.left()
     if left <= 1:
         return None, ""
+    # W-42: `subprocess.run(timeout=)` kills the CHILD and then waits on the
+    # pipes, which a grandchild (`uv run` -> `python -m harness`) still holds;
+    # on Windows that wait lasted as long as the harness did, the hook overran
+    # the runner's backstop, the runner killed it, and the commit proceeded
+    # with no verdict. The deadline has to take the whole tree down.
+    popen_kw: dict = {}
+    if os.name != "nt":
+        popen_kw["start_new_session"] = True
+    p = subprocess.Popen(
+        cmd,
+        cwd=REPO,
+        shell=shell,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env or {**os.environ, "PYTHONIOENCODING": "utf-8"},
+        **popen_kw,
+    )
     try:
-        r = subprocess.run(
-            cmd,
-            cwd=REPO,
-            shell=shell,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=left,
-            env=env or {**os.environ, "PYTHONIOENCODING": "utf-8"},
-        )
+        out, err = p.communicate(timeout=left)
     except subprocess.TimeoutExpired:
+        _kill_tree(p)
+        try:
+            p.communicate(timeout=DRAIN_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            # Practice 2: a tree that outlives the kill must be visible.
+            sys.stderr.write(
+                f"run_budgeted: pid {p.pid} still holds its pipes {DRAIN_TIMEOUT} s after the tree kill\n"
+            )
         return None, ""
-    return r.returncode, (r.stdout or "") + (r.stderr or "")
+    return p.returncode, (out or "") + (err or "")
+
+
+def _kill_tree(p: subprocess.Popen) -> None:
+    """Kill a process and everything it started, on both platforms."""
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(p.pid)],
+            capture_output=True, timeout=KILL_TIMEOUT,
+        )
+    else:
+        import signal
+
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            p.kill()
+
+
+# The kill path's ceiling, past the budget: the tree kill's own timeout plus
+# the post-kill drain. The runner's backstop in settings.json must cover
+# budget + KILL_CEILING + 10 (DESIGN section 4; W-42).
+KILL_TIMEOUT = 5
+DRAIN_TIMEOUT = 3
+KILL_CEILING = KILL_TIMEOUT + DRAIN_TIMEOUT
+
+PENDING_MARK = "NOT RUN"
+
+
+def write_pending_summary(path: Path, hook: str) -> None:
+    """Write a summary that reads as FAIL until a run replaces it (W-42).
+
+    A hook killed from outside is neither `ok()` nor `block()`, and the runner
+    reads its silence as consent; the one thing that survives the kill is a
+    file written first. `harness --summary` APPENDS (W-20), so `settle_summary`
+    drops this block once a verdict exists beneath it.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"## harness fast: {PENDING_MARK}\n\n"
+        f"{hook} started {time.strftime('%Y-%m-%dT%H:%M:%S')} and has not written a "
+        "verdict. If this block is still here, the hook was killed before the run "
+        "finished (docs/workflows/FINDINGS.md W-42).\n\nHARNESS FAIL\n",
+        encoding="utf-8",
+    )
+
+
+def settle_summary(path: Path) -> None:
+    """Remove the pending block once the run appended its own."""
+    if not path.exists():
+        return
+    text = path.read_text(encoding="utf-8")
+    head, sep, rest = text.partition("\n## harness ")
+    if PENDING_MARK in head and sep:
+        path.write_text("## harness " + rest, encoding="utf-8")
 
 
 def block(reason: str) -> None:

@@ -16,10 +16,10 @@ tool count or a check name; every one is read at run time from
 | D2 | The existing `.claude/agents` and `.claude/skills` **symlinks into `C:\MCPs\.claude\`** are replaced by real directories in this repo. The suite-level `release` and `observatory` skills and `spokesperson` agent are COPIED in, byte-identical, so nothing this box loads changes; the suite copies stay for jdoc/jdata. | Tracked beats shared-by-symlink; a symlink into a sibling directory cannot be committed. | Yes. |
 | D3 | Hooks are **project-scoped** entries in `.claude/settings.json`, added beside (never replacing) the user-scoped product hooks in `~/.claude/settings.json`. | The product hooks (`hook-pretooluse` steering, reindex, snapshot) are jcodemunch features, not repo process. | — |
 | D4 | The pre-commit and pre-PR "events" are `PreToolUse` hooks matched on `Bash` and `PowerShell` whose `tool_input.command` contains `git commit` or `gh pr create`. Claude Code 2.1.260 has no commit or PR event (LOOPS §3.4). | Substitution, documented; not a fragile workaround: a `git commit` typed by the human outside the agent is NOT hooked and never was. | — |
-| D5 | The "full tier passed recently" check keys on the **git tree hash** (`git rev-parse HEAD^{tree}` plus a hash of the unstaged diff), not on wall-clock minutes. | A full run on the identical tree is valid whatever its age; a time window is a proxy for tree identity and admits a run on a different tree. No N to restate. | — |
+| D5 | The "full tier passed recently" check keys on a **tree identity** (`_common.tree_id()`: a digest over HEAD's `ls-tree`, the uncommitted diff and the untracked files under the paths `_common.PATH_TABLE` marks `stamp`, W-43; it is NOT git's `HEAD^{tree}` object, which two reviewers compared it against), not on wall-clock minutes. | A full run on the identical tree is valid whatever its age; a time window is a proxy for tree identity and admits a run on a different tree. No N to restate. | — |
 | D6 | Every command's completion checklist is written by a SCRIPT (`.claude/hooks/dod_checklist.py`) from evidence files, and pasted into the PR body verbatim. The agent marks nothing by hand. | Principle 4: the checklist is produced, not remembered. | — |
 | D7 | Commands refuse by printing `REFUSED: <reason>` and stopping; nothing partial is pushed. Hooks block with exit 2 and a one-line reason; a hook past its budget prints `WARNING: <hook> skipped <what> (budget <s> s)` and exits 0. | Principle 3; the brief's "never silently passes". | — |
-| D8 | `.claude/settings.json` `permissions.deny` forbids publish, tag, force-push, merge and every posting verb for the WHOLE session, including when a human asks. The human runs those lines from their own prompt (RUNBOOK §1: merge and dispatch are the human acts). | The brief's settings rule. The 2026-09-04 session dispatched `release.yml` from the agent; under this design that line is handed over in cmd.exe form. | jjg can loosen `deny` in `settings.local.json`, which wins locally and is untracked. |
+| D8 | `.claude/settings.json` `permissions.deny` forbids the IRREVERSIBLE for the WHOLE session, including when a human asks: publish, tag, tag push, force-push, release, workflow dispatch, merge, issue deletion, repository deletion; the H5 hook (the belt) additionally refuses an API write whose path is one of those, and a GraphQL mutation naming one (W-41: a merge or auto-merge, a ref or issue deletion, a ref created under `refs/tags/`), which a settings glob cannot express, so `permissions.deny` carries no `gh api` entry. The human runs those lines from their own prompt (RUNBOOK §1: merge and dispatch are the human acts). Posting is the session's since W-40 (2026-09-07): a PR, a comment, a review, a body edit, an alert dismissal or a webhook redelivery can each be undone from the page, and the paste-per-action they cost was the whole of that week's friction. | The brief's settings rule. The 2026-09-04 session dispatched `release.yml` from the agent; under this design that line is handed over in cmd.exe form. | jjg can loosen `deny` in `settings.local.json`, which wins locally and is untracked. |
 
 ## 1. Common shape of every command
 
@@ -172,6 +172,20 @@ request the three profile queries of policy 3c. Hands the draft to the
 `spokesperson` agent for the outward-bound pass. Posts nothing; writes
 `runs/<run>/TRIAGE.md`.
 
+### 2.7 `/competitive-compare [tool] [ref]`
+
+No branch. The competitive loop's interactive form (docs/competitive/DESIGN.md s9.1); LOOPS §2.11.
+
+| Step | Does |
+|---|---|
+| 1 arguments | `tool` a key of `benchmarks/competitive/adapter.REGISTRY` or `all` (default); `ref` default `origin/main`, `git rev-parse --verify` or refuse; `docker info` or refuse (a `--sandbox none` run has no competitor row) |
+| 2 current | `run.py --runs 3 --adapters <the nulls, jcodemunch, the tool or all> --sandbox docker --out-dir evidence/competitive_cur` on the working tree; the corpus and task checks refuse inside it before scoring; never `--record` (the tree's `results/` is the scheduled job's) |
+| 3 ref | `git worktree add <scratch>/competitive-ref <ref>`, same line there with `--out-dir evidence/competitive_ref`; worktree removed after. Never `git checkout` in the working tree. A ref without `run.py` prints `n/a` for its cells. |
+| 4 table | `compare_ref.py --cur … --ref … --out evidence/competitive_compare.md`: per `(axis, tool, corpus)` row in either result file, ref measured and delta, current measured and delta, the current band, and `trend.classify` over the two gaps; the jcm rows first with the signed difference (our movement). `n/a` for an absent side, never 0. Per row, never per total (F-13). The script writes the page; the command retypes none of it. |
+| 5 drafts | `findings.py` over the current file with an empty issue list, to `.claude/state/competitive/drafts/`; counts by label under the table; nothing posted, nothing on the ledger |
+
+Refuses: a ref that does not resolve; an unknown tool; no docker; recording into `benchmarks/competitive/results/`; any write to the ledger.
+
 ## 3. The review subagent (`.claude/agents/reviewer.md`)
 
 **Isolation:** spawned with `subagent_type: reviewer` (fresh context, not
@@ -222,17 +236,16 @@ Glob, Bash (read-only git; the settings deny list applies).
 
 All hooks are Python, run as `python .claude/hooks/<name>.py`, read the
 hook JSON on stdin, and implement the budget themselves with
-`subprocess.run(timeout=)` so that a timeout degrades (D7) instead of the
-runner killing the hook silently. `timeout` in settings is set to budget
-plus 10 s as the backstop.
+a deadline that kills the whole process TREE (`_common.run_budgeted`: `taskkill /T` on Windows, the process group elsewhere; W-42) so that a timeout degrades (D7) instead of the
+runner killing the hook silently. `timeout` in settings is the backstop: the budget, plus the kill path's ceiling (a 5 s `taskkill` and a 3 s drain, 8 s by construction; measured 2026-09-08 by `tests/test_hook_budget_tree_kill.py` under `--durations`: the 3 s-budget arm took 3.40 s, `.claude/state/evidence/durations.txt`), plus 10 s; H1's is 170 s over a 150 s budget. A `subprocess.run(timeout=)` is not enough: it kills the child and then waits on pipes the grandchild still holds, and the hook overran the old 160 s backstop twice on 2026-09-08. H1 also writes `fast.md` BEFORE its run as a block that reads as FAIL (`NOT RUN`), replaced once the run appends a verdict, and H4 reads `fast.md` directly (absent, pending or FAIL refuses), so a hook killed from outside leaves the next gate refusing rather than silent.
 
 | Hook | Event / matcher | Budget | Exact command run | Blocks? |
 |---|---|---|---|---|
-| H1 `pre_commit.py` | `PreToolUse`, matcher `Bash\|PowerShell`, fires when `tool_input.command` matches `\bgit\s+commit\b` | 150 s | If no staged path is under `src/`, `tests/`, `harness/`, `scripts/`, `benchmarks/harness/` or `.github/`: exit 0 (docs commits are free). Else: `uv run python -m harness fast --summary .claude/state/evidence/fast.md` (ruff check and the offline Floor verdicts are inside it); then the format check with the SAME scope and command as `pr-gate.yml` job `fast: format` (read from the workflow file at run time, never restated; `tests/test_workflow_hooks.py` binds them); then `uv run python -m harness check types.error_max` only if pyright is importable, else WARNING naming it. | Exit 2 on any FAIL with the verdict lines as the reason; WARNING + exit 0 past budget, naming which of the three was skipped. |
+| H1 `pre_commit.py` | `PreToolUse`, matcher `Bash\|PowerShell`, fires when `tool_input.command` matches `\bgit\s+commit\b` | 150 s | If no staged path is under a path `_common.PATH_TABLE` marks `fast` (W-43: one table, not a copy here), and none is a file a Floor's Method reads (`CLAUDE.md`, `benchmarks/schema_baseline.json`, the `rust_fidelity/`, `racket_fidelity/`, `provenance/` and `route_recall/` artifacts; `FLOOR_INPUTS` in the hook, W-39): exit 0 (docs commits are free). Else: `uv run python -m harness fast --summary .claude/state/evidence/fast.md` (ruff check and the offline Floor verdicts are inside it); then the format check with the SAME scope and command as `pr-gate.yml` job `fast: format` (read from the workflow file at run time, never restated; `tests/test_workflow_hooks.py` binds them); then `uv run python -m harness check types.error_max` only if pyright is importable, else WARNING naming it. | Exit 2 on any FAIL with the verdict lines as the reason; WARNING + exit 0 past budget, naming which of the three was skipped. |
 | H2 `test_edit_guard.py` | `PostToolUse`, matcher `Edit\|Write`, when `tool_input.file_path` is under `tests/` | 5 s | `git diff -- <file>` (and `git status --porcelain <file>` for a deletion): counts removed `def test_`, removed `assert`, added `pytest.mark.skip`/`skipif`/`xfail`/`pytest.skip(`. If any, and `harness/retired.json` is unchanged in the working tree AND the file is LOAD-BEARING in `docs/harness/ARCHAEOLOGY.md`: prints the ARCHAEOLOGY line and "retirement needs a `retired.json` entry naming the lesson and the replacement assertion (DoD 11) and a commit message stating the lesson". | Exit 2 (the message reaches the agent as feedback; the edit stands). |
 | H3 `surface_guard.py` | `PostToolUse`, matcher `Edit\|Write`, when the path is `src/jcodemunch_mcp/server.py`, `counter.py`, `cli/policy.py`, any `tools/*.py`, or `encoding/schemas/*` | 40 s | `python scripts/surface_diff.py --base-ref HEAD` (working tree vs HEAD). On a non-empty diff: "tool surface changed: +a -r; README, CLAUDE.md/KEY-FILES, CHANGELOG and the schema baseline change with it (DoD 4); stage 5 checks". Also runs the description dump when W-1 is closed. | Warning only (exit 2 message, no block). |
-| H4 `pre_pr.py` | `PreToolUse`, `Bash\|PowerShell`, command matches `\bgh\s+pr\s+create\b` | 5 s | Reads `.claude/state/full-tier.json` `{tree, ok, date, commit}`; computes the current tree id (`git rev-parse HEAD^{tree}` + sha256 of `git diff` output); requires `ok` and equal tree; requires the branch is not `main`; requires `.claude/state/evidence/checklist.md` exists with no `unmet`. | Exit 2 with the missing item named. |
-| H5 `deny_guard.py` | `PreToolUse`, `Bash\|PowerShell` | 1 s | Belt to D8's braces: matches the same verbs as the deny list (`git push --force`, `git tag`, `gh release`, `gh workflow run`, `gh pr merge`, `gh pr comment/review`, `gh issue comment/close/edit`, `twine upload`, `mcp-publisher publish`, `gh api` with `--method POST/PATCH/PUT/DELETE`) and blocks with the RUNBOOK section the human runs. | Exit 2. |
+| H4 `pre_pr.py` | `PreToolUse`, `Bash\|PowerShell`, command matches `\bgh\s+pr\s+create\b` | 5 s | Reads `.claude/state/evidence/fast.md` (absent, still H1's `NOT RUN` block, or FAIL refuses; W-42) and `.claude/state/full-tier.json` `{tree, ok, date, commit}`; computes the current tree id (`git rev-parse HEAD^{tree}` + sha256 of `git diff` output); requires `ok` and equal tree; requires the branch is not `main`; requires `.claude/state/evidence/checklist.md` exists with no `unmet`. | Exit 2 with the missing item named. |
+| H5 `deny_guard.py` | `PreToolUse`, `Bash\|PowerShell` | 1 s | Belt to D8's braces: matches the same verbs as the deny list (`git push --force`, `git tag`, `gh release`, `gh workflow run`, `gh pr merge`, `gh issue delete`, `twine upload`, `mcp-publisher publish`, and `gh api` writes whose path is a merge, release, dispatch or tag ref, or whose method is DELETE) and blocks with the RUNBOOK section the human runs. Posting verbs pass (W-40). | Exit 2. |
 
 The D5 stamp is written by the command's full-tier step, not by the
 harness: `harness full` prints `HARNESS PASS` and writes `latest.json`
@@ -268,14 +281,10 @@ points at the authority and holds only what no doc states in list form.
     "deny": [
       "Bash(git push --force*)", "Bash(git push -f*)", "Bash(git push * --force*)",
       "Bash(git tag*)", "Bash(git push --tags*)", "Bash(git push origin v*)",
-      "Bash(gh release*)", "Bash(gh workflow run*)", "Bash(gh pr merge*)",
-      "Bash(gh pr comment*)", "Bash(gh pr review*)", "Bash(gh pr close*)",
-      "Bash(gh issue comment*)", "Bash(gh issue close*)", "Bash(gh issue edit*)",
-      "Bash(gh api --method POST*)", "Bash(gh api --method PATCH*)",
-      "Bash(gh api --method PUT*)", "Bash(gh api --method DELETE*)", "Bash(gh api -X *)",
+      "Bash(gh release*)", "Bash(gh workflow run*)", "Bash(gh pr merge*)", "Bash(gh issue delete*)",
       "Bash(twine*)", "Bash(uvx --from twine*)", "Bash(*mcp-publisher*)",
       "PowerShell(git push --force*)", "PowerShell(git tag*)", "PowerShell(gh release*)",
-      "PowerShell(gh workflow run*)", "PowerShell(gh pr merge*)", "PowerShell(*twine*)",
+      "PowerShell(gh workflow run*)", "PowerShell(gh pr merge*)", "PowerShell(gh issue delete*)", "PowerShell(*twine*)",
       "PowerShell(*mcp-publisher*)"
     ],
     "allow": [
@@ -294,9 +303,10 @@ points at the authority and holds only what no doc states in list form.
 ```
 
 `deny` wins over `allow` and over `settings.local.json`'s allow list.
-`Bash(gh api repos/...)` stays allowed for GET; the `--method` and `-X`
-forms are denied, which also covers webhook redelivery (policy 3d's one
-POST) — that line is handed to the human. `settings.local.json` keeps its
+`Bash(gh api repos/...)` is allowed for GET and, since W-40, for the writes
+the hook does not refuse (an alert dismissal, a webhook redelivery, a
+label); the hook still refuses an API write whose path is a merge, a
+release, a dispatch or a tag ref, or whose method is DELETE. `settings.local.json` keeps its
 40 accreted allows but loses the effect of `Bash(gh:*)` and `Bash(git *)`
 where the deny list overlaps.
 
@@ -309,6 +319,7 @@ A new first section after `Current State`:
 Use these; do not improvise the process. Each one runs the harness at the
 right moments and produces the Definition-of-Done checklist itself.
 /feature <desc> · /fix-issue <n> · /release · /benchmark-compare [ref] ·
+/competitive-compare [tool] [ref] ·
 /review [pr|ref] · /triage-issue <n>
 Authority: docs/standard/STANDARD.md (what good means, Definition of Done),
 docs/harness/ARCHAEOLOGY.md (why every test exists), docs/cicd/RUNBOOK.md

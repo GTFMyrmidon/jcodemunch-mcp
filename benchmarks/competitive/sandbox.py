@@ -1,0 +1,205 @@
+"""The container sandbox every measured tool runs in (docs/competitive/DESIGN.md D2).
+
+purpose:  build a pinned image with the network ON, then run the tool with
+          the network OFF, a read-only corpus, one writable /out, no
+          capabilities, no new privileges, an unprivileged user, a memory
+          and pid ceiling and a wall-clock timeout; record the image digest
+          so a rebuild that produces a different image is a finding
+invokes:  the docker CLI (`docker build`, `docker run`, `docker image
+          inspect`); nothing else
+produces: BuildResult(digest, seconds), RunResult(rc, stdout, stderr,
+          seconds, timed_out)
+refuses:  to run with the network on; to mount anything but the corpus
+          (read-only) and /out; to pass any environment variable through
+          from the host (the container sees HOME=/out and PATH only)
+pinned:   the Dockerfile under sandbox/<tool>.Dockerfile names the base
+          image by digest and the tool by version and checksum
+fairness: identical flags for every tool including jcodemunch, so the
+          sandbox's cost is paid on every row (DESIGN D2)
+"""
+
+from __future__ import annotations
+
+import hashlib
+import re
+import shutil
+import subprocess
+import time
+import uuid
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+RUN_FLAGS = [
+    "--network", "none",
+    "--read-only",
+    "--cap-drop", "ALL",
+    "--security-opt", "no-new-privileges",
+    "--user", "65534:65534",
+    "--memory", "8g",
+    "--pids-limit", "512",
+    "--tmpfs", "/tmp:rw,size=512m",
+]
+
+
+@dataclass
+class BuildResult:
+    tag: str
+    digest: str
+    seconds: float
+    dockerfile_sha256: str
+    size_bytes: int | None = None  # `docker image inspect {{.Size}}`; None when docker reported none (CF-61)
+    prerequisites: tuple[str, ...] | None = ()  # `prerequisites(dockerfile)`; None = a spelling the parser does not read (CF-61)
+
+
+_APT_INSTALL = re.compile(r"\bapt(?:-get)?\s+install\b(.*)")
+_OTHER_INSTALLER = re.compile(r"\b(?:apk\s+add|dnf\s+install|microdnf\s+install|yum\s+install|zypper\s+(?:in|install)|pacman\s+-S)\b")
+_RUN_LINE = re.compile(r"^\s*RUN\b\s*(.*)$")
+_FLAGS_WITH_ARGUMENT = {"-t", "--target-release", "-o", "--option", "-c", "--config-file"}
+
+
+def prerequisites(dockerfile: Path) -> list[str] | None:
+    """The system packages a Dockerfile installs beyond its base image, sorted,
+    de-duplicated: every package named by an `apt-get install` (or `apt
+    install`) in a RUN line, flags dropped, backslash continuations joined,
+    the command ending at the next `&&`, `;` or `|`. Criterion 6's
+    prerequisite count, a PROXY for install friction and labelled as one
+    (DESIGN s2, CF-61): pip and npm dependencies are the package's own tree
+    and are not counted, since the proxy is what a user must already have
+    before the package installs.
+
+    None, never `[]`, when a RUN line installs through a package manager this
+    reads no spelling of (`apk add`, `dnf`/`yum`/`microdnf install`, `zypper`,
+    `pacman`) or uses the JSON exec form: an unread install would otherwise
+    publish as a measured zero, the one figure our own image earns (review
+    round 1; STANDARD criterion 9, UNKNOWN is never 0).
+    """
+    text = dockerfile.read_text(encoding="utf-8", errors="replace")
+    joined = re.sub(r"\\\r?\n", " ", text)
+    found: set[str] = set()
+    for line in joined.splitlines():
+        m_run = _RUN_LINE.match(line)
+        if not m_run:
+            continue
+        body = m_run.group(1)
+        if body.lstrip().startswith("[") or _OTHER_INSTALLER.search(body):
+            return None
+        for seg in re.split(r"&&|;|\|", body):
+            m = _APT_INSTALL.search(seg)
+            if not m:
+                continue
+            toks = m.group(1).split()
+            skip = False
+            for tok in toks:
+                if skip:
+                    skip = False
+                    continue
+                if tok in _FLAGS_WITH_ARGUMENT:
+                    skip = True  # `-t bookworm`: the release is not a package (review round 2)
+                    continue
+                if not tok.startswith("-"):
+                    found.add(tok)  # a version pin (`git=1:2.39`) is kept verbatim: it names one package
+    return sorted(found)
+
+
+@dataclass
+class RunResult:
+    rc: int
+    stdout: str
+    stderr: str
+    seconds: float
+    timed_out: bool = False
+
+
+def docker_available() -> bool:
+    if shutil.which("docker") is None:
+        return False
+    try:
+        p = subprocess.run(["docker", "info", "--format", "{{.OSType}}"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+        return p.returncode == 0 and p.stdout.strip() == "linux"
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _mount_path(p: Path) -> str:
+    """Docker on Windows wants forward slashes for bind sources."""
+    return str(p.resolve()).replace("\\", "/")
+
+
+def build(tag: str, dockerfile: Path, context: Path, timeout: int = 600) -> BuildResult:
+    t0 = time.perf_counter()
+    proc = subprocess.run(
+        ["docker", "build", "-q", "-t", tag, "-f", str(dockerfile), str(context)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
+    )
+    secs = time.perf_counter() - t0
+    if proc.returncode != 0:
+        raise RuntimeError(f"docker build {tag} failed (rc {proc.returncode}):\n{proc.stderr[-3000:]}")
+    ins = subprocess.run(["docker", "image", "inspect", tag, "--format", "{{.Id}}|{{.Size}}"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+    digest, _, size = ins.stdout.strip().partition("|")
+    # criterion 6's measured half (CF-61): the seconds were already timed and the
+    # size is on the same inspect; both ride the pin record. An unreported size is
+    # None, never 0 (a zero would read as a free image).
+    return BuildResult(tag=tag, digest=digest, seconds=round(secs, 1), dockerfile_sha256=hashlib.sha256(dockerfile.read_bytes()).hexdigest(),
+                       size_bytes=int(size) if size.strip().isdigit() else None,
+                       prerequisites=(tuple(pre) if (pre := prerequisites(dockerfile)) is not None else None))
+
+
+PRIVATE_TMPFS = ["--tmpfs", "/private:rw,uid=65534,gid=65534,mode=0700,size=1g"]
+"""A tmpfs owned by the sandbox uid, mode 0700, for a tool that refuses a
+world-writable or foreign-owned cache parent (codebase-memory-mcp rejects
+the /out bind mount: "the directory CONTAINING ... is not a usable
+private-directory parent"). Its contents die with the container, which is
+fine: a run is one container. HOME moves there when it is requested."""
+
+
+def kill_container(name: str) -> bool:
+    """`docker kill` by name, then wait for the container to EXIT; True when a
+    container by that name was killed. Called on every timeout, and safe when
+    the container already exited.
+
+    The wait is the point (CF-65): `docker kill` returns when the signal is
+    delivered, not when the container is gone, so a `docker ps` issued the
+    instant after could still list it. The 2026-09-07 PR gate saw exactly
+    that once in eight runs, in the test that proves a timed-out container
+    is gone after run() returns. `docker wait` blocks until exit; a bounded
+    timeout keeps a wedged daemon from turning a kill into a hang."""
+    proc = subprocess.run(["docker", "kill", name], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          timeout=60)  # unchanged from CF-49; the wait below is bounded on its own
+    killed = proc.returncode == 0
+    if killed:
+        try:
+            subprocess.run(["docker", "wait", name], capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=30)
+        except subprocess.TimeoutExpired:
+            pass  # the kill was delivered; the caller reports the timeout either way
+    return killed
+
+
+def run(tag: str, args: list[str], corpus: Path, out: Path, timeout: int, workdir: str = "/corpus",
+        extra_env: Optional[dict[str, str]] = None, private_home: bool = False) -> RunResult:
+    """One container. `args` follow the image's ENTRYPOINT. Only HOME and PATH
+    reach the tool, plus `extra_env` (which an adapter may use for its own
+    documented knobs; never a host variable). `private_home` adds the
+    uid-owned tmpfs above and points HOME at it."""
+    out.mkdir(parents=True, exist_ok=True)
+    # Named, so a timeout can KILL THE CONTAINER: subprocess's timeout kills the
+    # docker CLIENT only, and the container ran on (CF-49: two 8 GB embedding
+    # containers alive at once, the second started after the first "timed out",
+    # took the host down mid-run on 2026-09-06).
+    name = f"jcm-compete-{uuid.uuid4().hex[:12]}"
+    cmd = ["docker", "run", "--rm", "--name", name, *RUN_FLAGS, *(PRIVATE_TMPFS if private_home else []),
+           "-v", f"{_mount_path(corpus)}:/corpus:ro",
+           "-v", f"{_mount_path(out)}:/out:rw",
+           "-w", workdir, "-e", ("HOME=/private" if private_home else "HOME=/out")]
+    for k, v in (extra_env or {}).items():
+        cmd += ["-e", f"{k}={v}"]
+    cmd += [tag, *args]
+    t0 = time.perf_counter()
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+    except subprocess.TimeoutExpired as e:
+        kill_container(name)
+        return RunResult(rc=124, stdout=(e.stdout or b"").decode("utf-8", "replace") if isinstance(e.stdout, bytes) else (e.stdout or ""),
+                         stderr="timeout", seconds=round(time.perf_counter() - t0, 1), timed_out=True)
+    return RunResult(rc=proc.returncode, stdout=proc.stdout, stderr=proc.stderr, seconds=round(time.perf_counter() - t0, 1))
