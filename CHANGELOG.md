@@ -65,18 +65,76 @@ the cause half did, twice. What is not changed: each loop still tries every
 batch after a shared failure, which the `batches` count now makes visible
 instead of hiding.
 
-### Fixed - watch mode bounds native registration on symlink-heavy workspaces
+### Fixed - the watcher's startup cost is one recursive registration where the platform gives one, and a moved subtree, a renamed root and an edit under `.github/` all reach the index (#641, @marcelruhf)
 
-`watch` now registers the real, non-skipped directory tree non-recursively
-instead of asking `watchfiles` to traverse directory symlinks before filters
-run. Directory topology changes re-arm the bounded watch set. A child deleted
-or renamed during registration triggers a retry only if the root remains and
-a fresh directory census differs from the failed watch set; missing roots,
-unchanged watch sets, and other errors still propagate. Failed streams close
-before replacements open. Initial registration and each successful re-arm
-request a full incremental reconciliation to cover edits during registration;
-ordinary file edits retain the changed-path fast path. `watch_follow_symlinks`
-still applies to symlinked files -- directory symlinks are not traversed.
+What was wrong: #629 stopped `awatch(recursive=True)` from following a
+workspace's directory-symlink graph (a symlink-heavy tree had grown the
+watcher past 30 GB) by enumerating the real directory tree and registering
+every directory itself, and that made startup cost proportional to the
+directory count on EVERY platform, when only Linux and the polling backend
+needed it: macOS and Windows native watching takes one recursive
+registration and does not walk links the way notify on Linux does. Three
+smaller defects sat beside it. A subtree moved outside the root left its
+descendants indexed, because a native recursive backend reports the
+directory event alone and nothing mapped that to the files under it. A root
+renamed and replaced on Windows kept the watch on the old inode, so the
+replacement was never watched. And an edit under an indexed dot-directory
+such as `.github/` was discarded by a second hidden-path filter in the
+watcher, after discovery had already admitted the file: two authorities for
+one rule, the shape the Standing lessons name. @marcelruhf found all four,
+measured the startup cost on a large directory tree, and fixed them.
+What the fix does: `_safe_awatch` selects the backend (recursive on
+macOS/Windows native, per-directory on Linux and under polling), re-arms
+when the root's identity changes (the root only, never the tree), maps a
+moved-out directory to its indexed descendants through the hash cache (one
+lazy sort per batch, a bisect per unknown deletion, full discovery only when
+that fails), and leaves hidden-path admission to discovery. Linux/polling
+registration re-verifies the directory set before it reconciles the edits
+that arrived during registration. What is impossible now: a startup that
+pays per directory on a platform that offers recursion; a moved-out tree
+whose files stay indexed; a watcher that keeps a renamed root; a filter in
+the watcher that overrules discovery. The two watcher test files were
+reorganised in the process, and `docs/harness/ARCHAEOLOGY.md` records where
+each property went, including the one deliberately inverted (`native
+registration is always non-recursive` was #629's rule and is now false by
+design on macOS/Windows). Symlink configuration is documented in
+[CONFIGURATION.md](CONFIGURATION.md#watcher).
+
+### Fixed - an empty full incremental scan over an existing index reconciles deletions instead of refusing, says so when it removed everything, and never mistakes a read failure for an empty tree (#641, @marcelruhf)
+
+What was wrong: an incremental `index_folder` whose discovery found no
+source files returned `No source files found` and touched nothing, so a
+tree whose files had all moved out kept every stale symbol in the index
+forever, and the watcher's root reconciliation (the unattended caller of
+exactly this shape) could never clear it. Reported and fixed by
+@marcelruhf (#641). What the fix does: a full incremental scan of an
+existing index that finds no eligible file reconciles deletions, including
+the removal of every indexed file; an initial or non-incremental scan of an
+empty folder is still an error. The empty scan is refused, and the index
+preserved, when the emptiness has a cause that is not the tree: an
+unreadable file or directory (now counted as `unreadable`, named in
+`warnings`, and classified as WITHHELD coverage, so a save after it marks
+`complete: false` and absence claims are refused where those trees used to
+claim completeness over files they never read), a `file_limit` truncation
+or a `too_large` exclusion. Binary exclusions are legitimate and still allow
+the reconciliation. Our review added the disclosure: the same empty root is
+also a bare mount point, a checkout mid-switch or a restore in progress,
+and the watcher reaches it unattended, so a scan that removed every indexed
+file now carries `full_deletion: true` and a `full_deletion:` warning naming
+the count and the remedy. The deletion itself stands, deliberately: unlike
+`refresh`'s generation stamp, which cannot be repaired and therefore refuses
+an empty corpus, an index emptied by a transient root is rebuilt in full by
+the next scan over the repopulated root, and the test pins that round trip
+(`tests/test_index_folder_empty_discovery.py`). Also from the review: the
+watcher imported `watchfiles.main._default_force_polling`, a private name of
+a pinned dependency, so a rename in a watchfiles release would have failed
+the watcher at its first `_safe_awatch`; `_force_polling_default` asks
+watchfiles when the name exists and applies its documented rule itself when
+it does not, and `tests/test_watcher_polling_default.py` pins both halves
+against the installed watchfiles for every spelling of
+`WATCHFILES_FORCE_POLLING`. The contract, failure conditions and the
+recovery steps are in [SPEC.md](SPEC.md#expected-error-behaviors).
+
 ### Fixed - a `<script >` closed with a space before the bracket swallowed the markup after it (Razor and Astro)
 
 The Razor and Astro extractors cut `<script>` and `<style>` blocks out of
